@@ -34,7 +34,9 @@ Roxidy is a Warp.dev alternative built with Tauri 2, React/TypeScript frontend, 
 | Multi-Tab | ✅ Complete | Cmd+T new tab, tab switching |
 | CommandInput | ✅ Complete | History, Ctrl+C/D/L, tab completion passthrough |
 | Interactive Commands | ❌ Blocked | Shows toast error for vim, htop, etc. |
-| AI Integration | ❌ Not Started | Designed but not implemented |
+| AI Integration | ✅ Complete | rig + vtcode-core with agentic tool loop |
+| Multi-Agent System | ✅ Complete | graph-flow based sub-agent orchestration |
+| Sub-Agents | ✅ Complete | 5 default agents (analyzer, writer, runner, researcher, shell) |
 | SQLite Storage | ❌ Not Started | Planned for persistence |
 
 ## Design Decisions
@@ -121,9 +123,9 @@ pub struct CommandBlock {
 }
 ```
 
-### 5. AI Agent System (Rig)
+### 5. AI Agent System (Rig + graph-flow)
 
-Multi-provider agent with terminal-aware tools.
+Multi-provider agent with terminal-aware tools and multi-agent orchestration.
 
 **Supported Providers:**
 - Google Vertex AI
@@ -145,6 +147,25 @@ Multi-provider agent with terminal-aware tools.
 | `search_history` | Search command history by pattern |
 | `explain_error` | Parse error output and suggest fixes |
 | `get_current_directory` | Get PWD of active session |
+| `sub_agent_*` | Invoke specialized sub-agents |
+
+**Multi-Agent System:**
+
+Uses [graph-flow](https://crates.io/crates/graph-flow) for workflow orchestration:
+
+| Sub-Agent | Purpose | Allowed Tools |
+|-----------|---------|---------------|
+| `code_analyzer` | Deep code analysis | read_file, grep_file, list_directory, find_files |
+| `code_writer` | Implement features | read_file, write_file, edit_file, create_file, grep_file, list_directory |
+| `test_runner` | Execute and analyze tests | run_command, read_file, grep_file |
+| `researcher` | Web search and docs | web_search, web_fetch, read_file |
+| `shell_executor` | System commands | run_command, read_file, list_directory |
+
+**Workflow Features:**
+- Graph-based routing with conditional edges
+- Session persistence across workflow steps
+- Maximum recursion depth of 5 levels
+- Context passing between agents
 
 ### 6. SQLite Storage
 
@@ -334,7 +355,11 @@ portable-pty = "0.8"
 vte = "0.13"
 
 # AI
-rig-core = "0.6"
+rig-core = "0.23"              # Multi-provider LLM framework
+rig-anthropic-vertex = "..."   # Vertex AI support (custom crate)
+vtcode-core = "0.47"           # Agent tool system (40+ tools)
+graph-flow = "0.4"             # Graph-based workflow orchestration
+async-trait = "0.1"            # Async trait support for Task impl
 
 # Storage
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -493,15 +518,38 @@ roxidy/
 └── biome.json                    # Linter/formatter config
 ```
 
+### Implemented AI Modules
+
+```
+src-tauri/src/ai/
+├── mod.rs                        # Module exports
+├── agent_bridge.rs               # Main AgentBridge implementation
+│                                 # - LLM client integration (rig + vtcode)
+│                                 # - Tool execution loop
+│                                 # - Sub-agent invocation
+├── commands.rs                   # Tauri commands for AI
+│                                 # - init_ai_agent, send_ai_prompt
+│                                 # - execute_ai_tool, get_available_tools
+├── events.rs                     # AI event types for frontend
+│                                 # - Text streaming, tool calls
+│                                 # - Sub-agent lifecycle events
+├── sub_agent.rs                  # Sub-agent system
+│                                 # - SubAgentDefinition
+│                                 # - SubAgentRegistry
+│                                 # - SubAgentContext/Result
+│                                 # - Default sub-agents
+└── workflow.rs                   # graph-flow integration
+                                  # - SubAgentTask (Task impl)
+                                  # - RouterTask for dynamic routing
+                                  # - AgentWorkflowBuilder
+                                  # - WorkflowRunner
+                                  # - Pre-built patterns
+```
+
 ### Planned Additions
 
 ```
 src-tauri/src/
-├── ai/                           # AI agent (planned)
-│   ├── mod.rs
-│   ├── agent.rs                  # Rig agent setup
-│   ├── tools.rs                  # Tool definitions
-│   └── providers.rs              # Multi-provider config
 └── db/                           # SQLite storage (planned)
     ├── mod.rs
     ├── schema.rs

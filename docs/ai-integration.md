@@ -1,13 +1,186 @@
 # AI Integration with Rig
 
-This document covers the AI agent architecture using [rig](https://github.com/0xPlaygrounds/rig) for multi-provider LLM support.
+This document covers the AI agent architecture using [rig](https://github.com/0xPlaygrounds/rig) for multi-provider LLM support, including the graph-flow based multi-agent orchestration system.
 
-> **API Verified:** 2025-11-26 against rig crate (latest). Key APIs confirmed:
+> **API Verified:** 2025-11-27 against rig crate (latest). Key APIs confirmed:
 > - `Client::new()` / `Client::from_env()` for providers
 > - `client.completion_model()` returns `CompletionModel`
 > - `AgentBuilder::new(model).preamble().tool().build()`
 > - `Tool` trait with async `definition(_prompt: String)` and `call()`
 > - `agent.stream_prompt()` yields `MultiTurnStreamItem::StreamItem(StreamedAssistantContent::*)` and `FinalResponse`
+
+## Multi-Agent System with graph-flow
+
+Roxidy uses [graph-flow](https://crates.io/crates/graph-flow) for multi-agent orchestration. This enables:
+
+- **Sub-agents as tools**: Specialized agents can be invoked as tools from a parent agent
+- **Graph-based routing**: Define workflows with conditional transitions between agents
+- **Session persistence**: Workflow state persists across steps
+- **Recursion protection**: Maximum depth of 5 to prevent infinite loops
+
+### Sub-Agent System
+
+Sub-agents are specialized agents with restricted tool access and focused system prompts:
+
+```rust
+// src-tauri/src/ai/sub_agent.rs
+
+pub struct SubAgentDefinition {
+    pub id: String,                    // Unique identifier
+    pub name: String,                  // Human-readable name
+    pub description: String,           // Description for parent agent
+    pub system_prompt: String,         // Specialized role instructions
+    pub allowed_tools: Vec<String>,    // Tool whitelist (empty = all)
+    pub max_iterations: usize,         // Tool loop limit
+}
+
+// Default sub-agents included:
+// - code_analyzer: Deep code analysis without modifications
+// - code_writer: Implements features and makes changes
+// - test_runner: Executes tests and analyzes failures
+// - researcher: Web search and documentation lookup
+// - shell_executor: Shell commands and system operations
+```
+
+### Workflow Graph with graph-flow
+
+The workflow system uses the `graph-flow` crate for type-safe, session-based execution:
+
+```rust
+// src-tauri/src/ai/workflow.rs
+
+use graph_flow::{Task, Context, TaskResult, NextAction};
+
+// Sub-agent task implements graph-flow's Task trait
+pub struct SubAgentTask {
+    agent: SubAgentDefinition,
+    executor: Arc<dyn SubAgentExecutor + Send + Sync>,
+}
+
+#[async_trait]
+impl Task for SubAgentTask {
+    fn id(&self) -> &str {
+        &self.agent.id
+    }
+
+    async fn run(&self, context: Context) -> graph_flow::Result<TaskResult> {
+        let prompt: String = context.get("prompt").await.unwrap_or_default();
+
+        match self.executor.execute_agent(&self.agent, &prompt, HashMap::new()).await {
+            Ok(response) => {
+                context.set("response", response.clone()).await;
+                Ok(TaskResult::new(Some(response), NextAction::Continue))
+            }
+            Err(e) => Ok(TaskResult::new(Some(e.to_string()), NextAction::End))
+        }
+    }
+}
+
+// Build workflows with the builder pattern
+let graph = AgentWorkflowBuilder::new("code_review")
+    .add_agent_task(analyzer_task)
+    .add_agent_task(writer_task)
+    .add_router_task(router)
+    .edge("analyzer", "router")
+    .conditional_edge("router", |ctx| {...}, "writer", "done")
+    .build()?;
+
+// Execute with session management
+let runner = WorkflowRunner::new_in_memory(graph);
+let session_id = runner.start_session("Review this code", "analyzer").await?;
+let result = runner.run_to_completion(&session_id).await?;
+```
+
+### Sub-Agents as Tools
+
+When the parent agent needs specialized help, it can invoke sub-agents as tools:
+
+```rust
+// AgentBridge automatically exposes sub-agents as tools
+// Tool name format: sub_agent_{agent_id}
+
+// Example tool call from LLM:
+{
+    "name": "sub_agent_code_analyzer",
+    "arguments": {
+        "task": "Analyze the authentication module for security issues",
+        "context": "Focus on SQL injection and XSS vulnerabilities"
+    }
+}
+
+// The parent agent receives a structured result:
+{
+    "agent_id": "code_analyzer",
+    "response": "Found 3 potential issues...",
+    "success": true,
+    "duration_ms": 2340
+}
+```
+
+### Sub-Agent Events
+
+The event system tracks sub-agent execution for UI visibility:
+
+```rust
+// src-tauri/src/ai/events.rs
+
+pub enum AiEvent {
+    // ... existing events ...
+
+    /// Sub-agent started executing a task
+    SubAgentStarted {
+        agent_id: String,
+        agent_name: String,
+        task: String,
+        depth: usize,  // Recursion depth (max 5)
+    },
+
+    /// Sub-agent tool usage (for nested visibility)
+    SubAgentToolRequest {
+        agent_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+    },
+    SubAgentToolResult {
+        agent_id: String,
+        tool_name: String,
+        success: bool,
+    },
+
+    /// Sub-agent completed
+    SubAgentCompleted {
+        agent_id: String,
+        response: String,
+        duration_ms: u64,
+    },
+
+    /// Sub-agent error
+    SubAgentError {
+        agent_id: String,
+        error: String,
+    },
+}
+```
+
+### Workflow Patterns
+
+Pre-built patterns for common use cases:
+
+```rust
+// Sequential: task1 → task2 → task3
+let graph = patterns::sequential("pipeline", vec![
+    analyzer_task,
+    writer_task,
+    reviewer_task,
+])?;
+
+// Router dispatch: router decides which agent handles the task
+let graph = patterns::router_dispatch("dispatch", router_task, vec![
+    code_analyzer_task,
+    test_runner_task,
+    researcher_task,
+])?;
+```
 
 ## Provider Configuration
 

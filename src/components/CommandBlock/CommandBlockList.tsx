@@ -16,11 +16,7 @@ export function CommandBlockList({ sessionId }: CommandBlockListProps) {
   return (
     <div className="flex flex-col py-2">
       {blocks.map((block) => (
-        <CommandBlock
-          key={block.id}
-          block={block}
-          onToggleCollapse={toggleBlockCollapse}
-        />
+        <CommandBlock key={block.id} block={block} onToggleCollapse={toggleBlockCollapse} />
       ))}
     </div>
   );

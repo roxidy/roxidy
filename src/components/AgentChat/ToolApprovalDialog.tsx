@@ -1,20 +1,17 @@
-import {
-  AlertTriangle,
-  Terminal,
-  CheckCircle,
-  XCircle,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle, Terminal, XCircle } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { useStore, usePendingToolApproval } from "@/store";
+import { executeTool } from "@/lib/ai";
 import { cn } from "@/lib/utils";
+import { usePendingToolApproval, useStore } from "@/store";
 
 interface ToolApprovalDialogProps {
   sessionId: string;
@@ -32,32 +29,33 @@ const DANGEROUS_TOOLS = [
 
 export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
   const tool = usePendingToolApproval(sessionId);
-  const setPendingToolApproval = useStore(
-    (state) => state.setPendingToolApproval
-  );
+  const setPendingToolApproval = useStore((state) => state.setPendingToolApproval);
   const updateToolCallStatus = useStore((state) => state.updateToolCallStatus);
+  const markToolRequestProcessed = useStore((state) => state.markToolRequestProcessed);
 
   if (!tool) return null;
 
   const isDangerous = DANGEROUS_TOOLS.includes(tool.name);
 
   const handleApprove = async () => {
+    // Mark as processed before clearing to prevent duplicate events from re-showing dialog
+    markToolRequestProcessed(tool.id);
     setPendingToolApproval(sessionId, null);
     updateToolCallStatus(sessionId, tool.id, "running");
 
-    // TODO: Actually execute the tool via Tauri
-    // For now, simulate completion
-    setTimeout(() => {
-      updateToolCallStatus(
-        sessionId,
-        tool.id,
-        "completed",
-        "Tool executed successfully (simulated)"
-      );
-    }, 1000);
+    try {
+      const result = await executeTool(tool.name, tool.args);
+      updateToolCallStatus(sessionId, tool.id, "completed", result);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error(`Tool execution failed: ${errorMessage}`);
+      updateToolCallStatus(sessionId, tool.id, "error", errorMessage);
+    }
   };
 
   const handleDeny = () => {
+    // Mark as processed before clearing to prevent duplicate events from re-showing dialog
+    markToolRequestProcessed(tool.id);
     setPendingToolApproval(sessionId, null);
     updateToolCallStatus(sessionId, tool.id, "denied");
   };
@@ -67,14 +65,12 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
       <DialogContent className="bg-[#1f2335] border-[#27293d] text-[#c0caf5] max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-[#c0caf5]">
-            {isDangerous && (
-              <AlertTriangle className="w-5 h-5 text-[#e0af68]" />
-            )}
+            {isDangerous && <AlertTriangle className="w-5 h-5 text-[#e0af68]" />}
             Tool Approval Required
           </DialogTitle>
           <DialogDescription className="text-[#565f89]">
-            The AI assistant wants to execute the following tool. Review the
-            details before approving.
+            The AI assistant wants to execute the following tool. Review the details before
+            approving.
           </DialogDescription>
         </DialogHeader>
 
@@ -82,9 +78,7 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
           {/* Tool name */}
           <div className="flex items-center gap-2 mb-3">
             <Terminal className="w-4 h-4 text-[#7aa2f7]" />
-            <span className="font-mono text-sm text-[#c0caf5] font-medium">
-              {tool.name}
-            </span>
+            <span className="font-mono text-sm text-[#c0caf5] font-medium">{tool.name}</span>
           </div>
 
           {/* Arguments */}
@@ -103,8 +97,8 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
           <div className="flex items-start gap-2 p-3 bg-[#e0af68]/10 rounded-md border border-[#e0af68]/30">
             <AlertTriangle className="w-4 h-4 text-[#e0af68] flex-shrink-0 mt-0.5" />
             <p className="text-xs text-[#e0af68]">
-              This tool can modify files or execute commands on your system.
-              Review the arguments carefully before approving.
+              This tool can modify files or execute commands on your system. Review the arguments
+              carefully before approving.
             </p>
           </div>
         )}

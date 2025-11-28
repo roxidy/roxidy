@@ -1,7 +1,8 @@
-import { Terminal, Bot } from "lucide-react";
+import { Bot, Terminal } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useStore, useSessionMode } from "@/store";
 import type { SessionMode } from "@/store";
+import { useSessionMode, useStore } from "@/store";
 
 interface ModeToggleProps {
   sessionId: string;
@@ -19,21 +20,23 @@ export function ModeToggle({ sessionId }: ModeToggleProps) {
   return (
     <div className="flex items-center bg-[#1f2335] rounded-lg p-0.5">
       {options.map(({ value, label, icon: Icon }) => (
-        <button
+        <Button
           key={value}
+          variant="ghost"
+          size="sm"
           onClick={() => setSessionMode(sessionId, value)}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all",
+            "gap-1.5 h-7 px-3 text-xs font-medium",
             mode === value
               ? value === "terminal"
-                ? "bg-[#7aa2f7] text-[#1a1b26]"
-                : "bg-[#bb9af7] text-[#1a1b26]"
-              : "text-[#565f89] hover:text-[#c0caf5]"
+                ? "bg-[#7aa2f7] text-[#1a1b26] hover:bg-[#7aa2f7]/90 hover:text-[#1a1b26]"
+                : "bg-[#bb9af7] text-[#1a1b26] hover:bg-[#bb9af7]/90 hover:text-[#1a1b26]"
+              : "text-[#565f89] hover:text-[#c0caf5] hover:bg-transparent"
           )}
         >
           <Icon className="w-3.5 h-3.5" />
           {label}
-        </button>
+        </Button>
       ))}
     </div>
   );

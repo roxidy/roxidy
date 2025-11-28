@@ -39,4 +39,38 @@ pub enum AiEvent {
 
     /// Error occurred during processing
     Error { message: String, error_type: String },
+
+    // Sub-agent events
+
+    /// Sub-agent started executing a task
+    SubAgentStarted {
+        agent_id: String,
+        agent_name: String,
+        task: String,
+        depth: usize,
+    },
+
+    /// Sub-agent tool request (for visibility into sub-agent's tool usage)
+    SubAgentToolRequest {
+        agent_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+    },
+
+    /// Sub-agent tool result
+    SubAgentToolResult {
+        agent_id: String,
+        tool_name: String,
+        success: bool,
+    },
+
+    /// Sub-agent completed its task
+    SubAgentCompleted {
+        agent_id: String,
+        response: String,
+        duration_ms: u64,
+    },
+
+    /// Sub-agent encountered an error
+    SubAgentError { agent_id: String, error: String },
 }

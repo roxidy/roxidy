@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
+import { type AiEvent, onAiEvent } from "@/lib/ai";
 import { useStore } from "@/store";
-import { onAiEvent, type AiEvent } from "@/lib/ai";
 
 /**
  * Hook to subscribe to AI events from the Tauri backend
@@ -14,9 +14,8 @@ export function useAiEvents() {
   const addAgentMessage = useStore((state) => state.addAgentMessage);
   const updateAgentStreaming = useStore((state) => state.updateAgentStreaming);
   const clearAgentStreaming = useStore((state) => state.clearAgentStreaming);
-  const setPendingToolApproval = useStore(
-    (state) => state.setPendingToolApproval
-  );
+  const setPendingToolApproval = useStore((state) => state.setPendingToolApproval);
+  const isToolRequestProcessed = useStore((state) => state.isToolRequestProcessed);
   const activeSessionId = useStore((state) => state.activeSessionId);
 
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -35,6 +34,11 @@ export function useAiEvents() {
           break;
 
         case "tool_request":
+          // Deduplicate: ignore already-processed requests
+          if (isToolRequestProcessed(event.request_id)) {
+            console.debug("Ignoring duplicate tool_request:", event.request_id);
+            break;
+          }
           setPendingToolApproval(activeSessionId, {
             id: event.request_id,
             name: event.tool_name,
@@ -50,8 +54,7 @@ export function useAiEvents() {
 
         case "completed": {
           // Finalize streaming content as assistant message
-          const streaming =
-            useStore.getState().agentStreaming[activeSessionId] || "";
+          const streaming = useStore.getState().agentStreaming[activeSessionId] || "";
           const content = event.response || streaming;
 
           if (content) {
@@ -107,5 +110,6 @@ export function useAiEvents() {
     updateAgentStreaming,
     clearAgentStreaming,
     setPendingToolApproval,
+    isToolRequestProcessed,
   ]);
 }

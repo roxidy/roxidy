@@ -49,3 +49,7 @@ dotenvy = "0.15"
 rig-anthropic-vertex = { path = "crates/rig-anthropic-vertex" }
 rig-core = "0.23"
 
+# Graph-based workflow execution for multi-agent systems
+graph-flow = "0.4"
+async-trait = "0.1"
+

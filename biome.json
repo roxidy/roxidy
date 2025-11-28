@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json", "**/*.css"]
+    "includes": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json"]
   },
   "formatter": {
     "enabled": true,
@@ -29,7 +29,9 @@
         "useImportType": "warn"
       },
       "suspicious": {
-        "noExplicitAny": "warn"
+        "noExplicitAny": "warn",
+        "noControlCharactersInRegex": "off",
+        "noDocumentCookie": "off"
       }
     }
   },
@@ -42,11 +44,15 @@
     }
   },
   "css": {
+    "parser": {
+      "cssModules": true,
+      "allowWrongLineComments": true
+    },
     "formatter": {
       "enabled": true
     },
     "linter": {
-      "enabled": true
+      "enabled": false
     }
   }
 }

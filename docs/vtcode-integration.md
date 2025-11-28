@@ -1042,12 +1042,84 @@ run_pty_cmd = "prompt"
 3. **API Key Storage**: Consider using Tauri's secure storage for API keys
 4. **Human-in-the-Loop**: Implement approval dialogs for dangerous operations
 
+## Multi-Agent System with graph-flow
+
+The AI system now includes a multi-agent orchestration layer using [graph-flow](https://crates.io/crates/graph-flow):
+
+### Sub-Agent Definitions
+
+```rust
+// src-tauri/src/ai/sub_agent.rs
+
+pub struct SubAgentDefinition {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub allowed_tools: Vec<String>,
+    pub max_iterations: usize,
+}
+
+// Default sub-agents:
+// - code_analyzer: Analysis without modifications
+// - code_writer: Implements features
+// - test_runner: Executes and analyzes tests
+// - researcher: Web search and docs
+// - shell_executor: System commands
+```
+
+### Workflow Integration
+
+```rust
+// src-tauri/src/ai/workflow.rs
+
+use graph_flow::{Task, Context, TaskResult, NextAction, Graph};
+
+// Create a workflow graph
+let graph = AgentWorkflowBuilder::new("code_review")
+    .add_agent_task(analyzer_task)
+    .add_agent_task(writer_task)
+    .edge("analyzer", "writer")
+    .build()?;
+
+// Execute with session management
+let runner = WorkflowRunner::new_in_memory(graph);
+let session_id = runner.start_session("prompt", "analyzer").await?;
+let result = runner.run_to_completion(&session_id).await?;
+```
+
+### Sub-Agents as Tools
+
+The parent agent can invoke sub-agents as tools:
+
+```json
+{
+    "name": "sub_agent_code_analyzer",
+    "arguments": {
+        "task": "Analyze this module for issues",
+        "context": "Optional additional context"
+    }
+}
+```
+
+### Sub-Agent Events
+
+```rust
+// New events in src-tauri/src/ai/events.rs
+SubAgentStarted { agent_id, agent_name, task, depth }
+SubAgentToolRequest { agent_id, tool_name, args }
+SubAgentToolResult { agent_id, tool_name, success }
+SubAgentCompleted { agent_id, response, duration_ms }
+SubAgentError { agent_id, error }
+```
+
 ## Next Steps
 
 1. Implement tool approval UI in React
 2. Add conversation persistence
 3. Integrate with Roxidy's terminal for command execution
 4. Add support for MCP providers for extended capabilities
+5. Build workflow templates for common tasks
 
 ---
 
@@ -1060,5 +1132,6 @@ This document has been updated (2025-11-27) to reflect the actual vtcode-core AP
 - **LLMStreamEvent**: Returns `Token { delta }`, `Reasoning { delta }`, and `Completed { response }` variants
 - **Message**: Constructed via struct fields, not helper methods
 - **ThreadEvent**: Uses tuple structs (we emit `AiEvent` directly instead of converting)
+- **graph-flow**: Uses `Task` trait with `fn id(&self) -> &str` and `async fn run(&self, context: Context) -> Result<TaskResult>`
 
 The code above should be close to the actual API, but you may encounter minor differences. Let the compiler guide you through any remaining issues.

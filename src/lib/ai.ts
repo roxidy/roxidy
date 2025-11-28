@@ -71,10 +71,7 @@ export async function sendPrompt(prompt: string): Promise<string> {
 /**
  * Execute a specific tool with arguments
  */
-export async function executeTool(
-  toolName: string,
-  args: unknown
-): Promise<unknown> {
+export async function executeTool(toolName: string, args: unknown): Promise<unknown> {
   return invoke("execute_ai_tool", { toolName, args });
 }
 
@@ -96,9 +93,7 @@ export async function shutdownAiAgent(): Promise<void> {
  * Subscribe to AI events
  * Returns an unlisten function to stop listening
  */
-export function onAiEvent(
-  callback: (event: AiEvent) => void
-): Promise<UnlistenFn> {
+export function onAiEvent(callback: (event: AiEvent) => void): Promise<UnlistenFn> {
   return listen<AiEvent>("ai-event", (event) => callback(event.payload));
 }
 
@@ -139,10 +134,7 @@ export const DEFAULT_AI_CONFIG = {
  * Initialize AI with Claude Opus 4.5 via OpenRouter.
  * This is a convenience function that uses sensible defaults.
  */
-export async function initClaudeOpus(
-  workspace: string,
-  apiKey: string
-): Promise<void> {
+export async function initClaudeOpus(workspace: string, apiKey: string): Promise<void> {
   return initAiAgent({
     workspace,
     provider: DEFAULT_AI_CONFIG.provider,

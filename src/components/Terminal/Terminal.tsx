@@ -1,10 +1,10 @@
-import { useEffect, useRef, useCallback } from "react";
-import { Terminal as XTerm } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { listen } from "@tauri-apps/api/event";
-import { ptyWrite, ptyResize } from "../../lib/tauri";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { Terminal as XTerm } from "@xterm/xterm";
+import { useCallback, useEffect, useRef } from "react";
+import { ptyResize, ptyWrite } from "../../lib/tauri";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalProps {
@@ -46,7 +46,9 @@ export function Terminal({ sessionId }: TerminalProps) {
     }
 
     // Clear any previous cleanup functions before setting up new ones
-    cleanupFnsRef.current.forEach((fn) => fn());
+    for (const fn of cleanupFnsRef.current) {
+      fn();
+    }
     cleanupFnsRef.current = [];
 
     // Create terminal
@@ -144,7 +146,9 @@ export function Terminal({ sessionId }: TerminalProps) {
 
     return () => {
       resizeObserver.disconnect();
-      cleanupFnsRef.current.forEach((fn) => fn());
+      for (const fn of cleanupFnsRef.current) {
+        fn();
+      }
       cleanupFnsRef.current = [];
       terminal.dispose();
       terminalRef.current = null;

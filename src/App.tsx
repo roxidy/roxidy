@@ -1,65 +1,39 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-import { useStore, useSessionBlocks, useSessionMode } from "./store";
-import { useTauriEvents } from "./hooks/useTauriEvents";
-import {
-  ptyCreate,
-  shellIntegrationStatus,
-  shellIntegrationInstall,
-} from "./lib/tauri";
-import { CommandBlockList } from "./components/CommandBlock";
-import { AgentChatList, ToolApprovalDialog } from "./components/AgentChat";
-import { UnifiedInput } from "./components/UnifiedInput";
-import { TabBar } from "./components/TabBar";
+import { useCallback, useEffect, useState } from "react";
 import { Toaster, toast } from "sonner";
+import { ToolApprovalDialog } from "./components/AgentChat";
+import { CommandPalette, type PageRoute } from "./components/CommandPalette";
+import { TabBar } from "./components/TabBar";
+import { UnifiedInput } from "./components/UnifiedInput";
+import { UnifiedTimeline } from "./components/UnifiedTimeline";
+import { Skeleton } from "./components/ui/skeleton";
+import { useAiEvents } from "./hooks/useAiEvents";
+import { useTauriEvents } from "./hooks/useTauriEvents";
+import { initVertexClaudeOpus, isAiInitialized } from "./lib/ai";
+import { ptyCreate, shellIntegrationInstall, shellIntegrationStatus } from "./lib/tauri";
+import { ComponentTestbed } from "./pages/ComponentTestbed";
+import { useStore } from "./store";
 
-function TerminalPlaceholder() {
-  return (
-    <div className="flex items-center justify-center h-full text-[#565f89] text-sm">
-      <div className="text-center">
-        <p>No command blocks yet</p>
-        <p className="text-xs mt-1">Run commands in the terminal below</p>
-      </div>
-    </div>
-  );
-}
-
+// ContentArea now just renders the unified timeline
 function ContentArea({ sessionId }: { sessionId: string }) {
-  const mode = useSessionMode(sessionId);
-  const blocks = useSessionBlocks(sessionId);
-
-  if (mode === "terminal") {
-    if (blocks.length === 0) {
-      return <TerminalPlaceholder />;
-    }
-    return <CommandBlockList sessionId={sessionId} />;
-  }
-
-  // Agent mode
-  return <AgentChatList sessionId={sessionId} />;
+  return <UnifiedTimeline sessionId={sessionId} />;
 }
 
 function App() {
-  const { addSession, activeSessionId, sessions, setSessionMode } = useStore();
+  const { addSession, activeSessionId, sessions, setInputMode } = useStore();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const blocksContainerRef = useRef<HTMLDivElement>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState<PageRoute>("main");
 
-  // Get current session's working directory and blocks
+  // Get current session's working directory
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const workingDirectory = activeSession?.workingDirectory;
-  const blocks = useSessionBlocks(activeSessionId || "");
-
-  // Auto-scroll to bottom when new blocks are added (terminal mode only)
-  const mode = useSessionMode(activeSessionId || "");
-  useEffect(() => {
-    if (blocksContainerRef.current && blocks.length > 0 && mode === "terminal") {
-      blocksContainerRef.current.scrollTop =
-        blocksContainerRef.current.scrollHeight;
-    }
-  }, [blocks.length, mode]);
 
   // Connect Tauri events to store
   useTauriEvents();
+
+  // Subscribe to AI events for agent mode
+  useAiEvents();
 
   // Create a new terminal tab
   const handleNewTab = useCallback(async () => {
@@ -86,9 +60,7 @@ function App() {
         if (status.type === "NotInstalled") {
           toast.info("Installing shell integration...");
           await shellIntegrationInstall();
-          toast.success(
-            "Shell integration installed! Restart your shell for full features."
-          );
+          toast.success("Shell integration installed! Restart your shell for full features.");
         } else if (status.type === "Outdated") {
           toast.info("Updating shell integration...");
           await shellIntegrationInstall();
@@ -105,6 +77,24 @@ function App() {
           mode: "terminal",
         });
 
+        // Initialize AI agent with Vertex AI Claude Opus 4.5
+        // Uses the user's GCP service account credentials
+        try {
+          const alreadyInitialized = await isAiInitialized();
+          if (!alreadyInitialized) {
+            await initVertexClaudeOpus(
+              session.working_directory,
+              "/Users/xlyk/.keys/vertex-ai.json",
+              "futurhealth",
+              "us-east5"
+            );
+            toast.success("AI agent initialized (Claude Opus 4.5 on Vertex AI)");
+          }
+        } catch (aiError) {
+          console.error("Failed to initialize AI agent:", aiError);
+          toast.warning("AI agent not available - agent mode may not work");
+        }
+
         setIsLoading(false);
       } catch (e) {
         console.error("Failed to initialize:", e);
@@ -119,32 +109,59 @@ function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+K for command palette
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+
       // Cmd+T for new tab
       if ((e.metaKey || e.ctrlKey) && e.key === "t") {
         e.preventDefault();
         handleNewTab();
       }
-
-      // Cmd+1 for terminal mode, Cmd+2 for agent mode
-      if ((e.metaKey || e.ctrlKey) && activeSessionId) {
-        if (e.key === "1") {
-          e.preventDefault();
-          setSessionMode(activeSessionId, "terminal");
-        } else if (e.key === "2") {
-          e.preventDefault();
-          setSessionMode(activeSessionId, "agent");
-        }
-      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleNewTab, activeSessionId, setSessionMode]);
+  }, [handleNewTab]);
+
+  // Handle input mode change from command palette
+  // NOTE: This must be defined before any early returns to maintain hook order
+  const handleSetMode = useCallback(
+    (newMode: "terminal" | "agent") => {
+      if (activeSessionId) {
+        setInputMode(activeSessionId, newMode);
+      }
+    },
+    [activeSessionId, setInputMode]
+  );
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-[#1a1b26]">
-        <div className="text-[#c0caf5] text-lg">Loading...</div>
+      <div className="h-screen w-screen bg-[#1a1b26] flex flex-col overflow-hidden">
+        {/* Skeleton tab bar */}
+        <div className="flex items-center h-9 bg-[#16161e] border-b border-[#27293d] px-2 gap-2">
+          <Skeleton className="h-6 w-24 bg-[#1f2335]" />
+          <Skeleton className="h-6 w-6 rounded bg-[#1f2335]" />
+        </div>
+
+        {/* Skeleton content area */}
+        <div className="flex-1 p-4 space-y-3">
+          <Skeleton className="h-16 w-full bg-[#1f2335]" />
+          <Skeleton className="h-16 w-3/4 bg-[#1f2335]" />
+          <Skeleton className="h-16 w-5/6 bg-[#1f2335]" />
+        </div>
+
+        {/* Skeleton input area */}
+        <div className="bg-[#1a1b26] border-t border-[#1f2335] px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-4 w-32 bg-[#1f2335]" />
+            <Skeleton className="h-7 w-40 rounded-lg bg-[#1f2335]" />
+          </div>
+          <Skeleton className="h-8 w-full bg-[#1f2335]" />
+        </div>
       </div>
     );
   }
@@ -157,6 +174,35 @@ function App() {
     );
   }
 
+  // Render component testbed page
+  if (currentPage === "testbed") {
+    return (
+      <>
+        <ComponentTestbed />
+        <CommandPalette
+          open={commandPaletteOpen}
+          onOpenChange={setCommandPaletteOpen}
+          currentPage={currentPage}
+          onNavigate={setCurrentPage}
+          activeSessionId={activeSessionId}
+          onNewTab={handleNewTab}
+          onSetMode={handleSetMode}
+        />
+        <Toaster
+          position="bottom-right"
+          theme="dark"
+          toastOptions={{
+            style: {
+              background: "#1f2335",
+              border: "1px solid #3b4261",
+              color: "#c0caf5",
+            },
+          }}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="h-screen w-screen bg-[#1a1b26] flex flex-col overflow-hidden">
       {/* Tab bar */}
@@ -166,19 +212,13 @@ function App() {
       <div className="flex-1 min-h-0 flex flex-col">
         {activeSessionId ? (
           <>
-            {/* Scrollable content area */}
-            <div
-              ref={blocksContainerRef}
-              className="flex-1 overflow-auto bg-[#1a1b26]"
-            >
+            {/* Scrollable content area - auto-scroll handled in UnifiedTimeline */}
+            <div className="flex-1 overflow-auto bg-[#1a1b26]">
               <ContentArea sessionId={activeSessionId} />
             </div>
 
             {/* Unified input at bottom */}
-            <UnifiedInput
-              sessionId={activeSessionId}
-              workingDirectory={workingDirectory}
-            />
+            <UnifiedInput sessionId={activeSessionId} workingDirectory={workingDirectory} />
 
             {/* Tool approval dialog */}
             <ToolApprovalDialog sessionId={activeSessionId} />
@@ -189,6 +229,17 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* Command Palette */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        currentPage={currentPage}
+        onNavigate={setCurrentPage}
+        activeSessionId={activeSessionId}
+        onNewTab={handleNewTab}
+        onSetMode={handleSetMode}
+      />
 
       <Toaster
         position="bottom-right"

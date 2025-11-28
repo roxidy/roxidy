@@ -1,7 +1,10 @@
-import { Plus, X, Terminal, Bot } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useStore, type Session } from "@/store";
+import { Bot, Plus, Terminal, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ptyDestroy } from "@/lib/tauri";
+import { cn } from "@/lib/utils";
+import { type Session, useStore } from "@/store";
 
 interface TabBarProps {
   onNewTab: () => void;
@@ -26,49 +29,55 @@ export function TabBar({ onNewTab }: TabBarProps) {
   };
 
   return (
-    <div className="flex items-center h-9 bg-[#16161e] border-b border-[#27293d] px-1 gap-1">
-      {/* Tabs */}
-      {sessionList.map((session, index) => (
-        <Tab
-          key={session.id}
-          session={session}
-          index={index + 1}
-          isActive={session.id === activeSessionId}
-          onSelect={() => setActiveSession(session.id)}
-          onClose={(e) => handleCloseTab(e, session.id)}
-          canClose={sessionList.length > 1}
-        />
-      ))}
+    <TooltipProvider delayDuration={300}>
+      <div className="flex items-center h-9 bg-[#16161e] border-b border-[#27293d] px-1 gap-1">
+        <Tabs
+          value={activeSessionId || undefined}
+          onValueChange={setActiveSession}
+          className="flex-1 min-w-0"
+        >
+          <TabsList className="h-7 bg-transparent p-0 gap-1 w-full justify-start">
+            {sessionList.map((session) => (
+              <TabItem
+                key={session.id}
+                session={session}
+                isActive={session.id === activeSessionId}
+                onClose={(e) => handleCloseTab(e, session.id)}
+                canClose={sessionList.length > 1}
+              />
+            ))}
+          </TabsList>
+        </Tabs>
 
-      {/* New tab button */}
-      <button
-        onClick={onNewTab}
-        className="flex items-center justify-center w-7 h-7 rounded hover:bg-[#1f2335] text-[#565f89] hover:text-[#c0caf5] transition-colors"
-        title="New tab (Cmd+T)"
-      >
-        <Plus className="w-4 h-4" />
-      </button>
-    </div>
+        {/* New tab button */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onNewTab}
+              className="h-7 w-7 text-[#565f89] hover:text-[#c0caf5] hover:bg-[#1f2335]"
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            <p>New tab (⌘T)</p>
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
   );
 }
 
-interface TabProps {
+interface TabItemProps {
   session: Session;
-  index: number;
   isActive: boolean;
-  onSelect: () => void;
   onClose: (e: React.MouseEvent) => void;
   canClose: boolean;
 }
 
-function Tab({
-  session,
-  index: _index,
-  isActive,
-  onSelect,
-  onClose,
-  canClose,
-}: TabProps) {
+function TabItem({ session, isActive, onClose, canClose }: TabItemProps) {
   // Get short name from working directory
   const dirName = session.workingDirectory.split("/").pop() || "Terminal";
 
@@ -76,33 +85,35 @@ function Tab({
   const modeColor = session.mode === "agent" ? "text-[#bb9af7]" : "text-[#7aa2f7]";
 
   return (
-    <div
-      onClick={onSelect}
-      className={cn(
-        "group flex items-center gap-2 px-3 h-7 rounded cursor-pointer transition-colors min-w-0 max-w-[200px]",
-        isActive
-          ? "bg-[#1a1b26] text-[#c0caf5]"
-          : "text-[#565f89] hover:bg-[#1f2335] hover:text-[#a9b1d6]"
-      )}
-    >
-      {/* Mode icon */}
-      <ModeIcon
+    <div className="group relative flex items-center">
+      <TabsTrigger
+        value={session.id}
         className={cn(
-          "w-3.5 h-3.5 flex-shrink-0",
-          isActive ? modeColor : "text-[#565f89]"
+          "relative flex items-center gap-2 px-3 h-7 rounded-md min-w-0 max-w-[200px]",
+          "data-[state=active]:bg-[#1a1b26] data-[state=active]:text-[#c0caf5] data-[state=active]:shadow-none",
+          "data-[state=inactive]:text-[#565f89] data-[state=inactive]:hover:bg-[#1f2335] data-[state=inactive]:hover:text-[#a9b1d6]",
+          "border-none focus-visible:ring-0 focus-visible:ring-offset-0",
+          canClose && "pr-7" // Add padding for close button
         )}
-      />
+      >
+        {/* Mode icon */}
+        <ModeIcon
+          className={cn("w-3.5 h-3.5 flex-shrink-0", isActive ? modeColor : "text-[#565f89]")}
+        />
 
-      {/* Tab name */}
-      <span className="truncate text-sm">{dirName}</span>
+        {/* Tab name */}
+        <span className="truncate text-sm">{dirName}</span>
+      </TabsTrigger>
 
-      {/* Close button */}
+      {/* Close button - positioned outside TabsTrigger to avoid nested buttons */}
       {canClose && (
         <button
+          type="button"
           onClick={onClose}
           className={cn(
-            "flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity",
-            "hover:bg-[#3b4261] text-[#565f89] hover:text-[#c0caf5]"
+            "absolute right-1 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity",
+            "hover:bg-[#3b4261] text-[#565f89] hover:text-[#c0caf5]",
+            "z-10"
           )}
           title="Close tab"
         >

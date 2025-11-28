@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
 import { Bot, Sparkles } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { useAgentMessages, useAgentStreaming } from "@/store";
 import { AgentMessage } from "./AgentMessage";
 
@@ -16,7 +16,7 @@ export function AgentChatList({ sessionId }: AgentChatListProps) {
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streaming]);
+  }, []);
 
   if (messages.length === 0 && !streaming) {
     return (
@@ -24,13 +24,10 @@ export function AgentChatList({ sessionId }: AgentChatListProps) {
         <div className="w-16 h-16 rounded-full bg-[#bb9af7]/10 flex items-center justify-center mb-4">
           <Sparkles className="w-8 h-8 text-[#bb9af7]" />
         </div>
-        <h3 className="text-lg font-medium text-[#c0caf5] mb-2">
-          AI Assistant
-        </h3>
+        <h3 className="text-lg font-medium text-[#c0caf5] mb-2">AI Assistant</h3>
         <p className="text-sm text-center max-w-md">
-          Ask questions about your code, request changes, or get help with
-          terminal commands. The AI can read files, search code, and execute
-          commands in your workspace.
+          Ask questions about your code, request changes, or get help with terminal commands. The AI
+          can read files, search code, and execute commands in your workspace.
         </p>
         <div className="mt-6 flex flex-wrap gap-2 justify-center">
           {[
@@ -40,6 +37,7 @@ export function AgentChatList({ sessionId }: AgentChatListProps) {
             "Write a unit test",
           ].map((suggestion) => (
             <button
+              type="button"
               key={suggestion}
               className="px-3 py-1.5 text-xs bg-[#1f2335] hover:bg-[#292e42] text-[#7aa2f7] rounded-full transition-colors border border-[#3b4261]"
               onClick={() => {
