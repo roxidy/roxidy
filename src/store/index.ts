@@ -252,33 +252,37 @@ export const useStore = create<RoxidyState>()(
         set((state) => {
           const pending = state.pendingCommand[sessionId];
           if (pending) {
-            const blockId = crypto.randomUUID();
-            const block: CommandBlock = {
-              id: blockId,
-              sessionId,
-              command: pending.command || "",
-              output: pending.output,
-              exitCode,
-              startTime: pending.startTime,
-              durationMs: Date.now() - new Date(pending.startTime).getTime(),
-              workingDirectory: pending.workingDirectory,
-              isCollapsed: false,
-            };
-            if (!state.commandBlocks[sessionId]) {
-              state.commandBlocks[sessionId] = [];
-            }
-            state.commandBlocks[sessionId].push(block);
+            // Only create a command block if there was an actual command
+            // Skip empty commands (e.g., just pressing Enter at prompt)
+            if (pending.command) {
+              const blockId = crypto.randomUUID();
+              const block: CommandBlock = {
+                id: blockId,
+                sessionId,
+                command: pending.command,
+                output: pending.output,
+                exitCode,
+                startTime: pending.startTime,
+                durationMs: Date.now() - new Date(pending.startTime).getTime(),
+                workingDirectory: pending.workingDirectory,
+                isCollapsed: false,
+              };
+              if (!state.commandBlocks[sessionId]) {
+                state.commandBlocks[sessionId] = [];
+              }
+              state.commandBlocks[sessionId].push(block);
 
-            // Also push to unified timeline
-            if (!state.timelines[sessionId]) {
-              state.timelines[sessionId] = [];
+              // Also push to unified timeline
+              if (!state.timelines[sessionId]) {
+                state.timelines[sessionId] = [];
+              }
+              state.timelines[sessionId].push({
+                id: blockId,
+                type: "command",
+                timestamp: pending.startTime,
+                data: block,
+              });
             }
-            state.timelines[sessionId].push({
-              id: blockId,
-              type: "command",
-              timestamp: pending.startTime,
-              data: block,
-            });
 
             state.pendingCommand[sessionId] = null;
           }
@@ -286,20 +290,12 @@ export const useStore = create<RoxidyState>()(
 
       appendOutput: (sessionId, data) =>
         set((state) => {
-          let pending = state.pendingCommand[sessionId];
-          // Auto-create pending command if output arrives without command_start
-          // This ensures streaming works even without shell integration
-          if (!pending) {
-            const session = state.sessions[sessionId];
-            pending = {
-              command: null,
-              output: "",
-              startTime: new Date().toISOString(),
-              workingDirectory: session?.workingDirectory || "",
-            };
-            state.pendingCommand[sessionId] = pending;
+          const pending = state.pendingCommand[sessionId];
+          // Only append output if we have an active command (command_start was received)
+          // This prevents capturing prompt text as command output
+          if (pending) {
+            pending.output += data;
           }
-          pending.output += data;
         }),
 
       toggleBlockCollapse: (blockId) =>

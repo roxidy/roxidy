@@ -28,8 +28,9 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [timeline.length, streaming, pendingOutput]);
 
-  // Empty state - only show if no timeline, no streaming, and no pending command
-  if (timeline.length === 0 && !streaming && !pendingCommand) {
+  // Empty state - only show if no timeline, no streaming, and no command running
+  const hasRunningCommand = pendingCommand && pendingCommand.command;
+  if (timeline.length === 0 && !streaming && !hasRunningCommand) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-[#565f89] p-8">
         <div className="w-16 h-16 rounded-full bg-[#bb9af7]/10 flex items-center justify-center mb-4">
@@ -69,8 +70,8 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
         <UnifiedBlock key={block.id} block={block} />
       ))}
 
-      {/* Streaming output for running command */}
-      {pendingCommand && (
+      {/* Streaming output for running command - only show when there's an actual command */}
+      {pendingCommand && pendingCommand.command && (
         <div className="border-l-2 border-l-[#7aa2f7] mb-2">
           {/* Header */}
           <div className="flex items-center gap-2 px-3 py-2">
