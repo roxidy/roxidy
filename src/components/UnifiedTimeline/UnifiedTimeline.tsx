@@ -49,7 +49,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
         <div className="w-16 h-16 rounded-full bg-[#bb9af7]/10 flex items-center justify-center mb-4">
           <Sparkles className="w-8 h-8 text-[#bb9af7]" />
         </div>
-        <h3 className="text-lg font-medium text-[#c0caf5] mb-2">Roxidy</h3>
+        <h3 className="text-lg font-medium text-[#c0caf5] mb-2">Qbit</h3>
         <p className="text-sm text-center max-w-md">
           Run terminal commands or ask the AI assistant for help. Toggle between modes using the
           button in the input bar.

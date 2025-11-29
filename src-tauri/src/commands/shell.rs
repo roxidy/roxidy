@@ -1,4 +1,4 @@
-use crate::error::{Result, RoxidyError};
+use crate::error::{Result, QbitError};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -6,107 +6,107 @@ use std::path::PathBuf;
 
 const INTEGRATION_VERSION: &str = "1.0.0";
 
-const INTEGRATION_SCRIPT: &str = r#"# ~/.config/roxidy/integration.zsh
-# Roxidy Shell Integration v1.0.0
-# Do not edit - managed by Roxidy
+const INTEGRATION_SCRIPT: &str = r#"# ~/.config/qbit/integration.zsh
+# Qbit Shell Integration v1.0.0
+# Do not edit - managed by Qbit
 
 # Guard against double-sourcing
-[[ -n "$ROXIDY_INTEGRATION_LOADED" ]] && return
-export ROXIDY_INTEGRATION_LOADED=1
+[[ -n "$QBIT_INTEGRATION_LOADED" ]] && return
+export QBIT_INTEGRATION_LOADED=1
 
-# Only run inside Roxidy
-[[ -z "$ROXIDY" ]] && return
+# Only run inside Qbit
+[[ -z "$QBIT" ]] && return
 
 # ============ OSC Helpers ============
 
-__roxidy_osc() {
+__qbit_osc() {
     printf '\e]133;%s\e\\' "$1"
 }
 
-__roxidy_report_cwd() {
+__qbit_report_cwd() {
     printf '\e]7;file://%s%s\e\\' "${HOST:-$(hostname)}" "$PWD"
 }
 
-__roxidy_notify() {
+__qbit_notify() {
     printf '\e]9;%s\e\\' "$1"
 }
 
 # ============ Prompt Markers ============
 
-__roxidy_prompt_start() {
-    __roxidy_osc "A"
+__qbit_prompt_start() {
+    __qbit_osc "A"
 }
 
-__roxidy_prompt_end() {
-    __roxidy_osc "B"
+__qbit_prompt_end() {
+    __qbit_osc "B"
 }
 
-__roxidy_cmd_start() {
+__qbit_cmd_start() {
     local cmd="$1"
     if [[ -n "$cmd" ]]; then
-        __roxidy_osc "C;$cmd"
+        __qbit_osc "C;$cmd"
     else
-        __roxidy_osc "C"
+        __qbit_osc "C"
     fi
-    ROXIDY_CMD_START=$EPOCHREALTIME
+    QBIT_CMD_START=$EPOCHREALTIME
 }
 
-__roxidy_cmd_end() {
+__qbit_cmd_end() {
     local exit_code=${1:-0}
-    __roxidy_osc "D;$exit_code"
+    __qbit_osc "D;$exit_code"
 
-    if [[ -n "$ROXIDY_CMD_START" ]]; then
-        local duration=$(( ${EPOCHREALTIME%.*} - ${ROXIDY_CMD_START%.*} ))
+    if [[ -n "$QBIT_CMD_START" ]]; then
+        local duration=$(( ${EPOCHREALTIME%.*} - ${QBIT_CMD_START%.*} ))
         if (( duration > 10 )); then
-            __roxidy_notify "Command finished (${duration}s)"
+            __qbit_notify "Command finished (${duration}s)"
         fi
     fi
-    unset ROXIDY_CMD_START
+    unset QBIT_CMD_START
 }
 
 # ============ Hook Functions ============
 
-__roxidy_preexec() {
-    __roxidy_cmd_start "$1"
+__qbit_preexec() {
+    __qbit_cmd_start "$1"
 }
 
-__roxidy_precmd() {
+__qbit_precmd() {
     local exit_code=$?
-    __roxidy_cmd_end $exit_code
-    __roxidy_report_cwd
-    __roxidy_prompt_start
+    __qbit_cmd_end $exit_code
+    __qbit_report_cwd
+    __qbit_prompt_start
 }
 
-__roxidy_line_init() {
-    __roxidy_prompt_end
+__qbit_line_init() {
+    __qbit_prompt_end
 }
 
 # ============ Register Hooks ============
 
 autoload -Uz add-zsh-hook
 
-add-zsh-hook -d preexec __roxidy_preexec 2>/dev/null
-add-zsh-hook -d precmd __roxidy_precmd 2>/dev/null
+add-zsh-hook -d preexec __qbit_preexec 2>/dev/null
+add-zsh-hook -d precmd __qbit_precmd 2>/dev/null
 
-add-zsh-hook preexec __roxidy_preexec
-add-zsh-hook precmd __roxidy_precmd
+add-zsh-hook preexec __qbit_preexec
+add-zsh-hook precmd __qbit_precmd
 
 if [[ -o zle ]]; then
     if (( ${+functions[zle-line-init]} )); then
-        functions[__roxidy_orig_zle_line_init]="${functions[zle-line-init]}"
+        functions[__qbit_orig_zle_line_init]="${functions[zle-line-init]}"
         zle-line-init() {
-            __roxidy_orig_zle_line_init
-            __roxidy_line_init
+            __qbit_orig_zle_line_init
+            __qbit_line_init
         }
     else
         zle-line-init() {
-            __roxidy_line_init
+            __qbit_line_init
         }
     fi
     zle -N zle-line-init
 fi
 
-__roxidy_report_cwd
+__qbit_report_cwd
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,7 +118,7 @@ pub enum IntegrationStatus {
 }
 
 fn get_config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join("roxidy"))
+    dirs::config_dir().map(|p| p.join("qbit"))
 }
 
 fn get_integration_path() -> Option<PathBuf> {
@@ -132,14 +132,14 @@ fn get_version_path() -> Option<PathBuf> {
 #[tauri::command]
 pub async fn shell_integration_status() -> Result<IntegrationStatus> {
     let version_path = get_version_path()
-        .ok_or_else(|| RoxidyError::Internal("Could not determine config directory".into()))?;
+        .ok_or_else(|| QbitError::Internal("Could not determine config directory".into()))?;
 
     if !version_path.exists() {
         return Ok(IntegrationStatus::NotInstalled);
     }
 
     let current_version = fs::read_to_string(&version_path)
-        .map_err(|e| RoxidyError::Io(e))?
+        .map_err(|e| QbitError::Io(e))?
         .trim()
         .to_string();
 
@@ -158,18 +158,18 @@ pub async fn shell_integration_status() -> Result<IntegrationStatus> {
 #[tauri::command]
 pub async fn shell_integration_install() -> Result<()> {
     let config_dir = get_config_dir()
-        .ok_or_else(|| RoxidyError::Internal("Could not determine config directory".into()))?;
+        .ok_or_else(|| QbitError::Internal("Could not determine config directory".into()))?;
 
     // Create config directory
-    fs::create_dir_all(&config_dir).map_err(|e| RoxidyError::Io(e))?;
+    fs::create_dir_all(&config_dir).map_err(|e| QbitError::Io(e))?;
 
     // Write integration script
     let script_path = config_dir.join("integration.zsh");
-    fs::write(&script_path, INTEGRATION_SCRIPT).map_err(|e| RoxidyError::Io(e))?;
+    fs::write(&script_path, INTEGRATION_SCRIPT).map_err(|e| QbitError::Io(e))?;
 
     // Write version marker
     let version_path = config_dir.join("integration.version");
-    fs::write(&version_path, INTEGRATION_VERSION).map_err(|e| RoxidyError::Io(e))?;
+    fs::write(&version_path, INTEGRATION_VERSION).map_err(|e| QbitError::Io(e))?;
 
     // Update .zshrc
     update_zshrc()?;
@@ -180,16 +180,16 @@ pub async fn shell_integration_install() -> Result<()> {
 #[tauri::command]
 pub async fn shell_integration_uninstall() -> Result<()> {
     let config_dir = get_config_dir()
-        .ok_or_else(|| RoxidyError::Internal("Could not determine config directory".into()))?;
+        .ok_or_else(|| QbitError::Internal("Could not determine config directory".into()))?;
 
     let script_path = config_dir.join("integration.zsh");
     let version_path = config_dir.join("integration.version");
 
     if script_path.exists() {
-        fs::remove_file(&script_path).map_err(|e| RoxidyError::Io(e))?;
+        fs::remove_file(&script_path).map_err(|e| QbitError::Io(e))?;
     }
     if version_path.exists() {
-        fs::remove_file(&version_path).map_err(|e| RoxidyError::Io(e))?;
+        fs::remove_file(&version_path).map_err(|e| QbitError::Io(e))?;
     }
 
     Ok(())
@@ -197,18 +197,18 @@ pub async fn shell_integration_uninstall() -> Result<()> {
 
 fn update_zshrc() -> Result<()> {
     let zshrc_path = dirs::home_dir()
-        .ok_or_else(|| RoxidyError::Internal("Could not determine home directory".into()))?
+        .ok_or_else(|| QbitError::Internal("Could not determine home directory".into()))?
         .join(".zshrc");
 
     let source_line = r#"
-# Roxidy shell integration
-[[ -n "$ROXIDY" ]] && source ~/.config/roxidy/integration.zsh
+# Qbit shell integration
+[[ -n "$QBIT" ]] && source ~/.config/qbit/integration.zsh
 "#;
 
     // Check if already present
     if zshrc_path.exists() {
-        let content = fs::read_to_string(&zshrc_path).map_err(|e| RoxidyError::Io(e))?;
-        if content.contains("roxidy/integration.zsh") {
+        let content = fs::read_to_string(&zshrc_path).map_err(|e| QbitError::Io(e))?;
+        if content.contains("qbit/integration.zsh") {
             return Ok(());
         }
     }
@@ -218,9 +218,9 @@ fn update_zshrc() -> Result<()> {
         .create(true)
         .append(true)
         .open(&zshrc_path)
-        .map_err(|e| RoxidyError::Io(e))?;
+        .map_err(|e| QbitError::Io(e))?;
 
-    writeln!(file, "{}", source_line).map_err(|e| RoxidyError::Io(e))?;
+    writeln!(file, "{}", source_line).map_err(|e| QbitError::Io(e))?;
 
     Ok(())
 }

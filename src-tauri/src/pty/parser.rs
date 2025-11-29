@@ -429,11 +429,11 @@ mod tests {
     #[test]
     fn test_osc_7_directory_deep_path() {
         let mut parser = TerminalParser::new();
-        let data = b"\x1b]7;file://macbook.local/Users/xlyk/Code/roxidy/src-tauri\x07";
+        let data = b"\x1b]7;file://macbook.local/Users/xlyk/Code/qbit/src-tauri\x07";
         let events = parser.parse(data);
         assert_eq!(events.len(), 1);
         if let OscEvent::DirectoryChanged { path } = &events[0] {
-            assert_eq!(path, "/Users/xlyk/Code/roxidy/src-tauri");
+            assert_eq!(path, "/Users/xlyk/Code/qbit/src-tauri");
         } else {
             panic!("Expected DirectoryChanged");
         }

@@ -2,7 +2,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum RoxidyError {
+pub enum QbitError {
     #[error("PTY error: {0}")]
     Pty(String),
 
@@ -17,7 +17,7 @@ pub enum RoxidyError {
 }
 
 // Implement Serialize for Tauri
-impl Serialize for RoxidyError {
+impl Serialize for QbitError {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -27,4 +27,4 @@ impl Serialize for RoxidyError {
 }
 
 // Convert to Tauri-compatible result
-pub type Result<T> = std::result::Result<T, RoxidyError>;
+pub type Result<T> = std::result::Result<T, QbitError>;

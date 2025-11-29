@@ -1,4 +1,4 @@
-use crate::error::{Result, RoxidyError};
+use crate::error::{Result, QbitError};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
@@ -88,13 +88,13 @@ impl PtyManager {
 
         let pair = pty_system
             .openpty(size)
-            .map_err(|e| RoxidyError::Pty(e.to_string()))?;
+            .map_err(|e| QbitError::Pty(e.to_string()))?;
 
         let mut cmd = CommandBuilder::new("zsh");
         cmd.args(["-l"]);
 
-        cmd.env("ROXIDY", "1");
-        cmd.env("ROXIDY_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.env("QBIT", "1");
+        cmd.env("QBIT_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("TERM", "xterm-256color");
 
         let work_dir = working_directory.unwrap_or_else(|| {
@@ -105,12 +105,12 @@ impl PtyManager {
         let child = pair
             .slave
             .spawn_command(cmd)
-            .map_err(|e| RoxidyError::Pty(e.to_string()))?;
+            .map_err(|e| QbitError::Pty(e.to_string()))?;
 
         let writer = pair
             .master
             .take_writer()
-            .map_err(|e| RoxidyError::Pty(e.to_string()))?;
+            .map_err(|e| QbitError::Pty(e.to_string()))?;
 
         let master = Arc::new(Mutex::new(pair.master));
 
@@ -137,7 +137,7 @@ impl PtyManager {
         let mut reader = {
             let master = master.lock();
             master.try_clone_reader()
-                .map_err(|e| RoxidyError::Pty(e.to_string()))?
+                .map_err(|e| QbitError::Pty(e.to_string()))?
         };
 
         thread::spawn(move || {
@@ -225,11 +225,11 @@ impl PtyManager {
         let sessions = self.sessions.lock();
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| RoxidyError::SessionNotFound(session_id.to_string()))?;
+            .ok_or_else(|| QbitError::SessionNotFound(session_id.to_string()))?;
 
         let mut writer = session.writer.lock();
-        writer.write_all(data).map_err(RoxidyError::Io)?;
-        writer.flush().map_err(RoxidyError::Io)?;
+        writer.write_all(data).map_err(QbitError::Io)?;
+        writer.flush().map_err(QbitError::Io)?;
 
         Ok(())
     }
@@ -238,7 +238,7 @@ impl PtyManager {
         let sessions = self.sessions.lock();
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| RoxidyError::SessionNotFound(session_id.to_string()))?;
+            .ok_or_else(|| QbitError::SessionNotFound(session_id.to_string()))?;
 
         let master = session.master.lock();
         master
@@ -248,7 +248,7 @@ impl PtyManager {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| RoxidyError::Pty(e.to_string()))?;
+            .map_err(|e| QbitError::Pty(e.to_string()))?;
 
         *session.rows.lock() = rows;
         *session.cols.lock() = cols;
@@ -260,7 +260,7 @@ impl PtyManager {
         let mut sessions = self.sessions.lock();
         sessions
             .remove(session_id)
-            .ok_or_else(|| RoxidyError::SessionNotFound(session_id.to_string()))?;
+            .ok_or_else(|| QbitError::SessionNotFound(session_id.to_string()))?;
         Ok(())
     }
 
@@ -268,7 +268,7 @@ impl PtyManager {
         let sessions = self.sessions.lock();
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| RoxidyError::SessionNotFound(session_id.to_string()))?;
+            .ok_or_else(|| QbitError::SessionNotFound(session_id.to_string()))?;
 
         let working_directory = session.working_directory.lock().to_string_lossy().to_string();
         let rows = *session.rows.lock();

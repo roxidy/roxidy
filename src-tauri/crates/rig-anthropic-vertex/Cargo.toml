@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Anthropic Claude models on Google Cloud Vertex AI provider for rig"
 license = "MIT"
-repository = "https://github.com/xlyk/roxidy"
+repository = "https://github.com/xlyk/qbit"
 
 [dependencies]
 # Rig core

@@ -33,7 +33,7 @@ describe("UnifiedTimeline", () => {
     it("should show empty state when no timeline, no streaming, and no running command", () => {
       render(<UnifiedTimeline sessionId="test-session" />);
 
-      expect(screen.getByText("Roxidy")).toBeInTheDocument();
+      expect(screen.getByText("Qbit")).toBeInTheDocument();
       expect(screen.getByText(/Run terminal commands or ask the AI assistant/)).toBeInTheDocument();
     });
 
@@ -51,7 +51,7 @@ describe("UnifiedTimeline", () => {
       render(<UnifiedTimeline sessionId="test-session" />);
 
       // Empty state text should NOT be visible
-      expect(screen.queryByText("Roxidy")).not.toBeInTheDocument();
+      expect(screen.queryByText("Qbit")).not.toBeInTheDocument();
       // Running command should be visible
       expect(screen.getByText("ls -la")).toBeInTheDocument();
     });
@@ -64,7 +64,7 @@ describe("UnifiedTimeline", () => {
       render(<UnifiedTimeline sessionId="test-session" />);
 
       // Should still show empty state since there's no actual command
-      expect(screen.getByText("Roxidy")).toBeInTheDocument();
+      expect(screen.getByText("Qbit")).toBeInTheDocument();
     });
 
     it("should NOT show empty state when agent is streaming", () => {
@@ -72,7 +72,7 @@ describe("UnifiedTimeline", () => {
 
       render(<UnifiedTimeline sessionId="test-session" />);
 
-      expect(screen.queryByText("Roxidy")).not.toBeInTheDocument();
+      expect(screen.queryByText("Qbit")).not.toBeInTheDocument();
       expect(screen.getByText("Thinking...")).toBeInTheDocument();
     });
   });
@@ -178,7 +178,7 @@ describe("UnifiedTimeline", () => {
       render(<UnifiedTimeline sessionId="test-session" />);
 
       // Should show empty state, not "Running..."
-      expect(screen.getByText("Roxidy")).toBeInTheDocument();
+      expect(screen.getByText("Qbit")).toBeInTheDocument();
       expect(screen.queryByText("Running...")).not.toBeInTheDocument();
     });
 
@@ -192,7 +192,7 @@ describe("UnifiedTimeline", () => {
       render(<UnifiedTimeline sessionId="test-session" />);
 
       // Should show empty state, not a block with "(empty command)"
-      expect(screen.getByText("Roxidy")).toBeInTheDocument();
+      expect(screen.getByText("Qbit")).toBeInTheDocument();
       expect(useStore.getState().commandBlocks["test-session"]).toHaveLength(0);
     });
 
@@ -205,7 +205,7 @@ describe("UnifiedTimeline", () => {
       render(<UnifiedTimeline sessionId="test-session" />);
 
       // Should show empty state
-      expect(screen.getByText("Roxidy")).toBeInTheDocument();
+      expect(screen.getByText("Qbit")).toBeInTheDocument();
       // pendingCommand should still be null
       expect(useStore.getState().pendingCommand["test-session"]).toBeNull();
     });
@@ -219,7 +219,7 @@ describe("UnifiedTimeline", () => {
       render(<UnifiedTimeline sessionId="test-session" />);
 
       // Should show empty state
-      expect(screen.getByText("Roxidy")).toBeInTheDocument();
+      expect(screen.getByText("Qbit")).toBeInTheDocument();
       expect(useStore.getState().commandBlocks["test-session"]).toHaveLength(0);
     });
   });

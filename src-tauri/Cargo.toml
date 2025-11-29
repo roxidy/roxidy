@@ -1,12 +1,12 @@
 [package]
-name = "roxidy"
+name = "qbit"
 version = "0.1.0"
 description = "AI-powered terminal emulator"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "roxidy_lib"
+name = "qbit_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -1,12 +1,12 @@
-# Roxidy
+# Qbit
 
 **A powerful open-source agentic terminal, built with Rust.**
 
-Warp showed us what a modern terminal could be. Roxidy takes that vision and makes it yours—fully open source and built for developers who want to own their tools.
+Warp showed us what a modern terminal could be. Qbit takes that vision and makes it yours—fully open source and built for developers who want to own their tools.
 
 <!-- TODO: Add screenshot or demo GIF here -->
 
-## Why Roxidy?
+## Why Qbit?
 
 - **Open Source** — No black boxes. Read the code, modify it, make it yours.
 - **AI-Native** — Built-in agent system supporting all [vtcode](https://github.com/vinhnx/vtcode) providers (OpenRouter, OpenAI, Google Gemini, and more) plus Anthropic on Vertex AI. Bring your own API keys.
@@ -77,7 +77,7 @@ All tools run with workspace isolation, audit logging, and human-in-the-loop app
 
 ## Contributing
 
-Roxidy is early-stage and moving fast. If you're interested in building the future of terminal emulators, we'd love your help.
+Qbit is early-stage and moving fast. If you're interested in building the future of terminal emulators, we'd love your help.
 
 ```bash
 pnpm check:fix    # Lint + format (Biome)

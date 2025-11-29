@@ -1,4 +1,4 @@
-# Roxidy - Tauri Terminal App
+# Qbit - Tauri Terminal App
 # Run `just` to see all available commands
 
 # Default recipe - show help
@@ -148,7 +148,7 @@ update-rust:
 
 # Kill any running dev processes
 kill:
-    -pkill -f "target/debug/roxidy" 2>/dev/null
+    -pkill -f "target/debug/qbit" 2>/dev/null
     -pkill -f "vite" 2>/dev/null
     -lsof -ti:1420 | xargs kill -9 2>/dev/null
 

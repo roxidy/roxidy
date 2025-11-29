@@ -32,7 +32,7 @@ enum LlmClient {
     VertexAnthropic(rig_anthropic_vertex::CompletionModel),
 }
 
-/// Bridge between Roxidy and LLM providers.
+/// Bridge between Qbit and LLM providers.
 /// Handles LLM streaming and tool execution.
 pub struct AgentBridge {
     /// Current workspace/working directory - can be updated dynamically

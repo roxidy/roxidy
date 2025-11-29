@@ -110,7 +110,7 @@ interface PendingCommand {
   workingDirectory: string;
 }
 
-interface RoxidyState {
+interface QbitState {
   // Sessions
   sessions: Record<string, Session>;
   activeSessionId: string | null;
@@ -200,7 +200,7 @@ interface RoxidyState {
   setAiConfig: (config: Partial<AiConfig>) => void;
 }
 
-export const useStore = create<RoxidyState>()(
+export const useStore = create<QbitState>()(
   devtools(
     immer((set, _get) => ({
       sessions: {},
@@ -601,7 +601,7 @@ export const useStore = create<RoxidyState>()(
           state.aiConfig = { ...state.aiConfig, ...config };
         }),
     })),
-    { name: "roxidy" }
+    { name: "qbit" }
   )
 );
 
