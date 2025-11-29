@@ -1,4 +1,4 @@
-import { Bot, FileText, Keyboard, Palette, Plus, Settings, Terminal } from "lucide-react";
+import { Bot, FileText, Keyboard, Palette, Plus, Settings, Terminal, Trash2 } from "lucide-react";
 import { useCallback } from "react";
 import {
   CommandDialog,
@@ -21,6 +21,7 @@ interface CommandPaletteProps {
   activeSessionId: string | null;
   onNewTab: () => void;
   onSetMode: (mode: "terminal" | "agent") => void;
+  onClearConversation: () => void;
 }
 
 export function CommandPalette({
@@ -31,6 +32,7 @@ export function CommandPalette({
   activeSessionId,
   onNewTab,
   onSetMode,
+  onClearConversation,
 }: CommandPaletteProps) {
   // Handle command selection
   const runCommand = useCallback(
@@ -91,6 +93,11 @@ export function CommandPalette({
                 <Bot className="mr-2 h-4 w-4" />
                 <span>Switch to Agent Mode</span>
                 <CommandShortcut>⌘2</CommandShortcut>
+              </CommandItem>
+              <CommandItem onSelect={() => runCommand(onClearConversation)}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                <span>Clear Conversation</span>
+                <CommandShortcut>⌘K</CommandShortcut>
               </CommandItem>
             </>
           )}

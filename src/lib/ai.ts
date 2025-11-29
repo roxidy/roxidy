@@ -137,6 +137,22 @@ export async function updateAiWorkspace(workspace: string): Promise<void> {
 }
 
 /**
+ * Clear the AI agent's conversation history.
+ * Call this when starting a new conversation or when the user wants to reset context.
+ */
+export async function clearAiConversation(): Promise<void> {
+  return invoke("clear_ai_conversation");
+}
+
+/**
+ * Get the current conversation history length.
+ * Useful for debugging or showing context status in the UI.
+ */
+export async function getAiConversationLength(): Promise<number> {
+  return invoke("get_ai_conversation_length");
+}
+
+/**
  * Get the OpenRouter API key from environment variables.
  * Returns null if not set.
  */

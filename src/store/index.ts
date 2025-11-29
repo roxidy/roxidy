@@ -664,3 +664,18 @@ export const useAiConfig = () => useStore((state) => state.aiConfig);
 // Agent thinking selector
 export const useIsAgentThinking = (sessionId: string) =>
   useStore((state) => state.isAgentThinking[sessionId] ?? false);
+
+// Helper function to clear conversation (both frontend and backend)
+// This should be called instead of clearTimeline when you want to reset AI context
+export async function clearConversation(sessionId: string): Promise<void> {
+  // Clear frontend state
+  useStore.getState().clearTimeline(sessionId);
+
+  // Clear backend conversation history
+  try {
+    const { clearAiConversation } = await import("@/lib/ai");
+    await clearAiConversation();
+  } catch (error) {
+    console.warn("Failed to clear backend conversation history:", error);
+  }
+}

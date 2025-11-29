@@ -5,9 +5,9 @@ mod pty;
 mod state;
 
 use ai::{
-    execute_ai_tool, get_available_tools, get_openrouter_api_key, get_vertex_ai_config,
-    init_ai_agent, init_ai_agent_vertex, is_ai_initialized, load_env_file, send_ai_prompt,
-    shutdown_ai_agent, update_ai_workspace,
+    clear_ai_conversation, execute_ai_tool, get_ai_conversation_length, get_available_tools,
+    get_openrouter_api_key, get_vertex_ai_config, init_ai_agent, init_ai_agent_vertex,
+    is_ai_initialized, load_env_file, send_ai_prompt, shutdown_ai_agent, update_ai_workspace,
 };
 use commands::*;
 use state::AppState;
@@ -57,6 +57,8 @@ pub fn run() {
             get_vertex_ai_config,
             load_env_file,
             update_ai_workspace,
+            clear_ai_conversation,
+            get_ai_conversation_length,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

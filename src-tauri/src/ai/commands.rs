@@ -326,3 +326,29 @@ pub fn get_vertex_ai_config() -> VertexAiEnvConfig {
         location,
     }
 }
+
+/// Clear the AI agent's conversation history.
+/// Call this when starting a new conversation or when the user wants to reset context.
+#[tauri::command]
+pub async fn clear_ai_conversation(state: State<'_, AppState>) -> Result<(), String> {
+    let bridge_guard = state.ai_state.bridge.read().await;
+    let bridge = bridge_guard
+        .as_ref()
+        .ok_or("AI agent not initialized. Call init_ai_agent first.")?;
+
+    bridge.clear_conversation_history().await;
+    tracing::info!("AI conversation history cleared");
+    Ok(())
+}
+
+/// Get the current conversation history length.
+/// Useful for debugging or showing context status in the UI.
+#[tauri::command]
+pub async fn get_ai_conversation_length(state: State<'_, AppState>) -> Result<usize, String> {
+    let bridge_guard = state.ai_state.bridge.read().await;
+    let bridge = bridge_guard
+        .as_ref()
+        .ok_or("AI agent not initialized. Call init_ai_agent first.")?;
+
+    Ok(bridge.conversation_history_len().await)
+}

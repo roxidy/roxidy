@@ -18,7 +18,7 @@ import {
 } from "./lib/ai";
 import { ptyCreate, shellIntegrationInstall, shellIntegrationStatus } from "./lib/tauri";
 import { ComponentTestbed } from "./pages/ComponentTestbed";
-import { useStore } from "./store";
+import { clearConversation, useStore } from "./store";
 
 // ContentArea now just renders the unified timeline
 function ContentArea({ sessionId }: { sessionId: string }) {
@@ -137,7 +137,10 @@ function App() {
             // Sync AI workspace with the session's current working directory
             // The shell may have already reported a directory change before AI initialized
             const currentSession = useStore.getState().sessions[session.id];
-            if (currentSession?.workingDirectory && currentSession.workingDirectory !== vertexConfig.workspace) {
+            if (
+              currentSession?.workingDirectory &&
+              currentSession.workingDirectory !== vertexConfig.workspace
+            ) {
               await updateAiWorkspace(currentSession.workingDirectory);
             }
           } else {
@@ -200,6 +203,14 @@ function App() {
     [activeSessionId, setInputMode]
   );
 
+  // Handle clear conversation from command palette
+  const handleClearConversation = useCallback(async () => {
+    if (activeSessionId) {
+      await clearConversation(activeSessionId);
+      toast.success("Conversation cleared");
+    }
+  }, [activeSessionId]);
+
   if (isLoading) {
     return (
       <div className="h-screen w-screen bg-[#1a1b26] flex flex-col overflow-hidden">
@@ -249,6 +260,7 @@ function App() {
           activeSessionId={activeSessionId}
           onNewTab={handleNewTab}
           onSetMode={handleSetMode}
+          onClearConversation={handleClearConversation}
         />
         <Toaster
           position="bottom-right"
@@ -305,6 +317,7 @@ function App() {
         activeSessionId={activeSessionId}
         onNewTab={handleNewTab}
         onSetMode={handleSetMode}
+        onClearConversation={handleClearConversation}
       />
 
       <Toaster

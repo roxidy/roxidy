@@ -50,6 +50,8 @@ pub struct AgentBridge {
     pty_manager: Option<Arc<PtyManager>>,
     /// Current session ID for terminal execution (set per-request)
     current_session_id: Arc<RwLock<Option<String>>>,
+    /// Persisted conversation history for multi-turn conversations
+    conversation_history: Arc<RwLock<Vec<Message>>>,
 }
 
 impl AgentBridge {
@@ -97,6 +99,7 @@ impl AgentBridge {
             sub_agent_registry: Arc::new(RwLock::new(sub_agent_registry)),
             pty_manager: None,
             current_session_id: Arc::new(RwLock::new(None)),
+            conversation_history: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -145,6 +148,7 @@ impl AgentBridge {
             sub_agent_registry: Arc::new(RwLock::new(sub_agent_registry)),
             pty_manager: None,
             current_session_id: Arc::new(RwLock::new(None)),
+            conversation_history: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -564,14 +568,19 @@ When to use sub-agents:
         );
         drop(workspace_path);
 
-        // Build initial chat history
-        let mut chat_history: Vec<Message> = vec![
-            Message::User {
-                content: OneOrMany::one(UserContent::Text(Text {
-                    text: initial_prompt.to_string(),
-                })),
-            },
-        ];
+        // Load persisted conversation history and add the new user message
+        let mut history_guard = self.conversation_history.write().await;
+
+        // Add the new user message to history
+        history_guard.push(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: initial_prompt.to_string(),
+            })),
+        });
+
+        // Clone history for use in the loop (we'll update the persisted version at the end)
+        let mut chat_history: Vec<Message> = history_guard.clone();
+        drop(history_guard);
 
         let mut accumulated_response = String::new();
         let mut iteration = 0;
@@ -733,6 +742,23 @@ When to use sub-agents:
         }
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        // Persist the updated conversation history (includes all messages from this turn)
+        // We need to add the final assistant response if there was text content
+        {
+            let mut history_guard = self.conversation_history.write().await;
+            // The chat_history now contains all messages including tool calls and results
+            // We want to persist a clean version: user message + final assistant text
+            // For simplicity, we'll store the final assistant text response
+            if !accumulated_response.is_empty() {
+                history_guard.push(Message::Assistant {
+                    id: None,
+                    content: OneOrMany::one(AssistantContent::Text(Text {
+                        text: accumulated_response.clone(),
+                    })),
+                });
+            }
+        }
 
         // Emit completion event
         let _ = self.event_tx.send(AiEvent::Completed {
@@ -1073,6 +1099,19 @@ When to use sub-agents:
     pub async fn has_sub_agent(&self, agent_id: &str) -> bool {
         let registry = self.sub_agent_registry.read().await;
         registry.contains(agent_id)
+    }
+
+    /// Clear the conversation history.
+    /// Call this when starting a new conversation or when the user wants to reset context.
+    pub async fn clear_conversation_history(&self) {
+        let mut history = self.conversation_history.write().await;
+        history.clear();
+        tracing::debug!("Conversation history cleared");
+    }
+
+    /// Get the current conversation history length (for debugging/UI).
+    pub async fn conversation_history_len(&self) -> usize {
+        self.conversation_history.read().await.len()
     }
 }
 
