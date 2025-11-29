@@ -14,9 +14,8 @@ import { type AiStatus, useAiConfig, useInputMode, useStore } from "../../store"
 // Available models for the dropdown
 const AVAILABLE_MODELS = [
   { id: VERTEX_AI_MODELS.CLAUDE_OPUS_4_5, name: "Claude Opus 4.5" },
-  { id: VERTEX_AI_MODELS.CLAUDE_SONNET_4, name: "Claude Sonnet 4" },
-  { id: VERTEX_AI_MODELS.CLAUDE_3_5_SONNET, name: "Claude 3.5 Sonnet" },
-  { id: VERTEX_AI_MODELS.CLAUDE_3_5_HAIKU, name: "Claude 3.5 Haiku" },
+  { id: VERTEX_AI_MODELS.CLAUDE_SONNET_4_5, name: "Claude Sonnet 4.5" },
+  { id: VERTEX_AI_MODELS.CLAUDE_HAIKU_4_5, name: "Claude 4.5 Haiku" },
 ];
 
 function _getStatusColor(status: AiStatus): string {
@@ -35,9 +34,8 @@ function _getStatusColor(status: AiStatus): string {
 function formatModel(model: string): string {
   // Simplify Vertex AI model names
   if (model.includes("claude-opus-4")) return "Claude Opus 4.5";
-  if (model.includes("claude-sonnet-4")) return "Claude Sonnet 4";
-  if (model.includes("claude-3-5-sonnet")) return "Claude 3.5 Sonnet";
-  if (model.includes("claude-3-5-haiku")) return "Claude 3.5 Haiku";
+  if (model.includes("claude-sonnet-4-5")) return "Claude Sonnet 4.5";
+  if (model.includes("claude-haiku-4-5")) return "Claude 4.5 Haiku";
   return model;
 }
 

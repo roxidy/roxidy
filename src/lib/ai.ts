@@ -21,25 +21,25 @@ export type AiEvent =
   | { type: "started"; turn_id: string }
   | { type: "text_delta"; delta: string; accumulated: string }
   | {
-      type: "tool_request";
-      tool_name: string;
-      args: unknown;
-      request_id: string;
-    }
+    type: "tool_request";
+    tool_name: string;
+    args: unknown;
+    request_id: string;
+  }
   | {
-      type: "tool_result";
-      tool_name: string;
-      result: unknown;
-      success: boolean;
-      request_id: string;
-    }
+    type: "tool_result";
+    tool_name: string;
+    result: unknown;
+    success: boolean;
+    request_id: string;
+  }
   | { type: "reasoning"; content: string }
   | {
-      type: "completed";
-      response: string;
-      tokens_used?: number;
-      duration_ms?: number;
-    }
+    type: "completed";
+    response: string;
+    tokens_used?: number;
+    duration_ms?: number;
+  }
   | { type: "error"; message: string; error_type: string };
 
 export interface ToolDefinition {
@@ -82,9 +82,9 @@ export async function sendPrompt(prompt: string, context?: PromptContext): Promi
   // Convert to snake_case for Rust backend
   const contextPayload = context
     ? {
-        working_directory: context.workingDirectory,
-        session_id: context.sessionId,
-      }
+      working_directory: context.workingDirectory,
+      session_id: context.sessionId,
+    }
     : undefined;
 
   return invoke("send_ai_prompt", { prompt, context: contextPayload });
@@ -227,9 +227,8 @@ export interface VertexAiConfig {
  */
 export const VERTEX_AI_MODELS = {
   CLAUDE_OPUS_4_5: "claude-opus-4-5@20251101",
-  CLAUDE_SONNET_4: "claude-sonnet-4-20250514",
-  CLAUDE_3_5_SONNET: "claude-3-5-sonnet-v2@20241022",
-  CLAUDE_3_5_HAIKU: "claude-3-5-haiku@20241022",
+  CLAUDE_SONNET_4_5: "claude-sonnet-4-5@20250929",
+  CLAUDE_HAIKU_4_5: "claude-haiku-4-5@20251001",
 } as const;
 
 /**
