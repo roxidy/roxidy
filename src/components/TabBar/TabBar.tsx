@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Bot, Plus, Terminal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -5,6 +6,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ptyDestroy } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { type Session, useStore } from "@/store";
+
+const startDrag = async (e: React.MouseEvent) => {
+  e.preventDefault();
+  try {
+    await getCurrentWindow().startDragging();
+  } catch (err) {
+    console.error("Failed to start dragging:", err);
+  }
+};
 
 interface TabBarProps {
   onNewTab: () => void;
@@ -30,11 +40,15 @@ export function TabBar({ onNewTab }: TabBarProps) {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex items-center h-9 bg-[#16161e] border-b border-[#27293d] px-1 gap-1">
+      <div
+        className="flex items-center h-9 bg-[#1a1b26] pl-[78px] pr-1 gap-1"
+        onMouseDown={startDrag}
+      >
         <Tabs
           value={activeSessionId || undefined}
           onValueChange={setActiveSession}
-          className="flex-1 min-w-0"
+          className="min-w-0"
+          onMouseDown={(e) => e.stopPropagation()}
         >
           <TabsList className="h-7 bg-transparent p-0 gap-1 w-full justify-start">
             {sessionList.map((session) => (
@@ -56,6 +70,7 @@ export function TabBar({ onNewTab }: TabBarProps) {
               variant="ghost"
               size="icon"
               onClick={onNewTab}
+              onMouseDown={(e) => e.stopPropagation()}
               className="h-7 w-7 text-[#565f89] hover:text-[#c0caf5] hover:bg-[#1f2335]"
             >
               <Plus className="w-4 h-4" />
@@ -65,6 +80,9 @@ export function TabBar({ onNewTab }: TabBarProps) {
             <p>New tab (⌘T)</p>
           </TooltipContent>
         </Tooltip>
+
+        {/* Drag region - empty space extends to fill remaining width */}
+        <div className="flex-1 h-full min-w-[100px]" />
       </div>
     </TooltipProvider>
   );

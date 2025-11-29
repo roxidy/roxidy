@@ -204,7 +204,7 @@ function App() {
     return (
       <div className="h-screen w-screen bg-[#1a1b26] flex flex-col overflow-hidden">
         {/* Skeleton tab bar */}
-        <div className="flex items-center h-9 bg-[#16161e] border-b border-[#27293d] px-2 gap-2">
+        <div className="flex items-center h-9 bg-[#1a1b26] pl-[78px] pr-2 gap-2 titlebar-drag">
           <Skeleton className="h-6 w-24 bg-[#1f2335]" />
           <Skeleton className="h-6 w-6 rounded bg-[#1f2335]" />
         </div>

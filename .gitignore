@@ -31,3 +31,6 @@ src-tauri/crates/*/target/
 # Tauri
 src-tauri/gen/
 /.env
+
+# Claude Code
+.claude/
