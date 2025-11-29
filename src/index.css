@@ -167,3 +167,12 @@
   width: 12px !important;
   height: 12px !important;
 }
+
+/* Custom title bar drag region */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
