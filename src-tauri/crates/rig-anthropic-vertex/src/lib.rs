@@ -42,6 +42,6 @@ pub mod models {
     pub const CLAUDE_OPUS_4_5: &str = "claude-opus-4-5@20251101";
     /// Claude Sonnet 4.5 - Balanced performance
     pub const CLAUDE_SONNET_4_5: &str = "claude-sonnet-4-5@20250929";
-    /// Claude 4.5 Haiku - Fast and efficient
+    /// Claude Haiku 4.5 - Fast and efficient
     pub const CLAUDE_HAIKU_4_5: &str = "claude-haiku-4-5@20251001";
 }

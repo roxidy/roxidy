@@ -518,6 +518,18 @@ export const useStore = create<QbitState>()(
         set((state) => {
           state.agentMessages[sessionId] = messages;
           state.agentStreaming[sessionId] = "";
+          // Also populate the timeline so messages appear in UnifiedTimeline
+          if (!state.timelines[sessionId]) {
+            state.timelines[sessionId] = [];
+          }
+          for (const message of messages) {
+            state.timelines[sessionId].push({
+              id: message.id,
+              type: "agent_message",
+              timestamp: message.timestamp,
+              data: message,
+            });
+          }
         }),
 
       addActiveToolCall: (sessionId, toolCall) =>
@@ -725,7 +737,7 @@ export async function restoreSession(sessionId: string, identifier: string): Pro
   // Clear existing state first
   useStore.getState().clearTimeline(sessionId);
 
-  // Restore the messages to the store
+  // Restore the messages to the store (this also populates the timeline)
   useStore.getState().restoreAgentMessages(sessionId, agentMessages);
 
   // Switch to agent mode since we're restoring an AI conversation
