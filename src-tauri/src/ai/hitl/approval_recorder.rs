@@ -3,6 +3,8 @@
 //! This module tracks tool approval decisions and learns patterns to enable
 //! automatic approval for frequently-approved tools.
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

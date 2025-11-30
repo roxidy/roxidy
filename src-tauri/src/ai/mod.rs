@@ -29,21 +29,27 @@ pub use commands::{
     shutdown_ai_agent, update_ai_workspace, AiState,
 };
 // Re-export HITL types for external use
+#[allow(unused_imports)]
 pub use hitl::{
     ApprovalDecision, ApprovalPattern, ApprovalRecorder, ApprovalRequest, RiskLevel,
     ToolApprovalConfig,
 };
 // Re-export tool policy types for external use
+#[allow(unused_imports)]
 pub use tool_policy::{
     PolicyConstraintResult, ToolConstraints, ToolPolicy, ToolPolicyConfig, ToolPolicyManager,
 };
 // Re-export context management types for external use
+#[allow(unused_imports)]
 pub use context_manager::{ContextEvent, ContextManager, ContextSummary, ContextTrimConfig};
+#[allow(unused_imports)]
 pub use context_pruner::{ContextPruner, ContextPrunerConfig, PruneResult, SemanticScore};
+#[allow(unused_imports)]
 pub use token_budget::{
     TokenAlertLevel, TokenBudgetConfig, TokenBudgetManager, TokenUsageStats,
     DEFAULT_MAX_CONTEXT_TOKENS, MAX_TOOL_RESPONSE_TOKENS,
 };
+#[allow(unused_imports)]
 pub use token_trunc::{
     aggregate_tool_output, truncate_by_chars, truncate_by_tokens, ContentType, TruncationResult,
 };

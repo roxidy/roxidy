@@ -83,7 +83,8 @@ pub struct AgentBridge {
     tool_policy_manager: Arc<ToolPolicyManager>,
     /// Context manager for token budgeting and conversation trimming
     context_manager: Arc<ContextManager>,
-    /// Channel for context events
+    /// Channel for context events (reserved for future use)
+    #[allow(dead_code)]
     context_event_rx: Arc<RwLock<Option<mpsc::Receiver<ContextEvent>>>>,
     /// Loop detector for preventing runaway agent behavior
     loop_detector: Arc<RwLock<LoopDetector>>,
@@ -447,14 +448,20 @@ impl AgentBridge {
         let tavily = match &self.tavily_state {
             Some(state) => state,
             None => {
-                return (json!({"error": "Web search not available - TAVILY_API_KEY not configured"}), false);
+                return (
+                    json!({"error": "Web search not available - TAVILY_API_KEY not configured"}),
+                    false,
+                );
             }
         };
 
         match tool_name {
             "web_search" => {
                 let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                let max_results = args.get("max_results").and_then(|v| v.as_u64()).map(|n| n as usize);
+                let max_results = args
+                    .get("max_results")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize);
 
                 match tavily.search(query, max_results).await {
                     Ok(results) => (
@@ -690,7 +697,12 @@ impl AgentBridge {
     /// Get tool definitions for web search (Tavily).
     fn get_tavily_tool_definitions(&self) -> Vec<ToolDefinition> {
         // Only return tools if Tavily is available
-        if self.tavily_state.as_ref().map(|s| s.is_available()).unwrap_or(false) {
+        if self
+            .tavily_state
+            .as_ref()
+            .map(|s| s.is_available())
+            .unwrap_or(false)
+        {
             vec![
                 ToolDefinition {
                     name: "web_search".to_string(),
@@ -1620,32 +1632,33 @@ When to use sub-agents:
                 let tool_id = tool_call.id.clone();
 
                 // Execute the tool
-                let (result_value, _success) = if tool_name.starts_with("web_search") || tool_name == "web_extract" {
-                    // Execute web search tools
-                    self.execute_tavily_tool(tool_name, &tool_args).await
-                } else if tool_name == "run_pty_cmd"
-                    && self.pty_manager.is_some()
-                    && self.current_session_id.read().await.is_some()
-                {
-                    // Intercept run_pty_cmd and execute in user's terminal instead
-                    let command = tool_args
-                        .get("command")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                let (result_value, _success) =
+                    if tool_name.starts_with("web_search") || tool_name == "web_extract" {
+                        // Execute web search tools
+                        self.execute_tavily_tool(tool_name, &tool_args).await
+                    } else if tool_name == "run_pty_cmd"
+                        && self.pty_manager.is_some()
+                        && self.current_session_id.read().await.is_some()
+                    {
+                        // Intercept run_pty_cmd and execute in user's terminal instead
+                        let command = tool_args
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
 
-                    match self.execute_in_terminal(command).await {
-                        Ok(v) => (v, true),
-                        Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
-                    }
-                } else {
-                    let mut registry = self.tool_registry.write().await;
-                    let result = registry.execute_tool(tool_name, tool_args).await;
+                        match self.execute_in_terminal(command).await {
+                            Ok(v) => (v, true),
+                            Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
+                        }
+                    } else {
+                        let mut registry = self.tool_registry.write().await;
+                        let result = registry.execute_tool(tool_name, tool_args).await;
 
-                    match &result {
-                        Ok(v) => (v.clone(), true),
-                        Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
-                    }
-                };
+                        match &result {
+                            Ok(v) => (v.clone(), true),
+                            Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
+                        }
+                    };
 
                 // Add to tool results
                 let result_text = serde_json::to_string(&result_value).unwrap_or_default();
@@ -2241,7 +2254,11 @@ When to use sub-agents:
         // Record the decision (for pattern learning)
         self.approval_recorder
             .record_approval(
-                &decision.request_id.split('_').last().unwrap_or("unknown"), // Extract tool name from request_id
+                decision
+                    .request_id
+                    .split('_')
+                    .next_back()
+                    .unwrap_or("unknown"), // Extract tool name from request_id
                 decision.approved,
                 decision.reason.clone(),
                 decision.always_allow,
@@ -2312,6 +2329,7 @@ When to use sub-agents:
     // ========================================================================
 
     /// Get the context manager reference.
+    #[allow(dead_code)]
     pub fn context_manager(&self) -> Arc<ContextManager> {
         Arc::clone(&self.context_manager)
     }
@@ -2342,6 +2360,7 @@ When to use sub-agents:
     }
 
     /// Update token budget from current conversation history.
+    #[allow(dead_code)]
     pub async fn update_context_from_history(&self) {
         let history = self.conversation_history.read().await;
         self.context_manager.update_from_messages(&history).await;
@@ -2374,6 +2393,7 @@ When to use sub-agents:
     }
 
     /// Truncate a tool response if it exceeds limits.
+    #[allow(dead_code)]
     pub async fn truncate_tool_response(&self, content: &str, tool_name: &str) -> String {
         let result = self
             .context_manager

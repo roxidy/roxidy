@@ -639,7 +639,9 @@ describe("Store", () => {
         const state = useStore.getState();
         expect(state.agentMessages["session-1"]).toHaveLength(2);
         expect(state.agentMessages["session-1"][0].content).toBe("Hello, Claude!");
-        expect(state.agentMessages["session-1"][1].content).toBe("Hello! How can I help you today?");
+        expect(state.agentMessages["session-1"][1].content).toBe(
+          "Hello! How can I help you today?"
+        );
       });
 
       it("should also populate timeline with restored messages", () => {

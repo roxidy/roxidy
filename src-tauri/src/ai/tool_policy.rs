@@ -8,29 +8,26 @@
 //!
 //! Based on the VTCode implementation pattern.
 
+#![allow(dead_code)]
+
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// Policy for a tool determining whether it can be executed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolPolicy {
     /// Execute without prompting
     Allow,
     /// Request user confirmation (HITL)
+    #[default]
     Prompt,
     /// Prevent execution entirely
     Deny,
-}
-
-impl Default for ToolPolicy {
-    fn default() -> Self {
-        ToolPolicy::Prompt
-    }
 }
 
 impl std::fmt::Display for ToolPolicy {
@@ -99,7 +96,7 @@ impl ToolConstraints {
                 let after_scheme = &url[scheme_end + 3..];
                 // Find the end of the host (first /, :, or end of string)
                 let host_end = after_scheme
-                    .find(|c| c == '/' || c == ':' || c == '?')
+                    .find(['/', ':', '?'])
                     .unwrap_or(after_scheme.len());
                 let host = &after_scheme[..host_end];
 
@@ -286,27 +283,31 @@ impl Default for ToolPolicyConfig {
         }
 
         // Default constraints for network operations
-        let mut web_fetch_constraints = ToolConstraints::default();
-        web_fetch_constraints.max_bytes = Some(65536); // 64KB max response
-        web_fetch_constraints.blocked_hosts = Some(vec![
-            "127.0.0.1".to_string(),
-            "::1".to_string(),
-            "localhost".to_string(),
-            ".local".to_string(),
-            ".internal".to_string(),
-            ".lan".to_string(),
-        ]);
+        let web_fetch_constraints = ToolConstraints {
+            max_bytes: Some(65536), // 64KB max response
+            blocked_hosts: Some(vec![
+                "127.0.0.1".to_string(),
+                "::1".to_string(),
+                "localhost".to_string(),
+                ".local".to_string(),
+                ".internal".to_string(),
+                ".lan".to_string(),
+            ]),
+            ..Default::default()
+        };
         constraints.insert("web_fetch".to_string(), web_fetch_constraints);
 
         // Constraints for file operations
-        let mut write_file_constraints = ToolConstraints::default();
-        write_file_constraints.blocked_patterns = Some(vec![
-            "*.env".to_string(),
-            "*.key".to_string(),
-            "*.pem".to_string(),
-            "**/credentials*".to_string(),
-            "**/secrets*".to_string(),
-        ]);
+        let write_file_constraints = ToolConstraints {
+            blocked_patterns: Some(vec![
+                "*.env".to_string(),
+                "*.key".to_string(),
+                "*.pem".to_string(),
+                "**/credentials*".to_string(),
+                "**/secrets*".to_string(),
+            ]),
+            ..Default::default()
+        };
         constraints.insert("write_file".to_string(), write_file_constraints.clone());
         constraints.insert("edit_file".to_string(), write_file_constraints);
 
@@ -361,7 +362,7 @@ impl ToolPolicyManager {
     /// Loads policies from both global (~/.qbit/tool-policy.json) and
     /// project ({workspace}/.qbit/tool-policy.json) locations, merging them
     /// with project policies taking precedence.
-    pub async fn new(workspace: &PathBuf) -> Self {
+    pub async fn new(workspace: &Path) -> Self {
         let global_config_path = Self::global_policy_path();
         let project_config_path = workspace.join(".qbit").join("tool-policy.json");
 

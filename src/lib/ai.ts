@@ -117,9 +117,9 @@ export async function sendPrompt(prompt: string, context?: PromptContext): Promi
   // Convert to snake_case for Rust backend
   const contextPayload = context
     ? {
-      working_directory: context.workingDirectory,
-      session_id: context.sessionId,
-    }
+        working_directory: context.workingDirectory,
+        session_id: context.sessionId,
+      }
     : undefined;
 
   return invoke("send_ai_prompt", { prompt, context: contextPayload });
@@ -475,9 +475,7 @@ export async function getApprovalPatterns(): Promise<ApprovalPattern[]> {
 /**
  * Get the approval pattern for a specific tool.
  */
-export async function getToolApprovalPattern(
-  toolName: string
-): Promise<ApprovalPattern | null> {
+export async function getToolApprovalPattern(toolName: string): Promise<ApprovalPattern | null> {
   return invoke("get_tool_approval_pattern", { toolName });
 }
 
@@ -520,9 +518,7 @@ export async function resetApprovalPatterns(): Promise<void> {
  * Respond to a tool approval request.
  * This is called by the frontend after the user makes a decision in the approval dialog.
  */
-export async function respondToToolApproval(
-  decision: ApprovalDecision
-): Promise<void> {
+export async function respondToToolApproval(decision: ApprovalDecision): Promise<void> {
   return invoke("respond_to_tool_approval", { decision });
 }
 
@@ -542,8 +538,5 @@ export function qualifiesForAutoApprove(
   minApprovals = 3,
   threshold = 0.8
 ): boolean {
-  return (
-    pattern.approvals >= minApprovals &&
-    calculateApprovalRate(pattern) >= threshold
-  );
+  return pattern.approvals >= minApprovals && calculateApprovalRate(pattern) >= threshold;
 }

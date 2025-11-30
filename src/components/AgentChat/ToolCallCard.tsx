@@ -111,7 +111,9 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
                   isOpen && "rotate-90"
                 )}
               />
-              <Icon className={cn("w-4 h-4", isTerminalCmd ? "text-[#bb9af7]" : "text-[#7aa2f7]")} />
+              <Icon
+                className={cn("w-4 h-4", isTerminalCmd ? "text-[#bb9af7]" : "text-[#7aa2f7]")}
+              />
               <span className="text-sm font-mono text-[#c0caf5]">{tool.name}</span>
               {/* Show bot indicator for agent-executed commands */}
               {isTerminalCmd && <Bot className="w-3 h-3 text-[#bb9af7]" />}
@@ -142,7 +144,9 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
               tool.result !== undefined ? (
                 <TruncatedOutput
                   content={
-                    typeof tool.result === "string" ? tool.result : JSON.stringify(tool.result, null, 2)
+                    typeof tool.result === "string"
+                      ? tool.result
+                      : JSON.stringify(tool.result, null, 2)
                   }
                   maxLines={10}
                 />

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle,
@@ -11,6 +10,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,8 +24,8 @@ import {
 } from "@/components/ui/dialog";
 import {
   type ApprovalPattern,
-  type RiskLevel,
   calculateApprovalRate,
+  type RiskLevel,
   respondToToolApproval,
 } from "@/lib/ai";
 import { cn } from "@/lib/utils";
@@ -82,16 +82,12 @@ function getRiskLevel(toolName: string): RiskLevel {
   }
 
   // Write operations (recoverable)
-  if (
-    ["write_file", "create_file", "edit_file", "apply_patch", "save_skill"].includes(toolName)
-  ) {
+  if (["write_file", "create_file", "edit_file", "apply_patch", "save_skill"].includes(toolName)) {
     return "medium";
   }
 
   // Shell execution
-  if (
-    ["run_pty_cmd", "create_pty_session", "send_pty_input"].includes(toolName)
-  ) {
+  if (["run_pty_cmd", "create_pty_session", "send_pty_input"].includes(toolName)) {
     return "high";
   }
 
@@ -124,9 +120,7 @@ function ApprovalStats({ stats }: { stats: ApprovalPattern }) {
         <span>{stats.denials}</span>
       </div>
       <div className="h-3 w-px bg-[#27293d]" />
-      <span className={rate >= 0.8 ? "text-[#9ece6a]" : ""}>
-        {ratePercent}% approval rate
-      </span>
+      <span className={rate >= 0.8 ? "text-[#9ece6a]" : ""}>{ratePercent}% approval rate</span>
     </div>
   );
 }
@@ -147,7 +141,8 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
   const stats = (tool as { stats?: ApprovalPattern }).stats;
   const suggestion = (tool as { suggestion?: string | null }).suggestion;
   const canLearn = (tool as { canLearn?: boolean }).canLearn ?? true;
-  const isDangerous = DANGEROUS_TOOLS.includes(tool.name) || riskLevel === "high" || riskLevel === "critical";
+  const isDangerous =
+    DANGEROUS_TOOLS.includes(tool.name) || riskLevel === "high" || riskLevel === "critical";
   const RiskIcon = RISK_STYLES[riskLevel].icon;
 
   const handleApprove = async () => {
@@ -242,11 +237,7 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
                 onClick={() => setShowArgs(!showArgs)}
                 className="flex items-center gap-1 text-xs text-[#565f89] mb-2 hover:text-[#7aa2f7] transition-colors"
               >
-                {showArgs ? (
-                  <ChevronUp className="w-3 h-3" />
-                ) : (
-                  <ChevronDown className="w-3 h-3" />
-                )}
+                {showArgs ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                 Arguments
               </button>
               {showArgs && (
@@ -292,7 +283,9 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
             <Checkbox
               id="always-allow"
               checked={alwaysAllow}
-              onCheckedChange={(checked: boolean | "indeterminate") => setAlwaysAllow(checked === true)}
+              onCheckedChange={(checked: boolean | "indeterminate") =>
+                setAlwaysAllow(checked === true)
+              }
               className="border-[#3b4261] data-[state=checked]:bg-[#7aa2f7] data-[state=checked]:border-[#7aa2f7]"
             />
             <label

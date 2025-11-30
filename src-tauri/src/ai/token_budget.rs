@@ -2,6 +2,8 @@
 //!
 //! Implements token counting and budget allocation based on VTCode's design.
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -300,11 +302,7 @@ impl TokenBudgetManager {
         let stats = self.stats.read().await;
         let needed = stats.total_tokens + new_tokens;
         let available = self.config.available_tokens();
-        if needed > available {
-            needed - available
-        } else {
-            0
-        }
+        needed.saturating_sub(available)
     }
 
     /// Set stats directly (useful for initialization from message history)
