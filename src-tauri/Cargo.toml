@@ -57,3 +57,5 @@ rig-core = "0.23"
 graph-flow = "0.4"
 async-trait = "0.1"
 
+[dev-dependencies]
+tempfile = "3"

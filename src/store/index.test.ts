@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { AgentMessage } from "./index";
 import { useStore } from "./index";
 
 describe("Store", () => {
@@ -598,6 +599,366 @@ describe("Store", () => {
       store.removeSession("session-1");
 
       expect(useStore.getState().activeSessionId).toBeNull();
+    });
+  });
+
+  describe("Session Restore", () => {
+    beforeEach(() => {
+      useStore.getState().addSession({
+        id: "session-1",
+        name: "Test Session",
+        workingDirectory: "/home/user/project",
+        createdAt: "2024-01-01T00:00:00Z",
+        mode: "terminal",
+      });
+    });
+
+    describe("restoreAgentMessages", () => {
+      it("should restore messages to agentMessages array", () => {
+        const messages: AgentMessage[] = [
+          {
+            id: "restored-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Hello, Claude!",
+            timestamp: "2024-01-01T10:00:00Z",
+            isStreaming: false,
+          },
+          {
+            id: "restored-2",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Hello! How can I help you today?",
+            timestamp: "2024-01-01T10:00:01Z",
+            isStreaming: false,
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        const state = useStore.getState();
+        expect(state.agentMessages["session-1"]).toHaveLength(2);
+        expect(state.agentMessages["session-1"][0].content).toBe("Hello, Claude!");
+        expect(state.agentMessages["session-1"][1].content).toBe("Hello! How can I help you today?");
+      });
+
+      it("should also populate timeline with restored messages", () => {
+        const messages: AgentMessage[] = [
+          {
+            id: "restored-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "First message",
+            timestamp: "2024-01-01T10:00:00Z",
+          },
+          {
+            id: "restored-2",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Second message",
+            timestamp: "2024-01-01T10:00:01Z",
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        const state = useStore.getState();
+        expect(state.timelines["session-1"]).toHaveLength(2);
+        expect(state.timelines["session-1"][0].type).toBe("agent_message");
+        expect(state.timelines["session-1"][1].type).toBe("agent_message");
+      });
+
+      it("should clear streaming state when restoring", () => {
+        // First, set some streaming state
+        useStore.getState().updateAgentStreaming("session-1", "Some streaming content...");
+        expect(useStore.getState().agentStreaming["session-1"]).toBe("Some streaming content...");
+
+        // Now restore messages
+        const messages: AgentMessage[] = [
+          {
+            id: "restored-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Restored message",
+            timestamp: "2024-01-01T10:00:00Z",
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        // Streaming should be cleared
+        expect(useStore.getState().agentStreaming["session-1"]).toBe("");
+      });
+
+      it("should replace existing messages, not append", () => {
+        // Add some existing messages first
+        useStore.getState().addAgentMessage("session-1", {
+          id: "existing-1",
+          sessionId: "session-1",
+          role: "user",
+          content: "Existing message",
+          timestamp: "2024-01-01T09:00:00Z",
+        });
+
+        expect(useStore.getState().agentMessages["session-1"]).toHaveLength(1);
+
+        // Now restore new messages
+        const messages: AgentMessage[] = [
+          {
+            id: "restored-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Restored message only",
+            timestamp: "2024-01-01T10:00:00Z",
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        const state = useStore.getState();
+        expect(state.agentMessages["session-1"]).toHaveLength(1);
+        expect(state.agentMessages["session-1"][0].content).toBe("Restored message only");
+      });
+
+      it("should handle empty message array", () => {
+        // Add some messages first
+        useStore.getState().addAgentMessage("session-1", {
+          id: "existing-1",
+          sessionId: "session-1",
+          role: "user",
+          content: "Existing message",
+          timestamp: "2024-01-01T09:00:00Z",
+        });
+
+        // Restore with empty array
+        useStore.getState().restoreAgentMessages("session-1", []);
+
+        const state = useStore.getState();
+        expect(state.agentMessages["session-1"]).toHaveLength(0);
+        expect(state.timelines["session-1"]).toHaveLength(0);
+      });
+
+      it("should preserve message order", () => {
+        const messages: AgentMessage[] = [
+          {
+            id: "msg-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "First",
+            timestamp: "2024-01-01T10:00:00Z",
+          },
+          {
+            id: "msg-2",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Second",
+            timestamp: "2024-01-01T10:00:01Z",
+          },
+          {
+            id: "msg-3",
+            sessionId: "session-1",
+            role: "user",
+            content: "Third",
+            timestamp: "2024-01-01T10:00:02Z",
+          },
+          {
+            id: "msg-4",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Fourth",
+            timestamp: "2024-01-01T10:00:03Z",
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        const state = useStore.getState();
+        expect(state.agentMessages["session-1"][0].content).toBe("First");
+        expect(state.agentMessages["session-1"][1].content).toBe("Second");
+        expect(state.agentMessages["session-1"][2].content).toBe("Third");
+        expect(state.agentMessages["session-1"][3].content).toBe("Fourth");
+
+        // Timeline should have same order
+        expect((state.timelines["session-1"][0].data as AgentMessage).content).toBe("First");
+        expect((state.timelines["session-1"][3].data as AgentMessage).content).toBe("Fourth");
+      });
+
+      it("should initialize timeline array if it does not exist", () => {
+        // Remove the timeline entry manually
+        useStore.setState((state) => {
+          delete state.timelines["session-1"];
+        });
+
+        const messages: AgentMessage[] = [
+          {
+            id: "msg-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Test",
+            timestamp: "2024-01-01T10:00:00Z",
+          },
+        ];
+
+        // Should not throw
+        expect(() => {
+          useStore.getState().restoreAgentMessages("session-1", messages);
+        }).not.toThrow();
+
+        expect(useStore.getState().timelines["session-1"]).toHaveLength(1);
+      });
+    });
+
+    describe("clearTimeline before restore", () => {
+      it("should clear timeline properly before restoring", () => {
+        // Add various types of content
+        useStore.getState().handleCommandStart("session-1", "ls -la");
+        useStore.getState().appendOutput("session-1", "file.txt\n");
+        useStore.getState().handleCommandEnd("session-1", 0);
+
+        useStore.getState().addAgentMessage("session-1", {
+          id: "existing-msg",
+          sessionId: "session-1",
+          role: "user",
+          content: "Existing agent message",
+          timestamp: new Date().toISOString(),
+        });
+
+        // Verify we have mixed content
+        expect(useStore.getState().timelines["session-1"].length).toBeGreaterThan(0);
+        expect(useStore.getState().commandBlocks["session-1"].length).toBeGreaterThan(0);
+
+        // Clear timeline
+        useStore.getState().clearTimeline("session-1");
+
+        const state = useStore.getState();
+        expect(state.timelines["session-1"]).toHaveLength(0);
+        expect(state.commandBlocks["session-1"]).toHaveLength(0);
+        expect(state.agentMessages["session-1"]).toHaveLength(0);
+      });
+    });
+
+    describe("timeline block structure", () => {
+      it("should create proper timeline block structure for restored messages", () => {
+        const messages: AgentMessage[] = [
+          {
+            id: "test-msg-id",
+            sessionId: "session-1",
+            role: "user",
+            content: "Test content",
+            timestamp: "2024-01-01T10:30:00Z",
+            isStreaming: false,
+            toolCalls: [],
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        const timelineBlock = useStore.getState().timelines["session-1"][0];
+        expect(timelineBlock.id).toBe("test-msg-id");
+        expect(timelineBlock.type).toBe("agent_message");
+        expect(timelineBlock.timestamp).toBe("2024-01-01T10:30:00Z");
+        expect(timelineBlock.data).toEqual(messages[0]);
+      });
+
+      it("should handle messages with tool calls", () => {
+        const messages: AgentMessage[] = [
+          {
+            id: "msg-with-tools",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Let me read that file for you.",
+            timestamp: "2024-01-01T10:30:00Z",
+            toolCalls: [
+              {
+                id: "tool-1",
+                name: "read_file",
+                args: { path: "/etc/hosts" },
+                status: "completed",
+                result: "127.0.0.1 localhost",
+              },
+            ],
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        const state = useStore.getState();
+        const restored = state.agentMessages["session-1"][0];
+        expect(restored.toolCalls).toHaveLength(1);
+        expect(restored.toolCalls?.[0].name).toBe("read_file");
+        expect(restored.toolCalls?.[0].status).toBe("completed");
+      });
+
+      it("should handle messages with streamingHistory", () => {
+        const messages: AgentMessage[] = [
+          {
+            id: "msg-with-history",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Full response content",
+            timestamp: "2024-01-01T10:30:00Z",
+            streamingHistory: [
+              { type: "text", content: "First part of response" },
+              {
+                type: "tool",
+                toolCall: {
+                  id: "tool-1",
+                  name: "bash",
+                  args: { command: "ls" },
+                  status: "completed",
+                },
+              },
+              { type: "text", content: "Second part after tool" },
+            ],
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        const restored = useStore.getState().agentMessages["session-1"][0];
+        expect(restored.streamingHistory).toHaveLength(3);
+        expect(restored.streamingHistory?.[0].type).toBe("text");
+        expect(restored.streamingHistory?.[1].type).toBe("tool");
+      });
+    });
+
+    describe("input mode after restore", () => {
+      it("restoring messages should work with any input mode", () => {
+        // Start in terminal mode
+        expect(useStore.getState().sessions["session-1"].inputMode).toBe("terminal");
+
+        const messages: AgentMessage[] = [
+          {
+            id: "msg-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Test",
+            timestamp: "2024-01-01T10:00:00Z",
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+
+        // restoreAgentMessages doesn't change input mode - that's handled by restoreSession
+        expect(useStore.getState().sessions["session-1"].inputMode).toBe("terminal");
+      });
+
+      it("setInputMode should work correctly after restore", () => {
+        const messages: AgentMessage[] = [
+          {
+            id: "msg-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Test",
+            timestamp: "2024-01-01T10:00:00Z",
+          },
+        ];
+
+        useStore.getState().restoreAgentMessages("session-1", messages);
+        useStore.getState().setInputMode("session-1", "agent");
+
+        expect(useStore.getState().sessions["session-1"].inputMode).toBe("agent");
+      });
     });
   });
 });

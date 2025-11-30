@@ -5043,6 +5043,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "tavily",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

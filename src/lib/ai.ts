@@ -17,29 +17,64 @@ export interface AiConfig {
   apiKey: string;
 }
 
+/**
+ * Risk level for a tool operation.
+ */
+export type RiskLevel = "low" | "medium" | "high" | "critical";
+
+/**
+ * Approval pattern/statistics for a specific tool.
+ */
+export interface ApprovalPattern {
+  tool_name: string;
+  total_requests: number;
+  approvals: number;
+  denials: number;
+  always_allow: boolean;
+  last_updated: string;
+  justifications: string[];
+}
+
 export type AiEvent =
   | { type: "started"; turn_id: string }
   | { type: "text_delta"; delta: string; accumulated: string }
   | {
-    type: "tool_request";
-    tool_name: string;
-    args: unknown;
-    request_id: string;
-  }
+      type: "tool_request";
+      tool_name: string;
+      args: unknown;
+      request_id: string;
+    }
   | {
-    type: "tool_result";
-    tool_name: string;
-    result: unknown;
-    success: boolean;
-    request_id: string;
-  }
+      type: "tool_approval_request";
+      request_id: string;
+      tool_name: string;
+      args: unknown;
+      stats: ApprovalPattern | null;
+      risk_level: RiskLevel;
+      can_learn: boolean;
+      suggestion: string | null;
+    }
+  | {
+      type: "tool_auto_approved";
+      request_id: string;
+      tool_name: string;
+      args: unknown;
+      reason: string;
+    }
+  | {
+      type: "tool_result";
+      tool_name: string;
+      result: unknown;
+      success: boolean;
+      request_id: string;
+    }
   | { type: "reasoning"; content: string }
   | {
-    type: "completed";
-    response: string;
-    tokens_used?: number;
-    duration_ms?: number;
-  }
+      type: "completed";
+      response: string;
+      tokens_used?: number;
+      duration_ms?: number;
+    }
   | { type: "error"; message: string; error_type: string };
 
 export interface ToolDefinition {
@@ -262,4 +297,253 @@ export async function initVertexClaudeOpus(
     location,
     model: VERTEX_AI_MODELS.CLAUDE_OPUS_4_5,
   });
+}
+
+// =============================================================================
+// Session Persistence API
+// =============================================================================
+
+/**
+ * Role of a message in the conversation.
+ */
+export type SessionMessageRole = "user" | "assistant" | "system" | "tool";
+
+/**
+ * A message in a session.
+ */
+export interface SessionMessage {
+  role: SessionMessageRole;
+  content: string;
+  tool_call_id?: string;
+  tool_name?: string;
+}
+
+/**
+ * Information about a saved session (listing view).
+ */
+export interface SessionListingInfo {
+  identifier: string;
+  path: string;
+  workspace_label: string;
+  workspace_path: string;
+  model: string;
+  provider: string;
+  started_at: string;
+  ended_at: string;
+  total_messages: number;
+  distinct_tools: string[];
+  first_prompt_preview?: string;
+  first_reply_preview?: string;
+}
+
+/**
+ * Full session snapshot with all messages.
+ */
+export interface SessionSnapshot {
+  workspace_label: string;
+  workspace_path: string;
+  model: string;
+  provider: string;
+  started_at: string;
+  ended_at: string;
+  total_messages: number;
+  distinct_tools: string[];
+  transcript: string[];
+  messages: SessionMessage[];
+}
+
+/**
+ * List recent AI conversation sessions.
+ *
+ * @param limit - Maximum number of sessions to return (default: 20)
+ */
+export async function listAiSessions(limit?: number): Promise<SessionListingInfo[]> {
+  return invoke("list_ai_sessions", { limit });
+}
+
+/**
+ * Find a specific session by its identifier.
+ *
+ * @param identifier - The session identifier (file stem)
+ */
+export async function findAiSession(identifier: string): Promise<SessionListingInfo | null> {
+  return invoke("find_ai_session", { identifier });
+}
+
+/**
+ * Load a full session with all messages by its identifier.
+ *
+ * @param identifier - The session identifier (file stem)
+ */
+export async function loadAiSession(identifier: string): Promise<SessionSnapshot | null> {
+  return invoke("load_ai_session", { identifier });
+}
+
+/**
+ * Export a session transcript to a file.
+ *
+ * @param identifier - The session identifier (file stem)
+ * @param outputPath - Path where the transcript should be saved
+ */
+export async function exportAiSessionTranscript(
+  identifier: string,
+  outputPath: string
+): Promise<void> {
+  return invoke("export_ai_session_transcript", { identifier, outputPath });
+}
+
+/**
+ * Enable or disable session persistence.
+ * When enabled, AI conversations are automatically saved to disk.
+ *
+ * @param enabled - Whether to enable session persistence
+ */
+export async function setAiSessionPersistence(enabled: boolean): Promise<void> {
+  return invoke("set_ai_session_persistence", { enabled });
+}
+
+/**
+ * Check if session persistence is enabled.
+ */
+export async function isAiSessionPersistenceEnabled(): Promise<boolean> {
+  return invoke("is_ai_session_persistence_enabled");
+}
+
+/**
+ * Manually finalize and save the current session.
+ * Returns the path to the saved session file, if any.
+ */
+export async function finalizeAiSession(): Promise<string | null> {
+  return invoke("finalize_ai_session");
+}
+
+/**
+ * Restore a previous session by loading its conversation history.
+ * This loads the session's messages into the AI agent's conversation history,
+ * allowing the user to continue from where they left off.
+ *
+ * @param identifier - The session identifier (file stem)
+ * @returns The restored session snapshot
+ */
+export async function restoreAiSession(identifier: string): Promise<SessionSnapshot> {
+  return invoke("restore_ai_session", { identifier });
+}
+
+// =============================================================================
+// HITL (Human-in-the-Loop) API
+// =============================================================================
+
+/**
+ * Configuration for tool approval behavior.
+ */
+export interface ToolApprovalConfig {
+  /** Tools that are always allowed without approval */
+  always_allow: string[];
+  /** Tools that always require approval (cannot be auto-approved) */
+  always_require_approval: string[];
+  /** Whether pattern learning is enabled */
+  pattern_learning_enabled: boolean;
+  /** Minimum approvals before auto-approve */
+  min_approvals: number;
+  /** Approval rate threshold (0.0 - 1.0) */
+  approval_threshold: number;
+}
+
+/**
+ * User's decision on an approval request.
+ */
+export interface ApprovalDecision {
+  /** The request ID this decision is for */
+  request_id: string;
+  /** Whether the tool was approved */
+  approved: boolean;
+  /** Optional reason/justification for the decision */
+  reason?: string;
+  /** Whether to remember this decision for future auto-approval */
+  remember: boolean;
+  /** Whether to always allow this specific tool */
+  always_allow: boolean;
+}
+
+/**
+ * Get approval patterns for all tools.
+ */
+export async function getApprovalPatterns(): Promise<ApprovalPattern[]> {
+  return invoke("get_approval_patterns");
+}
+
+/**
+ * Get the approval pattern for a specific tool.
+ */
+export async function getToolApprovalPattern(
+  toolName: string
+): Promise<ApprovalPattern | null> {
+  return invoke("get_tool_approval_pattern", { toolName });
+}
+
+/**
+ * Get the HITL configuration.
+ */
+export async function getHitlConfig(): Promise<ToolApprovalConfig> {
+  return invoke("get_hitl_config");
+}
+
+/**
+ * Update the HITL configuration.
+ */
+export async function setHitlConfig(config: ToolApprovalConfig): Promise<void> {
+  return invoke("set_hitl_config", { config });
+}
+
+/**
+ * Add a tool to the always-allow list.
+ */
+export async function addToolAlwaysAllow(toolName: string): Promise<void> {
+  return invoke("add_tool_always_allow", { toolName });
+}
+
+/**
+ * Remove a tool from the always-allow list.
+ */
+export async function removeToolAlwaysAllow(toolName: string): Promise<void> {
+  return invoke("remove_tool_always_allow", { toolName });
+}
+
+/**
+ * Reset all approval patterns (does not reset configuration).
+ */
+export async function resetApprovalPatterns(): Promise<void> {
+  return invoke("reset_approval_patterns");
+}
+
+/**
+ * Respond to a tool approval request.
+ * This is called by the frontend after the user makes a decision in the approval dialog.
+ */
+export async function respondToToolApproval(
+  decision: ApprovalDecision
+): Promise<void> {
+  return invoke("respond_to_tool_approval", { decision });
+}
+
+/**
+ * Calculate the approval rate from an ApprovalPattern.
+ */
+export function calculateApprovalRate(pattern: ApprovalPattern): number {
+  if (pattern.total_requests === 0) return 0;
+  return pattern.approvals / pattern.total_requests;
+}
+
+/**
+ * Check if a pattern qualifies for auto-approval based on default thresholds.
+ */
+export function qualifiesForAutoApprove(
+  pattern: ApprovalPattern,
+  minApprovals = 3,
+  threshold = 0.8
+): boolean {
+  return (
+    pattern.approvals >= minApprovals &&
+    calculateApprovalRate(pattern) >= threshold
+  );
 }

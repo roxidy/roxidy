@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -11,12 +11,20 @@ use rig::completion::{
 use rig::message::{Text, ToolCall, ToolResult, ToolResultContent, UserContent};
 use rig::one_or_many::OneOrMany;
 use serde_json::json;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use vtcode_core::llm::{make_client, AnyClient};
 use vtcode_core::tools::registry::build_function_declarations;
 use vtcode_core::tools::ToolRegistry;
 
+use super::context_manager::{ContextEvent, ContextManager, ContextSummary, ContextTrimConfig};
 use super::events::AiEvent;
+use super::hitl::{
+    ApprovalDecision, ApprovalPattern, ApprovalRecorder, RiskLevel, ToolApprovalConfig,
+};
+use super::session::QbitSessionManager;
+use super::token_budget::{TokenAlertLevel, TokenBudgetConfig, TokenUsageStats};
+use super::token_trunc::aggregate_tool_output;
+use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyConfig, ToolPolicyManager};
 use super::sub_agent::{
     create_default_sub_agents, SubAgentContext, SubAgentDefinition, SubAgentRegistry,
     SubAgentResult, MAX_AGENT_DEPTH,
@@ -41,9 +49,7 @@ enum LlmClient {
 pub struct AgentBridge {
     /// Current workspace/working directory - can be updated dynamically
     workspace: Arc<RwLock<PathBuf>>,
-    #[allow(dead_code)]
     provider_name: String,
-    #[allow(dead_code)]
     model_name: String,
     /// ToolRegistry requires &mut self for execute_tool, so we need RwLock
     tool_registry: Arc<RwLock<ToolRegistry>>,
@@ -62,6 +68,20 @@ pub struct AgentBridge {
     indexer_state: Option<Arc<IndexerState>>,
     /// Reference to TavilyState for web search tools
     tavily_state: Option<Arc<TavilyState>>,
+    /// Session manager for persisting conversations (optional, initialized lazily)
+    session_manager: Arc<RwLock<Option<QbitSessionManager>>>,
+    /// Whether session persistence is enabled
+    session_persistence_enabled: Arc<RwLock<bool>>,
+    /// HITL approval recorder for tracking and learning approval patterns
+    approval_recorder: Arc<ApprovalRecorder>,
+    /// Pending approval responses (request_id -> oneshot sender)
+    pending_approvals: Arc<RwLock<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
+    /// Tool policy manager for allow/prompt/deny rules and constraints
+    tool_policy_manager: Arc<ToolPolicyManager>,
+    /// Context manager for token budgeting and conversation trimming
+    context_manager: Arc<ContextManager>,
+    /// Channel for context events
+    context_event_rx: Arc<RwLock<Option<mpsc::Receiver<ContextEvent>>>>,
 }
 
 impl AgentBridge {
@@ -99,6 +119,18 @@ impl AgentBridge {
             sub_agent_registry.register(agent);
         }
 
+        // Create HITL approval recorder (stores in workspace/.qbit/hitl/)
+        let hitl_storage = workspace.join(".qbit").join("hitl");
+        let approval_recorder = Arc::new(ApprovalRecorder::new(hitl_storage).await);
+
+        // Create tool policy manager (loads from workspace/.qbit/tool-policy.json)
+        let tool_policy_manager = Arc::new(ToolPolicyManager::new(&workspace).await);
+
+        // Create context manager for token budgeting
+        let mut context_manager = ContextManager::for_model(model);
+        let (context_tx, context_rx) = mpsc::channel::<ContextEvent>(100);
+        context_manager.set_event_channel(context_tx);
+
         Ok(Self {
             workspace: Arc::new(RwLock::new(workspace)),
             provider_name: provider.to_string(),
@@ -112,6 +144,13 @@ impl AgentBridge {
             conversation_history: Arc::new(RwLock::new(Vec::new())),
             indexer_state: None,
             tavily_state: None,
+            session_manager: Arc::new(RwLock::new(None)),
+            session_persistence_enabled: Arc::new(RwLock::new(true)), // Enabled by default
+            approval_recorder,
+            pending_approvals: Arc::new(RwLock::new(HashMap::new())),
+            tool_policy_manager,
+            context_manager: Arc::new(context_manager),
+            context_event_rx: Arc::new(RwLock::new(Some(context_rx))),
         })
     }
 
@@ -153,6 +192,18 @@ impl AgentBridge {
             sub_agent_registry.register(agent);
         }
 
+        // Create HITL approval recorder (stores in workspace/.qbit/hitl/)
+        let hitl_storage = workspace.join(".qbit").join("hitl");
+        let approval_recorder = Arc::new(ApprovalRecorder::new(hitl_storage).await);
+
+        // Create tool policy manager (loads from workspace/.qbit/tool-policy.json)
+        let tool_policy_manager = Arc::new(ToolPolicyManager::new(&workspace).await);
+
+        // Create context manager for token budgeting
+        let mut context_manager = ContextManager::for_model(model);
+        let (context_tx, context_rx) = mpsc::channel::<ContextEvent>(100);
+        context_manager.set_event_channel(context_tx);
+
         Ok(Self {
             workspace: Arc::new(RwLock::new(workspace)),
             provider_name: "anthropic_vertex".to_string(),
@@ -166,6 +217,13 @@ impl AgentBridge {
             conversation_history: Arc::new(RwLock::new(Vec::new())),
             indexer_state: None,
             tavily_state: None,
+            session_manager: Arc::new(RwLock::new(None)),
+            session_persistence_enabled: Arc::new(RwLock::new(true)), // Enabled by default
+            approval_recorder,
+            pending_approvals: Arc::new(RwLock::new(HashMap::new())),
+            tool_policy_manager,
+            context_manager: Arc::new(context_manager),
+            context_event_rx: Arc::new(RwLock::new(Some(context_rx))),
         })
     }
 
@@ -1074,6 +1132,12 @@ When to use sub-agents:
         );
         drop(workspace_path);
 
+        // Start session for persistence (if enabled and not already started)
+        self.start_session().await;
+
+        // Record user message in session
+        self.record_user_message(initial_prompt).await;
+
         // Load persisted conversation history and add the new user message
         let mut history_guard = self.conversation_history.write().await;
 
@@ -1085,8 +1149,35 @@ When to use sub-agents:
         });
 
         // Clone history for use in the loop (we'll update the persisted version at the end)
+        let original_history_len = history_guard.len();
         let mut chat_history: Vec<Message> = history_guard.clone();
         drop(history_guard);
+
+        // Update context manager with current history
+        self.context_manager.update_from_messages(&chat_history).await;
+
+        // Enforce context window limits if needed
+        let alert_level = self.context_manager.alert_level().await;
+        if matches!(alert_level, TokenAlertLevel::Alert | TokenAlertLevel::Critical) {
+            let utilization_before = self.context_manager.utilization().await;
+            tracing::info!(
+                "Context alert level {:?} ({:.1}% utilization), enforcing context window",
+                alert_level,
+                utilization_before * 100.0
+            );
+            chat_history = self.context_manager.enforce_context_window(&chat_history).await;
+
+            // Update stats after pruning
+            self.context_manager.update_from_messages(&chat_history).await;
+            let utilization_after = self.context_manager.utilization().await;
+
+            // Emit context event to frontend
+            let _ = self.event_tx.send(AiEvent::ContextPruned {
+                messages_removed: original_history_len.saturating_sub(chat_history.len()),
+                utilization_before,
+                utilization_after,
+            });
+        }
 
         let mut accumulated_response = String::new();
         let mut iteration = 0;
@@ -1177,70 +1268,14 @@ When to use sub-agents:
                 };
                 let tool_id = tool_call.id.clone();
 
-                // Emit tool request event (tool is now running)
-                let _ = self.event_tx.send(AiEvent::ToolRequest {
-                    tool_name: tool_name.clone(),
-                    args: tool_args.clone(),
-                    request_id: tool_id.clone(),
-                });
-
-                // Check if this is an indexer, web search, or sub-agent tool call
-                let (result_value, success) = if tool_name.starts_with("indexer_") {
-                    self.execute_indexer_tool(tool_name, &tool_args).await
-                } else if tool_name.starts_with("web_search") || tool_name == "web_extract" {
-                    self.execute_tavily_tool(tool_name, &tool_args).await
-                } else if tool_name.starts_with("sub_agent_") {
-                    // Extract sub-agent ID from tool name
-                    let agent_id = tool_name.strip_prefix("sub_agent_").unwrap_or("");
-
-                    // Execute sub-agent
-                    match self
-                        .execute_sub_agent(agent_id, &tool_args, &context, model)
-                        .await
-                    {
-                        Ok(result) => (
-                            serde_json::json!({
-                                "agent_id": result.agent_id,
-                                "response": result.response,
-                                "success": result.success,
-                                "duration_ms": result.duration_ms
-                            }),
-                            result.success,
-                        ),
+                // ================================================================
+                // HITL: Check if tool needs approval before execution
+                // ================================================================
+                let (result_value, success) =
+                    match self.execute_with_hitl(tool_name, &tool_args, &tool_id, &context, model).await {
+                        Ok((result, success)) => (result, success),
                         Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
-                    }
-                } else if tool_name == "run_pty_cmd"
-                    && self.pty_manager.is_some()
-                    && self.current_session_id.read().await.is_some()
-                {
-                    // Intercept run_pty_cmd and execute in user's terminal instead
-                    let command = tool_args
-                        .get("command")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-
-                    match self.execute_in_terminal(command).await {
-                        Ok(v) => (v, true),
-                        Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
-                    }
-                } else {
-                    // Execute regular tool
-                    let mut registry = self.tool_registry.write().await;
-                    let result = registry.execute_tool(tool_name, tool_args).await;
-
-                    match &result {
-                        Ok(v) => {
-                            // Check if the result indicates a command failure (non-zero exit code)
-                            let is_success = v
-                                .get("exit_code")
-                                .and_then(|ec| ec.as_i64())
-                                .map(|ec| ec == 0)
-                                .unwrap_or(true); // Default to success if no exit_code field
-                            (v.clone(), is_success)
-                        }
-                        Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
-                    }
-                };
+                    };
 
                 // Emit tool result event
                 let _ = self.event_tx.send(AiEvent::ToolResult {
@@ -1250,8 +1285,11 @@ When to use sub-agents:
                     request_id: tool_id.clone(),
                 });
 
-                // Add to tool results for LLM
+                // Record tool use in session
                 let result_text = serde_json::to_string(&result_value).unwrap_or_default();
+                self.record_tool_use(tool_name, &result_text).await;
+
+                // Add to tool results for LLM
                 tool_results.push(UserContent::ToolResult(ToolResult {
                     id: tool_id.clone(),
                     call_id: Some(tool_id),
@@ -1286,6 +1324,13 @@ When to use sub-agents:
                     })),
                 });
             }
+        }
+
+        // Record assistant response in session and save
+        if !accumulated_response.is_empty() {
+            self.record_assistant_message(&accumulated_response).await;
+            // Save session after each complete turn (user message + assistant response)
+            self.save_session().await;
         }
 
         // Emit completion event
@@ -1650,6 +1695,9 @@ When to use sub-agents:
     /// Clear the conversation history.
     /// Call this when starting a new conversation or when the user wants to reset context.
     pub async fn clear_conversation_history(&self) {
+        // Finalize current session before clearing
+        self.finalize_session().await;
+
         let mut history = self.conversation_history.write().await;
         history.clear();
         tracing::debug!("Conversation history cleared");
@@ -1658,6 +1706,581 @@ When to use sub-agents:
     /// Get the current conversation history length (for debugging/UI).
     pub async fn conversation_history_len(&self) -> usize {
         self.conversation_history.read().await.len()
+    }
+
+    /// Restore conversation history from a previous session.
+    /// This clears the current history and replaces it with the restored messages.
+    pub async fn restore_session(&self, messages: Vec<super::session::QbitSessionMessage>) {
+        // Finalize any current session first
+        self.finalize_session().await;
+
+        // Convert QbitSessionMessages to rig Messages
+        let rig_messages: Vec<Message> = messages
+            .iter()
+            .filter_map(|m| m.to_rig_message())
+            .collect();
+
+        // Replace conversation history
+        let mut history = self.conversation_history.write().await;
+        *history = rig_messages;
+
+        tracing::info!(
+            "Restored session with {} messages ({} in history)",
+            messages.len(),
+            history.len()
+        );
+    }
+
+    // ========================================================================
+    // Session Persistence Methods
+    // ========================================================================
+
+    /// Enable or disable session persistence.
+    pub async fn set_session_persistence_enabled(&self, enabled: bool) {
+        *self.session_persistence_enabled.write().await = enabled;
+        tracing::debug!("Session persistence enabled: {}", enabled);
+    }
+
+    /// Check if session persistence is enabled.
+    pub async fn is_session_persistence_enabled(&self) -> bool {
+        *self.session_persistence_enabled.read().await
+    }
+
+    /// Start a new session for persistence.
+    /// Called automatically when first message is sent (if persistence is enabled).
+    async fn start_session(&self) {
+        if !*self.session_persistence_enabled.read().await {
+            return;
+        }
+
+        // Only start if no active session
+        let mut manager_guard = self.session_manager.write().await;
+        if manager_guard.is_some() {
+            return;
+        }
+
+        let workspace = self.workspace.read().await.clone();
+        match QbitSessionManager::new(workspace, &self.model_name, &self.provider_name).await {
+            Ok(manager) => {
+                *manager_guard = Some(manager);
+                tracing::debug!("Session started for persistence");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to start session for persistence: {}", e);
+            }
+        }
+    }
+
+    /// Record a user message in the current session.
+    async fn record_user_message(&self, content: &str) {
+        let mut manager_guard = self.session_manager.write().await;
+        if let Some(ref mut manager) = *manager_guard {
+            manager.add_user_message(content);
+        }
+    }
+
+    /// Record an assistant message in the current session.
+    async fn record_assistant_message(&self, content: &str) {
+        let mut manager_guard = self.session_manager.write().await;
+        if let Some(ref mut manager) = *manager_guard {
+            manager.add_assistant_message(content);
+        }
+    }
+
+    /// Record a tool use in the current session.
+    async fn record_tool_use(&self, tool_name: &str, result: &str) {
+        let mut manager_guard = self.session_manager.write().await;
+        if let Some(ref mut manager) = *manager_guard {
+            manager.add_tool_use(tool_name, result);
+        }
+    }
+
+    /// Save the current session to disk (incremental save).
+    /// This saves the current state without finalizing the session.
+    async fn save_session(&self) {
+        let manager_guard = self.session_manager.read().await;
+        if let Some(ref manager) = *manager_guard {
+            match manager.save() {
+                Ok(path) => {
+                    tracing::debug!("Session saved to: {}", path.display());
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to save session: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Finalize and save the current session.
+    /// Returns the path to the saved session file, if any.
+    pub async fn finalize_session(&self) -> Option<PathBuf> {
+        let mut manager_guard = self.session_manager.write().await;
+        if let Some(ref mut manager) = manager_guard.take() {
+            match manager.finalize() {
+                Ok(path) => {
+                    tracing::info!("Session finalized: {}", path.display());
+                    return Some(path);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to finalize session: {}", e);
+                }
+            }
+        }
+        None
+    }
+
+    // ========================================================================
+    // HITL (Human-in-the-Loop) Methods
+    // ========================================================================
+
+    /// Execute a tool with HITL approval check.
+    /// This is the main entry point for tool execution during agent loops.
+    ///
+    /// Policy flow:
+    /// 1. Check if tool is denied by policy → return error immediately
+    /// 2. Apply constraints → return error if violated, possibly modify args
+    /// 3. Check if tool is allowed by policy → execute directly
+    /// 4. Otherwise, proceed to HITL approval flow
+    async fn execute_with_hitl(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+        tool_id: &str,
+        context: &SubAgentContext,
+        model: &rig_anthropic_vertex::CompletionModel,
+    ) -> Result<(serde_json::Value, bool)> {
+        // ================================================================
+        // Step 1: Check if tool is denied by policy
+        // ================================================================
+        if self.tool_policy_manager.is_denied(tool_name).await {
+            let _ = self.event_tx.send(AiEvent::ToolDenied {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: tool_args.clone(),
+                reason: "Tool is denied by policy".to_string(),
+            });
+            return Ok((
+                json!({
+                    "error": format!("Tool '{}' is denied by policy", tool_name),
+                    "denied_by_policy": true
+                }),
+                false,
+            ));
+        }
+
+        // ================================================================
+        // Step 2: Apply constraints and check for violations
+        // ================================================================
+        let (effective_args, constraint_note) = match self
+            .tool_policy_manager
+            .apply_constraints(tool_name, tool_args)
+            .await
+        {
+            PolicyConstraintResult::Allowed => (tool_args.clone(), None),
+            PolicyConstraintResult::Violated(reason) => {
+                let _ = self.event_tx.send(AiEvent::ToolDenied {
+                    request_id: tool_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args: tool_args.clone(),
+                    reason: reason.clone(),
+                });
+                return Ok((
+                    json!({
+                        "error": format!("Tool constraint violated: {}", reason),
+                        "constraint_violated": true
+                    }),
+                    false,
+                ));
+            }
+            PolicyConstraintResult::Modified(modified_args, note) => {
+                tracing::info!(
+                    "Tool '{}' args modified by constraint: {}",
+                    tool_name,
+                    note
+                );
+                (modified_args, Some(note))
+            }
+        };
+
+        // ================================================================
+        // Step 3: Check if tool is allowed by policy (bypasses HITL)
+        // ================================================================
+        let policy = self.tool_policy_manager.get_policy(tool_name).await;
+        if policy == ToolPolicy::Allow {
+            // Emit auto-approval event for UI notification
+            let reason = if let Some(note) = constraint_note {
+                format!("Allowed by policy ({})", note)
+            } else {
+                "Allowed by tool policy".to_string()
+            };
+            let _ = self.event_tx.send(AiEvent::ToolAutoApproved {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: effective_args.clone(),
+                reason,
+            });
+
+            // Execute directly without approval
+            return self
+                .execute_tool_direct(tool_name, &effective_args, context, model)
+                .await;
+        }
+
+        // ================================================================
+        // Step 4: Fall through to HITL approval system
+        // ================================================================
+        // Check if tool should be auto-approved based on learned patterns
+        if self.approval_recorder.should_auto_approve(tool_name).await {
+            // Emit auto-approval event for UI notification
+            let _ = self.event_tx.send(AiEvent::ToolAutoApproved {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: effective_args.clone(),
+                reason: "Auto-approved based on learned patterns or always-allow list".to_string(),
+            });
+
+            // Execute directly without approval
+            return self
+                .execute_tool_direct(tool_name, &effective_args, context, model)
+                .await;
+        }
+
+        // Need approval - create request with stats
+        let stats = self.approval_recorder.get_pattern(tool_name).await;
+        let risk_level = RiskLevel::for_tool(tool_name);
+        let config = self.approval_recorder.get_config().await;
+        let can_learn = !config
+            .always_require_approval
+            .contains(&tool_name.to_string());
+        let suggestion = self.approval_recorder.get_suggestion(tool_name).await;
+
+        // Create oneshot channel for response
+        let (tx, rx) = oneshot::channel::<ApprovalDecision>();
+
+        // Store the sender
+        {
+            let mut pending = self.pending_approvals.write().await;
+            pending.insert(tool_id.to_string(), tx);
+        }
+
+        // Emit approval request event with HITL metadata
+        let _ = self.event_tx.send(AiEvent::ToolApprovalRequest {
+            request_id: tool_id.to_string(),
+            tool_name: tool_name.to_string(),
+            args: effective_args.clone(),
+            stats,
+            risk_level,
+            can_learn,
+            suggestion,
+        });
+
+        // Wait for approval response (with timeout of 5 minutes)
+        match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+            Ok(Ok(decision)) => {
+                if decision.approved {
+                    // Record approval
+                    let _ = self
+                        .approval_recorder
+                        .record_approval(
+                            tool_name,
+                            true,
+                            decision.reason,
+                            decision.always_allow,
+                        )
+                        .await;
+
+                    // Execute the tool with effective (possibly constrained) args
+                    self.execute_tool_direct(tool_name, &effective_args, context, model)
+                        .await
+                } else {
+                    // Record denial
+                    let _ = self
+                        .approval_recorder
+                        .record_approval(tool_name, false, decision.reason, false)
+                        .await;
+
+                    Ok((
+                        json!({"error": "Tool execution denied by user", "denied": true}),
+                        false,
+                    ))
+                }
+            }
+            Ok(Err(_)) => {
+                // Channel closed (sender dropped)
+                Ok((
+                    json!({"error": "Approval request cancelled", "cancelled": true}),
+                    false,
+                ))
+            }
+            Err(_) => {
+                // Timeout - clean up pending approval
+                let mut pending = self.pending_approvals.write().await;
+                pending.remove(tool_id);
+
+                Ok((
+                    json!({"error": "Approval request timed out after 5 minutes", "timeout": true}),
+                    false,
+                ))
+            }
+        }
+    }
+
+    /// Execute a tool directly (after approval or auto-approved).
+    async fn execute_tool_direct(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+        context: &SubAgentContext,
+        model: &rig_anthropic_vertex::CompletionModel,
+    ) -> Result<(serde_json::Value, bool)> {
+        // Check if this is an indexer tool call
+        if tool_name.starts_with("indexer_") {
+            return Ok(self.execute_indexer_tool(tool_name, tool_args).await);
+        }
+
+        // Check if this is a web search (Tavily) tool call
+        if tool_name.starts_with("web_search") || tool_name == "web_extract" {
+            return Ok(self.execute_tavily_tool(tool_name, tool_args).await);
+        }
+
+        // Check if this is a sub-agent call
+        if tool_name.starts_with("sub_agent_") {
+            let agent_id = tool_name.strip_prefix("sub_agent_").unwrap_or("");
+            match self
+                .execute_sub_agent(agent_id, tool_args, context, model)
+                .await
+            {
+                Ok(result) => {
+                    return Ok((
+                        json!({
+                            "agent_id": result.agent_id,
+                            "response": result.response,
+                            "success": result.success,
+                            "duration_ms": result.duration_ms
+                        }),
+                        result.success,
+                    ));
+                }
+                Err(e) => return Ok((json!({ "error": e.to_string() }), false)),
+            }
+        }
+
+        // Check if this is a terminal command that should be intercepted
+        if tool_name == "run_pty_cmd"
+            && self.pty_manager.is_some()
+            && self.current_session_id.read().await.is_some()
+        {
+            let command = tool_args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            match self.execute_in_terminal(command).await {
+                Ok(v) => return Ok((v, true)),
+                Err(e) => return Ok((json!({"error": e.to_string()}), false)),
+            }
+        }
+
+        // Execute regular tool via registry
+        let mut registry = self.tool_registry.write().await;
+        let result = registry.execute_tool(tool_name, tool_args.clone()).await;
+
+        match &result {
+            Ok(v) => {
+                let is_success = v
+                    .get("exit_code")
+                    .and_then(|ec| ec.as_i64())
+                    .map(|ec| ec == 0)
+                    .unwrap_or(true);
+                Ok((v.clone(), is_success))
+            }
+            Err(e) => Ok((json!({"error": e.to_string()}), false)),
+        }
+    }
+
+    /// Get all approval patterns.
+    pub async fn get_approval_patterns(&self) -> Vec<ApprovalPattern> {
+        self.approval_recorder.get_all_patterns().await
+    }
+
+    /// Get the approval pattern for a specific tool.
+    pub async fn get_tool_approval_pattern(&self, tool_name: &str) -> Option<ApprovalPattern> {
+        self.approval_recorder.get_pattern(tool_name).await
+    }
+
+    /// Get the HITL configuration.
+    pub async fn get_hitl_config(&self) -> ToolApprovalConfig {
+        self.approval_recorder.get_config().await
+    }
+
+    /// Set the HITL configuration.
+    pub async fn set_hitl_config(&self, config: ToolApprovalConfig) -> Result<()> {
+        self.approval_recorder.set_config(config).await
+    }
+
+    /// Add a tool to the always-allow list.
+    pub async fn add_tool_always_allow(&self, tool_name: &str) -> Result<()> {
+        self.approval_recorder.add_always_allow(tool_name).await
+    }
+
+    /// Remove a tool from the always-allow list.
+    pub async fn remove_tool_always_allow(&self, tool_name: &str) -> Result<()> {
+        self.approval_recorder.remove_always_allow(tool_name).await
+    }
+
+    /// Reset all approval patterns.
+    pub async fn reset_approval_patterns(&self) -> Result<()> {
+        self.approval_recorder.reset_patterns().await
+    }
+
+    /// Respond to a pending approval request.
+    pub async fn respond_to_approval(&self, decision: ApprovalDecision) -> Result<()> {
+        // Get the pending sender
+        let sender = {
+            let mut pending = self.pending_approvals.write().await;
+            pending.remove(&decision.request_id)
+        };
+
+        // Record the decision (for pattern learning)
+        self.approval_recorder
+            .record_approval(
+                &decision.request_id.split('_').last().unwrap_or("unknown"), // Extract tool name from request_id
+                decision.approved,
+                decision.reason.clone(),
+                decision.always_allow,
+            )
+            .await?;
+
+        // Send the response to unblock the waiting tool execution
+        if let Some(sender) = sender {
+            let _ = sender.send(decision);
+        } else {
+            tracing::warn!(
+                "No pending approval found for request_id: {}",
+                decision.request_id
+            );
+        }
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Tool Policy Methods
+    // ========================================================================
+
+    /// Get the tool policy configuration.
+    pub async fn get_tool_policy_config(&self) -> ToolPolicyConfig {
+        self.tool_policy_manager.get_config().await
+    }
+
+    /// Set the tool policy configuration.
+    pub async fn set_tool_policy_config(&self, config: ToolPolicyConfig) -> Result<()> {
+        self.tool_policy_manager.set_config(config).await
+    }
+
+    /// Get the policy for a specific tool.
+    pub async fn get_tool_policy(&self, tool_name: &str) -> ToolPolicy {
+        self.tool_policy_manager.get_policy(tool_name).await
+    }
+
+    /// Set the policy for a specific tool.
+    pub async fn set_tool_policy(&self, tool_name: &str, policy: ToolPolicy) -> Result<()> {
+        self.tool_policy_manager.set_policy(tool_name, policy).await
+    }
+
+    /// Reset tool policies to defaults.
+    pub async fn reset_tool_policies(&self) -> Result<()> {
+        self.tool_policy_manager.reset_to_defaults().await
+    }
+
+    /// Enable full-auto mode with the given allowed tools.
+    pub async fn enable_full_auto_mode(&self, allowed_tools: Vec<String>) {
+        self.tool_policy_manager.enable_full_auto(allowed_tools).await;
+    }
+
+    /// Disable full-auto mode.
+    pub async fn disable_full_auto_mode(&self) {
+        self.tool_policy_manager.disable_full_auto().await;
+    }
+
+    /// Check if full-auto mode is enabled.
+    pub async fn is_full_auto_mode_enabled(&self) -> bool {
+        self.tool_policy_manager.is_full_auto_enabled().await
+    }
+
+    // ========================================================================
+    // Context Management Methods
+    // ========================================================================
+
+    /// Get the context manager reference.
+    pub fn context_manager(&self) -> Arc<ContextManager> {
+        Arc::clone(&self.context_manager)
+    }
+
+    /// Get current context summary (token usage, alert level, etc.).
+    pub async fn get_context_summary(&self) -> ContextSummary {
+        self.context_manager.get_summary().await
+    }
+
+    /// Get current token usage statistics.
+    pub async fn get_token_usage_stats(&self) -> TokenUsageStats {
+        self.context_manager.stats().await
+    }
+
+    /// Get current token alert level.
+    pub async fn get_token_alert_level(&self) -> TokenAlertLevel {
+        self.context_manager.alert_level().await
+    }
+
+    /// Get context utilization percentage (0.0 - 1.0+).
+    pub async fn get_context_utilization(&self) -> f64 {
+        self.context_manager.utilization().await
+    }
+
+    /// Get remaining available tokens.
+    pub async fn get_remaining_tokens(&self) -> usize {
+        self.context_manager.remaining_tokens().await
+    }
+
+    /// Update token budget from current conversation history.
+    pub async fn update_context_from_history(&self) {
+        let history = self.conversation_history.read().await;
+        self.context_manager.update_from_messages(&history).await;
+    }
+
+    /// Enforce context window limits by pruning old messages if needed.
+    /// Returns the number of messages pruned.
+    pub async fn enforce_context_window(&self) -> usize {
+        let mut history = self.conversation_history.write().await;
+        let original_len = history.len();
+        let pruned = self.context_manager.enforce_context_window(&history).await;
+        let pruned_count = original_len.saturating_sub(pruned.len());
+        *history = pruned;
+        pruned_count
+    }
+
+    /// Reset the context manager (clear all token tracking).
+    pub async fn reset_context_manager(&self) {
+        self.context_manager.reset().await;
+    }
+
+    /// Get the context trim configuration.
+    pub fn get_context_trim_config(&self) -> ContextTrimConfig {
+        self.context_manager.trim_config().clone()
+    }
+
+    /// Check if context management is enabled.
+    pub fn is_context_management_enabled(&self) -> bool {
+        self.context_manager.is_enabled()
+    }
+
+    /// Truncate a tool response if it exceeds limits.
+    pub async fn truncate_tool_response(&self, content: &str, tool_name: &str) -> String {
+        let result = self
+            .context_manager
+            .truncate_tool_response(content, tool_name)
+            .await;
+        result.content
     }
 }
 

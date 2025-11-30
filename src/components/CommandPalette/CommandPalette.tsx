@@ -1,5 +1,6 @@
 import {
   Bot,
+  Clock,
   FileSearch,
   FileText,
   FolderTree,
@@ -40,6 +41,7 @@ interface CommandPaletteProps {
   onToggleSidebar?: () => void;
   workingDirectory?: string;
   onShowSearchResults?: (results: SearchResult[]) => void;
+  onOpenSessionBrowser?: () => void;
 }
 
 // Types for search results
@@ -72,6 +74,7 @@ export function CommandPalette({
   onToggleSidebar,
   workingDirectory,
   onShowSearchResults,
+  onOpenSessionBrowser,
 }: CommandPaletteProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -224,6 +227,13 @@ export function CommandPalette({
                 <CommandShortcut>⌘K</CommandShortcut>
               </CommandItem>
             </>
+          )}
+          {onOpenSessionBrowser && (
+            <CommandItem onSelect={() => runCommand(onOpenSessionBrowser)}>
+              <Clock className="mr-2 h-4 w-4" />
+              <span>Browse Session History</span>
+              <CommandShortcut>⌘H</CommandShortcut>
+            </CommandItem>
           )}
         </CommandGroup>
 

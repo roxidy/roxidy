@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { ToolApprovalDialog } from "./components/AgentChat";
 import { CommandPalette, type PageRoute } from "./components/CommandPalette";
+import { SessionBrowser } from "./components/SessionBrowser";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
@@ -25,7 +26,7 @@ import {
 } from "./lib/indexer";
 import { ptyCreate, shellIntegrationInstall, shellIntegrationStatus } from "./lib/tauri";
 import { ComponentTestbed } from "./pages/ComponentTestbed";
-import { clearConversation, useStore } from "./store";
+import { clearConversation, restoreSession, useStore } from "./store";
 
 // ContentArea now just renders the unified timeline
 function ContentArea({ sessionId }: { sessionId: string }) {
@@ -37,6 +38,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageRoute>("main");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -235,6 +237,13 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === "b") {
         e.preventDefault();
         setSidebarOpen((prev) => !prev);
+        return;
+      }
+
+      // Cmd+H for session browser
+      if ((e.metaKey || e.ctrlKey) && e.key === "h") {
+        e.preventDefault();
+        setSessionBrowserOpen(true);
       }
     };
 
@@ -260,6 +269,23 @@ function App() {
       toast.success("Conversation cleared");
     }
   }, [activeSessionId]);
+
+  // Handle session restore from session browser
+  const handleRestoreSession = useCallback(
+    async (identifier: string) => {
+      if (!activeSessionId) {
+        toast.error("No active session to restore into");
+        return;
+      }
+      try {
+        await restoreSession(activeSessionId, identifier);
+        toast.success("Session restored");
+      } catch (error) {
+        toast.error(`Failed to restore session: ${error}`);
+      }
+    },
+    [activeSessionId]
+  );
 
   if (isLoading) {
     return (
@@ -311,6 +337,12 @@ function App() {
           onNewTab={handleNewTab}
           onSetMode={handleSetMode}
           onClearConversation={handleClearConversation}
+          onOpenSessionBrowser={() => setSessionBrowserOpen(true)}
+        />
+        <SessionBrowser
+          open={sessionBrowserOpen}
+          onOpenChange={setSessionBrowserOpen}
+          onSessionRestore={handleRestoreSession}
         />
         <Toaster
           position="bottom-right"
@@ -383,6 +415,14 @@ function App() {
         onClearConversation={handleClearConversation}
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
         workingDirectory={workingDirectory}
+        onOpenSessionBrowser={() => setSessionBrowserOpen(true)}
+      />
+
+      {/* Session Browser */}
+      <SessionBrowser
+        open={sessionBrowserOpen}
+        onOpenChange={setSessionBrowserOpen}
+        onSessionRestore={handleRestoreSession}
       />
 
       <Toaster
