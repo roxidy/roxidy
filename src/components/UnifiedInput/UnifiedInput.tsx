@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { sendPrompt } from "@/lib/ai";
-import { ptyWrite } from "@/lib/tauri";
+import { type PromptInfo, ptyWrite, readPrompt } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useInputMode, useStore, useStreamingBlocks } from "@/store";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
+import { SlashCommandPopup, filterPrompts } from "@/components/SlashCommandPopup";
 
 interface UnifiedInputProps {
   sessionId: string;
@@ -49,7 +51,14 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [history, setHistory] = useState<string[]>([]);
+  const [showSlashPopup, setShowSlashPopup] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Slash commands
+  const { prompts } = useSlashCommands(workingDirectory);
+  const slashQuery = input.startsWith("/") ? input.slice(1) : "";
+  const filteredSlashPrompts = filterPrompts(prompts, slashQuery);
 
   // Use inputMode for unified input toggle (not session mode)
   const inputMode = useInputMode(sessionId);
@@ -164,6 +173,41 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
     workingDirectory,
   ]);
 
+  // Handle slash command selection
+  const handleSlashSelect = useCallback(
+    async (prompt: PromptInfo) => {
+      setShowSlashPopup(false);
+      setInput("");
+
+      // Switch to agent mode if in terminal mode
+      if (inputMode === "terminal") {
+        setInputMode(sessionId, "agent");
+      }
+
+      // Read and send the prompt
+      try {
+        const content = await readPrompt(prompt.path);
+        setIsSubmitting(true);
+
+        // Add user message to store (show the slash command name)
+        addAgentMessage(sessionId, {
+          id: crypto.randomUUID(),
+          sessionId,
+          role: "user",
+          content: `/${prompt.name}`,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Send the actual prompt content to AI
+        await sendPrompt(content, { workingDirectory, sessionId });
+      } catch (error) {
+        toast.error(`Failed to run prompt: ${error}`);
+        setIsSubmitting(false);
+      }
+    },
+    [sessionId, inputMode, setInputMode, addAgentMessage, workingDirectory]
+  );
+
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Cmd+I to toggle input mode - handle first to ensure it works in all modes
@@ -173,6 +217,52 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
         e.stopPropagation();
         toggleInputMode();
         return;
+      }
+
+      // When slash popup is open, handle navigation
+      if (showSlashPopup && filteredSlashPrompts.length > 0) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setShowSlashPopup(false);
+          return;
+        }
+
+        // Arrow down - move selection down
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSlashSelectedIndex((prev) =>
+            prev < filteredSlashPrompts.length - 1 ? prev + 1 : prev
+          );
+          return;
+        }
+
+        // Arrow up - move selection up
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSlashSelectedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+          return;
+        }
+
+        // Tab - complete the selected option into the input field
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const selectedPrompt = filteredSlashPrompts[slashSelectedIndex];
+          if (selectedPrompt) {
+            setInput(`/${selectedPrompt.name}`);
+            setShowSlashPopup(false);
+          }
+          return;
+        }
+
+        // Enter - execute the selected option
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          const selectedPrompt = filteredSlashPrompts[slashSelectedIndex];
+          if (selectedPrompt) {
+            handleSlashSelect(selectedPrompt);
+          }
+          return;
+        }
       }
 
       // Cmd+Shift+T to toggle input mode
@@ -273,7 +363,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
         }
       }
     },
-    [inputMode, sessionId, handleSubmit, history, historyIndex, toggleInputMode]
+    [inputMode, sessionId, handleSubmit, history, historyIndex, toggleInputMode, showSlashPopup, filteredSlashPrompts, slashSelectedIndex, handleSlashSelect]
   );
 
   const displayPath = workingDirectory?.replace(/^\/Users\/[^/]+/, "~") || "~";
@@ -285,30 +375,49 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
 
       {/* Input row */}
       <div className="flex items-center gap-2 relative">
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            setHistoryIndex(-1);
-          }}
-          onKeyDown={handleKeyDown}
-          disabled={isAgentBusy}
-          placeholder={inputMode === "terminal" ? "Enter command..." : "Enter prompt..."}
-          rows={1}
-          className={cn(
-            "flex-1 min-h-[24px] max-h-[200px] py-1 px-0",
-            "bg-transparent border-none shadow-none resize-none",
-            "font-mono text-sm text-[#c0caf5]",
-            "focus:outline-none focus:ring-0",
-            "disabled:opacity-50",
-            "placeholder:text-[#565f89]"
-          )}
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-        />
+        <SlashCommandPopup
+          open={showSlashPopup}
+          onOpenChange={setShowSlashPopup}
+          searchQuery={slashQuery}
+          prompts={prompts}
+          selectedIndex={slashSelectedIndex}
+          onSelect={handleSlashSelect}
+        >
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => {
+              const value = e.target.value;
+              setInput(value);
+              setHistoryIndex(-1);
+
+              // Show slash popup when "/" is typed at the start
+              if (value.startsWith("/") && value.length >= 1) {
+                setShowSlashPopup(true);
+                // Reset selection when query changes
+                setSlashSelectedIndex(0);
+              } else {
+                setShowSlashPopup(false);
+              }
+            }}
+            onKeyDown={handleKeyDown}
+            disabled={isAgentBusy}
+            placeholder={inputMode === "terminal" ? "Enter command..." : "Ask the AI..."}
+            rows={1}
+            className={cn(
+              "flex-1 min-h-[24px] max-h-[200px] py-1 px-0",
+              "bg-transparent border-none shadow-none resize-none",
+              "font-mono text-sm text-[#c0caf5]",
+              "focus:outline-none focus:ring-0",
+              "disabled:opacity-50",
+              "placeholder:text-[#565f89]"
+            )}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+          />
+        </SlashCommandPopup>
       </div>
     </div>
   );

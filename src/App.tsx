@@ -92,10 +92,6 @@ function App() {
           toast.info("Updating shell integration...");
           await shellIntegrationInstall();
           toast.success("Shell integration updated!");
-        } else if (status.type === "Misconfigured") {
-          toast.warning("Fixing shell integration configuration...");
-          await shellIntegrationInstall();
-          toast.success("Shell integration fixed! New terminals will work correctly.");
         }
 
         // Create initial terminal session

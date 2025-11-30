@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { initVertexAiAgent, VERTEX_AI_MODELS } from "@/lib/ai";
 import { cn } from "@/lib/utils";
-import { type AiStatus, useAiConfig, useInputMode, useStore } from "../../store";
+import { useAiConfig, useInputMode, useStore } from "../../store";
 
 // Available models for the dropdown
 const AVAILABLE_MODELS = [
@@ -18,18 +18,6 @@ const AVAILABLE_MODELS = [
   { id: VERTEX_AI_MODELS.CLAUDE_HAIKU_4_5, name: "Claude Haiku 4.5" },
 ];
 
-function _getStatusColor(status: AiStatus): string {
-  switch (status) {
-    case "ready":
-      return "bg-green-500";
-    case "initializing":
-      return "bg-yellow-500";
-    case "error":
-      return "bg-red-500";
-    default:
-      return "bg-gray-500";
-  }
-}
 
 function formatModel(model: string): string {
   // Simplify Vertex AI model names
@@ -67,11 +55,6 @@ export function StatusBar({ sessionId }: StatusBarProps) {
   const setInputMode = useStore((state) => state.setInputMode);
   const setAiConfig = useStore((state) => state.setAiConfig);
 
-  const _toggleInputMode = () => {
-    if (sessionId) {
-      setInputMode(sessionId, inputMode === "terminal" ? "agent" : "terminal");
-    }
-  };
 
   const handleModelSelect = async (modelId: string) => {
     // Don't switch if already on this model or no vertex config
