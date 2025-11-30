@@ -166,10 +166,12 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
 
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Handle Enter - execute/send (Shift+Enter for newline)
-      if (e.key === "Enter" && !e.shiftKey) {
+      // Cmd+I to toggle input mode - handle first to ensure it works in all modes
+      // Check both lowercase 'i' and the key code for reliability across platforms
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "i" || e.key === "I")) {
         e.preventDefault();
-        await handleSubmit();
+        e.stopPropagation();
+        toggleInputMode();
         return;
       }
 
@@ -177,6 +179,13 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();
         toggleInputMode();
+        return;
+      }
+
+      // Handle Enter - execute/send (Shift+Enter for newline)
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        await handleSubmit();
         return;
       }
 
@@ -285,7 +294,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
           }}
           onKeyDown={handleKeyDown}
           disabled={isAgentBusy}
-          placeholder={inputMode === "terminal" ? "Enter command..." : "Ask the AI..."}
+          placeholder={inputMode === "terminal" ? "Enter command..." : "Enter prompt..."}
           rows={1}
           className={cn(
             "flex-1 min-h-[24px] max-h-[200px] py-1 px-0",

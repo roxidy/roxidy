@@ -1,14 +1,24 @@
 pub mod agent_bridge;
+pub mod agentic_loop;
+mod bridge_context;
+mod bridge_hitl;
+mod bridge_policy;
+mod bridge_session;
 pub mod commands;
 pub mod context_manager;
 pub mod context_pruner;
 pub mod events;
 pub mod hitl;
+pub mod llm_client;
 pub mod loop_detection;
 pub mod session;
 pub mod sub_agent;
+pub mod sub_agent_executor;
+pub mod system_prompt;
 pub mod token_budget;
 pub mod token_trunc;
+pub mod tool_definitions;
+pub mod tool_executors;
 pub mod tool_policy;
 pub mod workflow;
 
@@ -54,6 +64,7 @@ pub use token_trunc::{
     aggregate_tool_output, truncate_by_chars, truncate_by_tokens, ContentType, TruncationResult,
 };
 // Re-export loop detection types for external use
+#[allow(unused_imports)]
 pub use loop_detection::{
     LoopDetectionResult, LoopDetector, LoopDetectorStats, LoopProtectionConfig,
 };

@@ -216,6 +216,16 @@ function App() {
     init();
   }, [addSession, setAiConfig]);
 
+  // Handle toggle mode from command palette (switches between terminal and agent)
+  // NOTE: This must be defined before the keyboard shortcut useEffect that uses it
+  const handleToggleMode = useCallback(() => {
+    if (activeSessionId) {
+      const currentSession = sessions[activeSessionId];
+      const newMode = currentSession?.mode === "agent" ? "terminal" : "agent";
+      setInputMode(activeSessionId, newMode);
+    }
+  }, [activeSessionId, sessions, setInputMode]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -244,23 +254,19 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === "h") {
         e.preventDefault();
         setSessionBrowserOpen(true);
+        return;
+      }
+
+      // Cmd+I for toggle mode
+      if ((e.metaKey || e.ctrlKey) && e.key === "i") {
+        e.preventDefault();
+        handleToggleMode();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleNewTab]);
-
-  // Handle input mode change from command palette
-  // NOTE: This must be defined before any early returns to maintain hook order
-  const handleSetMode = useCallback(
-    (newMode: "terminal" | "agent") => {
-      if (activeSessionId) {
-        setInputMode(activeSessionId, newMode);
-      }
-    },
-    [activeSessionId, setInputMode]
-  );
+  }, [handleNewTab, handleToggleMode]);
 
   // Handle clear conversation from command palette
   const handleClearConversation = useCallback(async () => {
@@ -335,7 +341,7 @@ function App() {
           onNavigate={setCurrentPage}
           activeSessionId={activeSessionId}
           onNewTab={handleNewTab}
-          onSetMode={handleSetMode}
+          onToggleMode={handleToggleMode}
           onClearConversation={handleClearConversation}
           onOpenSessionBrowser={() => setSessionBrowserOpen(true)}
         />
@@ -411,7 +417,7 @@ function App() {
         onNavigate={setCurrentPage}
         activeSessionId={activeSessionId}
         onNewTab={handleNewTab}
-        onSetMode={handleSetMode}
+        onToggleMode={handleToggleMode}
         onClearConversation={handleClearConversation}
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
         workingDirectory={workingDirectory}

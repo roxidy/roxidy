@@ -192,7 +192,7 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
 
   return (
     <Dialog open={true} onOpenChange={() => handleDeny()}>
-      <DialogContent className="bg-[#1f2335] border-[#27293d] text-[#c0caf5] max-w-lg">
+      <DialogContent className="bg-[#1f2335] border-[#27293d] text-[#c0caf5] max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-[#c0caf5]">
             <RiskIcon className={cn("w-5 h-5", RISK_STYLES[riskLevel].color)} />
@@ -241,7 +241,7 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
                 Arguments
               </button>
               {showArgs && (
-                <pre className="text-xs text-[#a9b1d6] bg-[#1a1b26] p-3 rounded overflow-x-auto max-h-48 scrollbar-thin">
+                <pre className="text-xs text-[#a9b1d6] bg-[#1a1b26] p-3 rounded overflow-auto max-h-64 scrollbar-thin whitespace-pre-wrap break-all">
                   {argsString}
                 </pre>
               )}

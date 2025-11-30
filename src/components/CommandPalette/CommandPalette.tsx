@@ -1,5 +1,5 @@
 import {
-  Bot,
+  ArrowLeftRight,
   Clock,
   FileSearch,
   FileText,
@@ -36,7 +36,7 @@ interface CommandPaletteProps {
   onNavigate: (page: PageRoute) => void;
   activeSessionId: string | null;
   onNewTab: () => void;
-  onSetMode: (mode: "terminal" | "agent") => void;
+  onToggleMode: () => void;
   onClearConversation: () => void;
   onToggleSidebar?: () => void;
   workingDirectory?: string;
@@ -69,7 +69,7 @@ export function CommandPalette({
   onNavigate,
   activeSessionId,
   onNewTab,
-  onSetMode,
+  onToggleMode,
   onClearConversation,
   onToggleSidebar,
   workingDirectory,
@@ -209,24 +209,17 @@ export function CommandPalette({
             <span>New Tab</span>
             <CommandShortcut>⌘T</CommandShortcut>
           </CommandItem>
+          <CommandItem onSelect={() => runCommand(onToggleMode)}>
+            <ArrowLeftRight className="mr-2 h-4 w-4" />
+            <span>Toggle Mode</span>
+            <CommandShortcut>⌘I</CommandShortcut>
+          </CommandItem>
           {activeSessionId && (
-            <>
-              <CommandItem onSelect={() => runCommand(() => onSetMode("terminal"))}>
-                <Terminal className="mr-2 h-4 w-4" />
-                <span>Switch to Terminal Mode</span>
-                <CommandShortcut>⌘1</CommandShortcut>
-              </CommandItem>
-              <CommandItem onSelect={() => runCommand(() => onSetMode("agent"))}>
-                <Bot className="mr-2 h-4 w-4" />
-                <span>Switch to Agent Mode</span>
-                <CommandShortcut>⌘2</CommandShortcut>
-              </CommandItem>
-              <CommandItem onSelect={() => runCommand(onClearConversation)}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                <span>Clear Conversation</span>
-                <CommandShortcut>⌘K</CommandShortcut>
-              </CommandItem>
-            </>
+            <CommandItem onSelect={() => runCommand(onClearConversation)}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              <span>Clear Conversation</span>
+              <CommandShortcut>⌘K</CommandShortcut>
+            </CommandItem>
           )}
           {onOpenSessionBrowser && (
             <CommandItem onSelect={() => runCommand(onOpenSessionBrowser)}>
