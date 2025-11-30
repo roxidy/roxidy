@@ -3,16 +3,13 @@
 //! This module contains the logic for executing various types of tools:
 //! - Indexer tools (code search, file analysis)
 //! - Tavily tools (web search)
-//! - Terminal tools (PTY command execution)
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::json;
-use tokio::sync::RwLock;
 
 use crate::indexer::IndexerState;
-use crate::pty::PtyManager;
 use crate::tavily::TavilyState;
 
 /// Execute an indexer tool by name.
@@ -296,37 +293,6 @@ pub async fn execute_tavily_tool(
             json!({"error": format!("Unknown web search tool: {}", tool_name)}),
             false,
         ),
-    }
-}
-
-/// Execute a command in the user's terminal by writing to their PTY.
-pub async fn execute_in_terminal(
-    pty_manager: Option<&Arc<PtyManager>>,
-    current_session_id: &Arc<RwLock<Option<String>>>,
-    command: &str,
-) -> anyhow::Result<serde_json::Value> {
-    let session_id = current_session_id.read().await.clone();
-
-    match (session_id, pty_manager) {
-        (Some(sid), Some(pm)) => {
-            // Write command + newline to the user's terminal
-            let cmd_with_newline = format!("{}\n", command);
-            pm.write(&sid, cmd_with_newline.as_bytes())
-                .map_err(|e| anyhow::anyhow!("Failed to write to terminal: {}", e))?;
-
-            Ok(json!({
-                "success": true,
-                "message": format!("Command '{}' sent to terminal", command),
-                "session_id": sid,
-                "note": "Command output will appear in the terminal. Use terminal output events to capture results."
-            }))
-        }
-        (None, _) => Err(anyhow::anyhow!(
-            "No session ID available - cannot execute in terminal"
-        )),
-        (_, None) => Err(anyhow::anyhow!(
-            "PtyManager not available - cannot execute in terminal"
-        )),
     }
 }
 

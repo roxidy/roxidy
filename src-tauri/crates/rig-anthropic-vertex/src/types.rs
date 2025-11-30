@@ -8,6 +8,33 @@ pub const ANTHROPIC_VERSION: &str = "vertex-2023-10-16";
 /// Maximum tokens default
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 
+/// Configuration for extended thinking (reasoning) mode.
+/// When enabled, the model will show its reasoning process before responding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingConfig {
+    /// Must be "enabled" to activate extended thinking
+    #[serde(rename = "type")]
+    pub thinking_type: String,
+    /// Token budget for thinking (must be >= 1024)
+    pub budget_tokens: u32,
+}
+
+impl ThinkingConfig {
+    /// Create a new thinking configuration with the specified budget.
+    /// Budget must be at least 1024 tokens.
+    pub fn new(budget_tokens: u32) -> Self {
+        Self {
+            thinking_type: "enabled".to_string(),
+            budget_tokens: budget_tokens.max(1024),
+        }
+    }
+
+    /// Create a thinking config with a default budget of 10,000 tokens
+    pub fn default_budget() -> Self {
+        Self::new(10_000)
+    }
+}
+
 /// Content block in a message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -30,6 +57,12 @@ pub enum ContentBlock {
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
+    },
+    /// Thinking/reasoning content from extended thinking mode
+    Thinking {
+        thinking: String,
+        /// Signature for verification (provided by API)
+        signature: String,
     },
 }
 
@@ -113,6 +146,10 @@ pub struct CompletionRequest {
     /// Whether to stream the response
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    /// Extended thinking configuration (optional)
+    /// When enabled, temperature must be 1 and budget_tokens >= 1024
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
 }
 
 impl Default for CompletionRequest {
@@ -128,6 +165,7 @@ impl Default for CompletionRequest {
             stop_sequences: None,
             tools: None,
             stream: None,
+            thinking: None,
         }
     }
 }
@@ -194,6 +232,14 @@ impl CompletionResponse {
             })
             .collect()
     }
+
+    /// Extract thinking/reasoning content from the response
+    pub fn thinking(&self) -> Option<&str> {
+        self.content.iter().find_map(|block| match block {
+            ContentBlock::Thinking { thinking, .. } => Some(thinking.as_str()),
+            _ => None,
+        })
+    }
 }
 
 /// Streaming event types
@@ -244,6 +290,10 @@ pub struct StreamMessageStart {
 pub enum ContentDelta {
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },
+    /// Thinking content delta (streamed reasoning)
+    ThinkingDelta { thinking: String },
+    /// Signature delta for thinking blocks
+    SignatureDelta { signature: String },
 }
 
 /// Message delta content

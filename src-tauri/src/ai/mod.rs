@@ -79,3 +79,9 @@ pub use workflow::{
     AgentWorkflowBuilder, RouterTask, SubAgentExecutor, SubAgentTask, WorkflowRunner,
     WorkflowStatus, WorkflowStepResult, WorkflowStorage,
 };
+// Re-export tool configuration types for external use
+#[allow(unused_imports)]
+pub use tool_definitions::{
+    ToolConfig, ToolPreset, get_all_tool_definitions_with_config, get_tool_definitions_for_preset,
+    get_tool_definitions_with_config,
+};

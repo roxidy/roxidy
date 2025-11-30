@@ -164,6 +164,10 @@ interface QbitState {
   processedToolRequests: Set<string>; // Track processed request IDs to prevent duplicates
   activeToolCalls: Record<string, ActiveToolCall[]>; // Tool calls currently in progress per session
 
+  // Extended thinking state (for models like Opus 4.5)
+  thinkingContent: Record<string, string>; // Accumulated thinking content per session
+  isThinkingExpanded: Record<string, boolean>; // Whether thinking section is expanded
+
   // Session actions
   addSession: (session: Session) => void;
   removeSession: (sessionId: string) => void;
@@ -222,6 +226,11 @@ interface QbitState {
   ) => void;
   clearStreamingBlocks: (sessionId: string) => void;
 
+  // Thinking content actions
+  appendThinkingContent: (sessionId: string, content: string) => void;
+  clearThinkingContent: (sessionId: string) => void;
+  setThinkingExpanded: (sessionId: string, expanded: boolean) => void;
+
   // Timeline actions
   clearTimeline: (sessionId: string) => void;
 
@@ -251,6 +260,8 @@ export const useStore = create<QbitState>()(
       pendingToolApproval: {},
       processedToolRequests: new Set<string>(),
       activeToolCalls: {},
+      thinkingContent: {},
+      isThinkingExpanded: {},
 
       addSession: (session) =>
         set((state) => {
@@ -270,6 +281,8 @@ export const useStore = create<QbitState>()(
           state.isAgentThinking[session.id] = false;
           state.pendingToolApproval[session.id] = null;
           state.activeToolCalls[session.id] = [];
+          state.thinkingContent[session.id] = "";
+          state.isThinkingExpanded[session.id] = false;
         }),
 
       removeSession: (sessionId) =>
@@ -286,6 +299,8 @@ export const useStore = create<QbitState>()(
           delete state.isAgentThinking[sessionId];
           delete state.pendingToolApproval[sessionId];
           delete state.activeToolCalls[sessionId];
+          delete state.thinkingContent[sessionId];
+          delete state.isThinkingExpanded[sessionId];
 
           if (state.activeSessionId === sessionId) {
             const remaining = Object.keys(state.sessions);
@@ -644,6 +659,25 @@ export const useStore = create<QbitState>()(
           state.streamingBlocks[sessionId] = [];
         }),
 
+      // Thinking content actions
+      appendThinkingContent: (sessionId, content) =>
+        set((state) => {
+          if (!state.thinkingContent[sessionId]) {
+            state.thinkingContent[sessionId] = "";
+          }
+          state.thinkingContent[sessionId] += content;
+        }),
+
+      clearThinkingContent: (sessionId) =>
+        set((state) => {
+          state.thinkingContent[sessionId] = "";
+        }),
+
+      setThinkingExpanded: (sessionId, expanded) =>
+        set((state) => {
+          state.isThinkingExpanded[sessionId] = expanded;
+        }),
+
       // Timeline actions
       clearTimeline: (sessionId) =>
         set((state) => {
@@ -725,6 +759,13 @@ export const useAiConfig = () => useStore((state) => state.aiConfig);
 // Agent thinking selector
 export const useIsAgentThinking = (sessionId: string) =>
   useStore((state) => state.isAgentThinking[sessionId] ?? false);
+
+// Extended thinking content selectors
+export const useThinkingContent = (sessionId: string) =>
+  useStore((state) => state.thinkingContent[sessionId] ?? "");
+
+export const useIsThinkingExpanded = (sessionId: string) =>
+  useStore((state) => state.isThinkingExpanded[sessionId] ?? false);
 
 // Helper function to clear conversation (both frontend and backend)
 // This should be called instead of clearTimeline when you want to reset AI context

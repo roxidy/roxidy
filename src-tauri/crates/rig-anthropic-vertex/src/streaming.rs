@@ -71,6 +71,10 @@ pub enum StreamChunk {
         text: String,
         accumulated: String,
     },
+    /// Thinking/reasoning delta (extended thinking mode)
+    ThinkingDelta {
+        thinking: String,
+    },
     /// Tool use started
     ToolUseStart {
         id: String,
@@ -172,6 +176,13 @@ impl StreamingResponse {
                 }
                 ContentDelta::InputJsonDelta { partial_json } => {
                     Some(StreamChunk::ToolInputDelta { partial_json })
+                }
+                ContentDelta::ThinkingDelta { thinking } => {
+                    Some(StreamChunk::ThinkingDelta { thinking })
+                }
+                ContentDelta::SignatureDelta { .. } => {
+                    // Signature deltas are for verification, not displayed
+                    None
                 }
             },
             StreamEvent::ContentBlockStart { content_block, .. } => {

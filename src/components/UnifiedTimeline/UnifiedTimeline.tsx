@@ -2,6 +2,7 @@ import Ansi from "ansi-to-react";
 import { Bot, Loader2, Sparkles, TerminalSquare } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { Markdown } from "@/components/Markdown";
+import { ThinkingBlock } from "@/components/ThinkingBlock";
 import { ToolCallDisplay } from "@/components/ToolCallDisplay";
 import { stripOscSequences } from "@/lib/ansi";
 import {
@@ -9,6 +10,7 @@ import {
   usePendingCommand,
   useSessionTimeline,
   useStreamingBlocks,
+  useThinkingContent,
 } from "@/store";
 import { UnifiedBlock } from "./UnifiedBlock";
 
@@ -21,6 +23,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
   const streamingBlocks = useStreamingBlocks(sessionId);
   const pendingCommand = usePendingCommand(sessionId);
   const isAgentThinking = useIsAgentThinking(sessionId);
+  const thinkingContent = useThinkingContent(sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -34,7 +37,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally triggering scroll on content changes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [timeline.length, streamingBlocks.length, pendingOutput, isAgentThinking]);
+  }, [timeline.length, streamingBlocks.length, pendingOutput, isAgentThinking, thinkingContent]);
 
   // Empty state - only show if no timeline, no streaming, no thinking, and no command running
   const hasRunningCommand = pendingCommand?.command;
@@ -42,7 +45,8 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
     timeline.length === 0 &&
     streamingBlocks.length === 0 &&
     !hasRunningCommand &&
-    !isAgentThinking
+    !isAgentThinking &&
+    !thinkingContent
   ) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-[#565f89] p-8">
@@ -107,8 +111,8 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
         </div>
       )}
 
-      {/* Thinking indicator - shown while waiting for first content */}
-      {isAgentThinking && streamingBlocks.length === 0 && (
+      {/* Thinking indicator - shown while waiting for first content (when no thinking content yet) */}
+      {isAgentThinking && streamingBlocks.length === 0 && !thinkingContent && (
         <div className="flex gap-3">
           <div className="w-8 h-8 rounded-full bg-[#bb9af7]/20 flex items-center justify-center flex-shrink-0">
             <Bot className="w-4 h-4 text-[#bb9af7]" />
@@ -121,6 +125,9 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
           </div>
         </div>
       )}
+
+      {/* Extended thinking block - shows model's reasoning process */}
+      {thinkingContent && <ThinkingBlock sessionId={sessionId} />}
 
       {/* Streaming indicator for agent responses - interleaved text and tool calls */}
       {streamingBlocks.length > 0 && (

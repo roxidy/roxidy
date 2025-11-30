@@ -27,6 +27,7 @@ export function useAiEvents() {
         case "started":
           state.clearAgentStreaming(sessionId);
           state.clearActiveToolCalls(sessionId);
+          state.clearThinkingContent(sessionId);
           state.setAgentThinking(sessionId, true);
           break;
 
@@ -125,8 +126,8 @@ export function useAiEvents() {
           break;
 
         case "reasoning":
-          // Could display reasoning in a collapsible section
-          console.log("AI Reasoning:", event.content);
+          // Append thinking content to the store for display
+          state.appendThinkingContent(sessionId, event.content);
           break;
 
         case "completed": {

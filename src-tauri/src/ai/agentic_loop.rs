@@ -5,14 +5,17 @@
 //! - Loop detection and prevention
 //! - Context window management
 //! - Message history management
+//! - Extended thinking (streaming reasoning content)
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
+use futures::StreamExt;
 use rig::completion::{AssistantContent, CompletionModel as RigCompletionModel, Message};
 use rig::message::{Text, ToolCall, ToolResult, ToolResultContent, UserContent};
 use rig::one_or_many::OneOrMany;
+use rig::streaming::RawStreamingChoice;
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use vtcode_core::tools::ToolRegistry;
@@ -25,14 +28,12 @@ use super::sub_agent::{SubAgentContext, SubAgentRegistry, MAX_AGENT_DEPTH};
 use super::sub_agent_executor::{execute_sub_agent, SubAgentExecutorContext};
 use super::token_budget::TokenAlertLevel;
 use super::tool_definitions::{
-    get_all_tool_definitions, get_sub_agent_tool_definitions, get_tavily_tool_definitions,
+    get_all_tool_definitions_with_config, get_sub_agent_tool_definitions,
+    get_tavily_tool_definitions, ToolConfig,
 };
-use super::tool_executors::{
-    execute_in_terminal, execute_indexer_tool, execute_tavily_tool, normalize_run_pty_cmd_args,
-};
+use super::tool_executors::{execute_indexer_tool, execute_tavily_tool, normalize_run_pty_cmd_args};
 use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyManager};
 use crate::indexer::IndexerState;
-use crate::pty::PtyManager;
 use crate::tavily::TavilyState;
 
 /// Maximum number of tool call iterations before stopping
@@ -43,8 +44,6 @@ pub struct AgenticLoopContext<'a> {
     pub event_tx: &'a mpsc::UnboundedSender<AiEvent>,
     pub tool_registry: &'a Arc<RwLock<ToolRegistry>>,
     pub sub_agent_registry: &'a Arc<RwLock<SubAgentRegistry>>,
-    pub pty_manager: Option<&'a Arc<PtyManager>>,
-    pub current_session_id: &'a Arc<RwLock<Option<String>>>,
     pub indexer_state: Option<&'a Arc<IndexerState>>,
     pub tavily_state: Option<&'a Arc<TavilyState>>,
     pub approval_recorder: &'a Arc<ApprovalRecorder>,
@@ -52,6 +51,8 @@ pub struct AgenticLoopContext<'a> {
     pub tool_policy_manager: &'a Arc<ToolPolicyManager>,
     pub context_manager: &'a Arc<ContextManager>,
     pub loop_detector: &'a Arc<RwLock<LoopDetector>>,
+    /// Tool configuration for filtering available tools
+    pub tool_config: &'a ToolConfig,
 }
 
 /// Result of a single tool execution.
@@ -251,8 +252,6 @@ pub async fn execute_tool_direct(
         let sub_ctx = SubAgentExecutorContext {
             event_tx: ctx.event_tx,
             tavily_state: ctx.tavily_state,
-            pty_manager: ctx.pty_manager,
-            current_session_id: ctx.current_session_id,
             tool_registry: ctx.tool_registry,
         };
 
@@ -273,32 +272,6 @@ pub async fn execute_tool_direct(
                     value: json!({ "error": e.to_string() }),
                     success: false,
                 });
-            }
-        }
-    }
-
-    // Check if this is a terminal command that should be intercepted
-    if tool_name == "run_pty_cmd"
-        && ctx.pty_manager.is_some()
-        && ctx.current_session_id.read().await.is_some()
-    {
-        let command = tool_args
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        match execute_in_terminal(ctx.pty_manager, ctx.current_session_id, command).await {
-            Ok(v) => {
-                return Ok(ToolExecutionResult {
-                    value: v,
-                    success: true,
-                })
-            }
-            Err(e) => {
-                return Ok(ToolExecutionResult {
-                    value: json!({"error": e.to_string()}),
-                    success: false,
-                })
             }
         }
     }
@@ -405,6 +378,7 @@ pub fn handle_loop_detection(
 /// - Loop detection
 /// - Context window management
 /// - HITL approval
+/// - Extended thinking (streaming reasoning content)
 pub async fn run_agentic_loop(
     model: &rig_anthropic_vertex::CompletionModel,
     system_prompt: &str,
@@ -418,16 +392,25 @@ pub async fn run_agentic_loop(
         detector.reset();
     }
 
-    // Get all available tools (standard + sub-agents + web search)
-    let mut tools = get_all_tool_definitions();
+    // Get all available tools (filtered by config + sub-agents + web search)
+    let mut tools = get_all_tool_definitions_with_config(ctx.tool_config);
+
+    // print list of tool names to the console
+    tracing::debug!("Available tools: {:?}", tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>());
+
 
     // Add web search tools if Tavily is available
     tools.extend(get_tavily_tool_definitions(ctx.tavily_state));
 
-    // Only add sub-agent tools if we're not at max depth
+    // Only add sub-agent tools if we're not at max depth and they're enabled
     if context.depth < MAX_AGENT_DEPTH - 1 {
         let registry = ctx.sub_agent_registry.read().await;
-        tools.extend(get_sub_agent_tool_definitions(&registry).await);
+        tools.extend(
+            get_sub_agent_tool_definitions(&registry)
+                .await
+                .into_iter()
+                .filter(|t| ctx.tool_config.is_tool_enabled(&t.name)),
+        );
     }
 
     let original_history_len = initial_history.len();
@@ -470,6 +453,7 @@ pub async fn run_agentic_loop(
     }
 
     let mut accumulated_response = String::new();
+    let mut accumulated_thinking = String::new();
     let mut iteration = 0;
 
     loop {
@@ -495,37 +479,97 @@ pub async fn run_agentic_loop(
             additional_params: None,
         };
 
-        // Make completion request
-        let response = model
-            .completion(request)
+        // Make streaming completion request to capture thinking content
+        let mut stream = model
+            .stream(request)
             .await
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        // Process response
+        // Process streaming response
         let mut has_tool_calls = false;
         let mut tool_calls_to_execute: Vec<ToolCall> = vec![];
         let mut text_content = String::new();
+        let mut thinking_content = String::new();
+        
+        // Track tool call state for streaming
+        let mut current_tool_id: Option<String> = None;
+        let mut current_tool_name: Option<String> = None;
+        let mut current_tool_args = String::new();
 
-        for content in response.choice.iter() {
-            match content {
-                AssistantContent::Text(text) => {
-                    text_content.push_str(&text.text);
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    match chunk {
+                        RawStreamingChoice::Message(text) => {
+                            // Check if this is thinking content (prefixed by our streaming impl)
+                            if let Some(thinking) = text.strip_prefix("[Thinking] ") {
+                                thinking_content.push_str(thinking);
+                                accumulated_thinking.push_str(thinking);
+                                // Emit reasoning event for frontend
+                                let _ = ctx.event_tx.send(AiEvent::Reasoning {
+                                    content: thinking.to_string(),
+                                });
+                            } else {
+                                // Regular text content
+                                text_content.push_str(&text);
+                                accumulated_response.push_str(&text);
+                                let _ = ctx.event_tx.send(AiEvent::TextDelta {
+                                    delta: text,
+                                    accumulated: accumulated_response.clone(),
+                                });
+                            }
+                        }
+                        RawStreamingChoice::ToolCall { id, name, arguments, .. } => {
+                            has_tool_calls = true;
+                            current_tool_id = Some(id.clone());
+                            current_tool_name = Some(name.clone());
+                            current_tool_args = serde_json::to_string(&arguments).unwrap_or_default();
+                        }
+                        RawStreamingChoice::ToolCallDelta { delta, .. } => {
+                            current_tool_args.push_str(&delta);
+                        }
+                        RawStreamingChoice::FinalResponse(_) => {
+                            // Finalize any pending tool call
+                            if let (Some(id), Some(name)) = (current_tool_id.take(), current_tool_name.take()) {
+                                let args: serde_json::Value = serde_json::from_str(&current_tool_args)
+                                    .unwrap_or(serde_json::Value::Null);
+                                tool_calls_to_execute.push(ToolCall {
+                                    id: id.clone(),
+                                    call_id: Some(id),
+                                    function: rig::message::ToolFunction {
+                                        name,
+                                        arguments: args,
+                                    },
+                                });
+                                current_tool_args.clear();
+                            }
+                        }
+                    }
                 }
-                AssistantContent::ToolCall(tool_call) => {
-                    has_tool_calls = true;
-                    tool_calls_to_execute.push(tool_call.clone());
+                Err(e) => {
+                    tracing::warn!("Stream chunk error: {}", e);
                 }
-                _ => {}
             }
         }
 
-        // Emit text delta if we have text
-        if !text_content.is_empty() {
-            accumulated_response.push_str(&text_content);
-            let _ = ctx.event_tx.send(AiEvent::TextDelta {
-                delta: text_content.clone(),
-                accumulated: accumulated_response.clone(),
+        // Finalize any remaining tool call that wasn't closed by FinalResponse
+        if let (Some(id), Some(name)) = (current_tool_id.take(), current_tool_name.take()) {
+            let args: serde_json::Value = serde_json::from_str(&current_tool_args)
+                .unwrap_or(serde_json::Value::Null);
+            tool_calls_to_execute.push(ToolCall {
+                id: id.clone(),
+                call_id: Some(id),
+                function: rig::message::ToolFunction {
+                    name,
+                    arguments: args,
+                },
             });
+            has_tool_calls = true;
+        }
+
+        // Log thinking content if present (for debugging)
+        if !thinking_content.is_empty() {
+            tracing::debug!("Model thinking: {} chars", thinking_content.len());
         }
 
         // If no tool calls, we're done
@@ -533,8 +577,17 @@ pub async fn run_agentic_loop(
             break;
         }
 
-        // Add assistant response to history
-        let assistant_content: Vec<AssistantContent> = response.choice.iter().cloned().collect();
+        // Build assistant content for history (text + tool calls)
+        let mut assistant_content: Vec<AssistantContent> = vec![];
+        if !text_content.is_empty() {
+            assistant_content.push(AssistantContent::Text(Text {
+                text: text_content.clone(),
+            }));
+        }
+        for tool_call in &tool_calls_to_execute {
+            assistant_content.push(AssistantContent::ToolCall(tool_call.clone()));
+        }
+
         chat_history.push(Message::Assistant {
             id: None,
             content: OneOrMany::many(assistant_content).unwrap_or_else(|_| {
@@ -605,6 +658,11 @@ pub async fn run_agentic_loop(
                 }))
             }),
         });
+    }
+
+    // Log total thinking if any was accumulated
+    if !accumulated_thinking.is_empty() {
+        tracing::info!("Total thinking content: {} chars", accumulated_thinking.len());
     }
 
     Ok((accumulated_response, chat_history))

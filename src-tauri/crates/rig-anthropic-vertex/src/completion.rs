@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::client::Client;
 use crate::streaming::StreamingResponse;
-use crate::types::{self, ContentBlock, Role, ANTHROPIC_VERSION, DEFAULT_MAX_TOKENS};
+use crate::types::{self, ContentBlock, Role, ThinkingConfig, ANTHROPIC_VERSION, DEFAULT_MAX_TOKENS};
 
 /// Default max tokens for different Claude models
 fn default_max_tokens_for_model(model: &str) -> u32 {
@@ -30,12 +30,27 @@ fn default_max_tokens_for_model(model: &str) -> u32 {
 pub struct CompletionModel {
     client: Client,
     model: String,
+    /// Optional thinking configuration for extended reasoning
+    thinking: Option<ThinkingConfig>,
 }
 
 impl CompletionModel {
     /// Create a new completion model.
     pub fn new(client: Client, model: String) -> Self {
-        Self { client, model }
+        Self { client, model, thinking: None }
+    }
+
+    /// Enable extended thinking with the specified token budget.
+    /// Note: When thinking is enabled, temperature is automatically set to 1.
+    pub fn with_thinking(mut self, budget_tokens: u32) -> Self {
+        self.thinking = Some(ThinkingConfig::new(budget_tokens));
+        self
+    }
+
+    /// Enable extended thinking with default budget (10,000 tokens).
+    pub fn with_default_thinking(mut self) -> Self {
+        self.thinking = Some(ThinkingConfig::default_budget());
+        self
     }
 
     /// Get the model identifier.
@@ -150,17 +165,25 @@ impl CompletionModel {
             Some(request.tools.iter().map(Self::convert_tool).collect())
         };
 
+        // When thinking is enabled, temperature must be 1
+        let temperature = if self.thinking.is_some() {
+            Some(1.0)
+        } else {
+            request.temperature.map(|t| t as f32)
+        };
+
         types::CompletionRequest {
             anthropic_version: ANTHROPIC_VERSION.to_string(),
             messages,
             max_tokens,
             system: request.preamble.clone(),
-            temperature: request.temperature.map(|t| t as f32),
+            temperature,
             top_p: None,
             top_k: None,
             stop_sequences: None,
             tools,
             stream: if stream { Some(true) } else { None },
+            thinking: self.thinking.clone(),
         }
     }
 
@@ -349,6 +372,10 @@ impl completion::CompletionModel for CompletionModel {
                     StreamChunk::Error { message } => {
                         // Can't return error directly, emit as message
                         RawStreamingChoice::Message(format!("[Error: {}]", message))
+                    }
+                    StreamChunk::ThinkingDelta { thinking } => {
+                        // Emit thinking content as a special message (prefixed for identification)
+                        RawStreamingChoice::Message(format!("[Thinking] {}", thinking))
                     }
                 })
                 .map_err(|e| CompletionError::ProviderError(e.to_string()))

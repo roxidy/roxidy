@@ -16,7 +16,7 @@ use vtcode_core::tools::ToolRegistry;
 use super::context_manager::ContextManager;
 use super::hitl::ApprovalRecorder;
 use super::loop_detection::LoopDetector;
-use super::sub_agent::{create_default_sub_agents, SubAgentRegistry};
+use super::sub_agent::SubAgentRegistry;
 use super::tool_policy::ToolPolicyManager;
 
 /// LLM client abstraction that supports both vtcode and rig-based providers
@@ -77,11 +77,8 @@ pub async fn create_vtcode_components(
         ToolRegistry::new(config.workspace.clone()).await,
     ));
 
-    // Create sub-agent registry with defaults
-    let mut sub_agent_registry = SubAgentRegistry::new();
-    for agent in create_default_sub_agents() {
-        sub_agent_registry.register(agent);
-    }
+    // Create empty sub-agent registry (sub-agents disabled for main agent)
+    let sub_agent_registry = SubAgentRegistry::new();
 
     // Create HITL approval recorder (stores in workspace/.qbit/hitl/)
     let hitl_storage = config.workspace.join(".qbit").join("hitl");
@@ -120,19 +117,20 @@ pub async fn create_vertex_components(
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create Vertex AI client: {}", e))?;
 
-    // Create completion model
-    let completion_model = vertex_client.completion_model(config.model);
+    // Create completion model with extended thinking enabled
+    // Opus 4.5 and other modern Claude models support extended thinking
+    // Using 16,000 token budget for thinking (minimum is 1,024)
+    let completion_model = vertex_client
+        .completion_model(config.model)
+        .with_thinking(16_000);
 
     // Create tool registry (async)
     let tool_registry = Arc::new(RwLock::new(
         ToolRegistry::new(config.workspace.clone()).await,
     ));
 
-    // Create sub-agent registry with defaults
-    let mut sub_agent_registry = SubAgentRegistry::new();
-    for agent in create_default_sub_agents() {
-        sub_agent_registry.register(agent);
-    }
+    // Create empty sub-agent registry (sub-agents disabled for main agent)
+    let sub_agent_registry = SubAgentRegistry::new();
 
     // Create HITL approval recorder (stores in workspace/.qbit/hitl/)
     let hitl_storage = config.workspace.join(".qbit").join("hitl");

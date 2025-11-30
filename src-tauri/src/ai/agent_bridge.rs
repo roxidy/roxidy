@@ -43,7 +43,7 @@ use super::loop_detection::LoopDetector;
 use super::session::QbitSessionManager;
 use super::sub_agent::{SubAgentContext, SubAgentDefinition, SubAgentRegistry, MAX_AGENT_DEPTH};
 use super::system_prompt::build_system_prompt;
-use super::tool_executors::normalize_run_pty_cmd_args;
+use super::tool_definitions::ToolConfig;
 use super::tool_policy::ToolPolicyManager;
 use crate::indexer::IndexerState;
 use crate::pty::PtyManager;
@@ -92,6 +92,9 @@ pub struct AgentBridge {
 
     // Loop detection
     pub(crate) loop_detector: Arc<RwLock<LoopDetector>>,
+
+    // Tool configuration
+    pub(crate) tool_config: ToolConfig,
 }
 
 impl AgentBridge {
@@ -170,6 +173,7 @@ impl AgentBridge {
             context_manager: components.context_manager,
             context_event_rx: Arc::new(RwLock::new(Some(context_rx))),
             loop_detector: components.loop_detector,
+            tool_config: ToolConfig::main_agent(),
         }
     }
 
@@ -190,6 +194,12 @@ impl AgentBridge {
     /// Set the TavilyState for web search tools
     pub fn set_tavily_state(&mut self, tavily_state: Arc<TavilyState>) {
         self.tavily_state = Some(tavily_state);
+    }
+
+    /// Set the tool configuration for filtering available tools
+    #[allow(dead_code)] // Public API for external configuration
+    pub fn set_tool_config(&mut self, tool_config: ToolConfig) {
+        self.tool_config = tool_config;
     }
 
     /// Set the current session ID for terminal execution
@@ -314,6 +324,7 @@ impl AgentBridge {
         // Build system prompt
         let workspace_path = self.workspace.read().await;
         let system_prompt = build_system_prompt(&workspace_path);
+        tracing::debug!("System prompt: {}", system_prompt);
         drop(workspace_path);
 
         // Start session for persistence
@@ -335,8 +346,6 @@ impl AgentBridge {
             event_tx: &self.event_tx,
             tool_registry: &self.tool_registry,
             sub_agent_registry: &self.sub_agent_registry,
-            pty_manager: self.pty_manager.as_ref(),
-            current_session_id: &self.current_session_id,
             indexer_state: self.indexer_state.as_ref(),
             tavily_state: self.tavily_state.as_ref(),
             approval_recorder: &self.approval_recorder,
@@ -344,6 +353,7 @@ impl AgentBridge {
             tool_policy_manager: &self.tool_policy_manager,
             context_manager: &self.context_manager,
             loop_detector: &self.loop_detector,
+            tool_config: &self.tool_config,
         };
 
         // Run the agentic loop
@@ -385,34 +395,8 @@ impl AgentBridge {
         tool_name: &str,
         args: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        use super::tool_executors::execute_in_terminal;
-
-        let normalized_args = if tool_name == "run_pty_cmd" {
-            normalize_run_pty_cmd_args(args)
-        } else {
-            args
-        };
-
-        // Intercept run_pty_cmd if we have terminal access
-        if tool_name == "run_pty_cmd"
-            && self.pty_manager.is_some()
-            && self.current_session_id.read().await.is_some()
-        {
-            let command = normalized_args
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            return execute_in_terminal(
-                self.pty_manager.as_ref(),
-                &self.current_session_id,
-                command,
-            )
-            .await;
-        }
-
         let mut registry = self.tool_registry.write().await;
-        let result = registry.execute_tool(tool_name, normalized_args).await;
+        let result = registry.execute_tool(tool_name, args).await;
 
         result.map_err(|e| anyhow::anyhow!(e))
     }

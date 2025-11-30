@@ -2,10 +2,20 @@
 //!
 //! This module contains tool definitions and schema sanitization logic
 //! for various tool types: standard tools, indexer tools, Tavily tools, and sub-agent tools.
+//!
+//! ## Tool Selection
+//!
+//! Tools from vtcode-core can be filtered using presets or custom configuration:
+//! - `ToolPreset::Minimal` - Essential file operations only
+//! - `ToolPreset::Standard` - Core development tools (recommended)
+//! - `ToolPreset::Full` - All vtcode tools
+//!
+//! Use `ToolConfig` to override presets with custom allow/block lists.
 
 use std::collections::HashSet;
 
 use rig::completion::ToolDefinition;
+use serde::Deserialize;
 use serde_json::json;
 use vtcode_core::tools::registry::build_function_declarations;
 
@@ -13,16 +23,173 @@ use super::sub_agent::SubAgentRegistry;
 use crate::tavily::TavilyState;
 use std::sync::Arc;
 
-/// Get tool definitions in rig format from vtcode's function declarations.
-/// Sanitizes schemas to remove anyOf/allOf/oneOf which Anthropic doesn't support.
-/// Also overrides descriptions for specific tools (e.g., run_pty_cmd).
+/// Tool preset levels for different use cases.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolPreset {
+    /// Minimal tools: read, edit, write files + shell command
+    Minimal,
+    /// Standard tools for most development tasks (default)
+    #[default]
+    Standard,
+    /// Standard tools + indexer tools for code exploration
+    Coder,
+    /// All tools from vtcode-core
+    Full,
+}
+
+impl ToolPreset {
+    /// Get the list of tool names for this preset.
+    pub fn tool_names(&self) -> Option<Vec<&'static str>> {
+        match self {
+            ToolPreset::Minimal => Some(vec![
+                "read_file",
+                "edit_file",
+                "write_file",
+                "run_pty_cmd",
+            ]),
+            ToolPreset::Standard => Some(vec![
+                // Search & discovery
+                "grep_file",
+                "list_files",
+                // File operations
+                "read_file",
+                "create_file",
+                "edit_file",
+                "write_file",
+                "delete_file",
+                // Shell execution
+                "run_pty_cmd",
+                // Web
+                "web_fetch",
+                // Planning
+                "update_plan",
+            ]),
+            ToolPreset::Coder => Some(vec![
+                // Search & discovery
+                "grep_file",
+                "list_files",
+                // File operations
+                "read_file",
+                "create_file",
+                "edit_file",
+                "write_file",
+                "delete_file",
+                // Shell execution
+                "run_pty_cmd",
+                // Web
+                "web_fetch",
+                // Planning
+                "update_plan",
+                // Indexer tools for code exploration
+                "indexer_search_code",
+                "indexer_search_files",
+                "indexer_analyze_file",
+                "indexer_extract_symbols",
+                "indexer_get_metrics",
+                "indexer_detect_language",
+            ]),
+            ToolPreset::Full => None, // None means all tools
+        }
+    }
+}
+
+/// Configuration for tool selection with optional overrides.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ToolConfig {
+    /// Base preset to use
+    #[serde(default)]
+    pub preset: ToolPreset,
+    /// Additional tools to enable (on top of preset)
+    #[serde(default)]
+    pub additional: Vec<String>,
+    /// Tools to disable (removed from preset)
+    #[serde(default)]
+    pub disabled: Vec<String>,
+}
+
+impl ToolConfig {
+    /// Create a new config with the given preset.
+    #[allow(dead_code)] // Public API for external configuration
+    pub fn with_preset(preset: ToolPreset) -> Self {
+        Self {
+            preset,
+            additional: vec![],
+            disabled: vec![],
+        }
+    }
+
+    /// Create the default tool config for the main agent.
+    ///
+    /// This is the recommended configuration for qbit's primary AI agent.
+    /// It uses the Standard preset with additional tools that are useful
+    /// for the main agent but not sub-agents.
+    pub fn main_agent() -> Self {
+        Self {
+            preset: ToolPreset::Standard,
+            additional: vec![
+                // Code execution for complex operations
+                "execute_code".to_string(),
+                // Patch-based editing for large changes
+                "apply_patch".to_string(),
+            ],
+            disabled: vec![
+                // Sub-agents are disabled for the main agent
+                "sub_agent_researcher".to_string(),
+                "sub_agent_shell_executor".to_string(),
+                "sub_agent_test_runner".to_string(),
+                "sub_agent_code_analyzer".to_string(),
+                "sub_agent_code_writer".to_string(),
+            ],
+        }
+    }
+
+    /// Check if a tool name is enabled by this config.
+    pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
+        // Check disabled list first
+        if self.disabled.iter().any(|t| t == tool_name) {
+            return false;
+        }
+
+        // Check additional list
+        if self.additional.iter().any(|t| t == tool_name) {
+            return true;
+        }
+
+        // Check preset
+        match self.preset.tool_names() {
+            Some(names) => names.contains(&tool_name),
+            None => true, // Full preset allows all
+        }
+    }
+}
+
+/// Get tool definitions using the default Standard preset.
+///
+/// This is the recommended entry point for most use cases.
+/// Uses `ToolPreset::Standard` which includes core development tools.
+#[allow(dead_code)] // Public API - used externally or for future internal use
 pub fn get_standard_tool_definitions() -> Vec<ToolDefinition> {
+    get_tool_definitions_with_config(&ToolConfig::default())
+}
+
+/// Get tool definitions with a specific preset.
+#[allow(dead_code)] // Public API - used externally or for future internal use
+pub fn get_tool_definitions_for_preset(preset: ToolPreset) -> Vec<ToolDefinition> {
+    get_tool_definitions_with_config(&ToolConfig::with_preset(preset))
+}
+
+/// Get tool definitions with full configuration control.
+///
+/// Filters vtcode's function declarations based on the provided config,
+/// sanitizes schemas for Anthropic compatibility, and applies description overrides.
+pub fn get_tool_definitions_with_config(config: &ToolConfig) -> Vec<ToolDefinition> {
     build_function_declarations()
         .into_iter()
+        .filter(|fd| config.is_tool_enabled(&fd.name))
         .map(|fd| {
             // Override description for run_pty_cmd to instruct agent not to repeat output
             let description = if fd.name == "run_pty_cmd" {
-                // TODO: we should undo this
                 format!(
                     "{}. IMPORTANT: The command output is displayed directly in the user's terminal. \
                      Do NOT repeat or summarize the command output in your response - the user can already see it. \
@@ -224,12 +391,19 @@ pub async fn get_sub_agent_tool_definitions(registry: &SubAgentRegistry) -> Vec<
         .collect()
 }
 
-// TODO: we need to limit the tools and not use everything from vtcode's registry
-
-/// Get all tool definitions (standard + indexer).
+/// Get all tool definitions (standard + indexer) using the default preset.
 pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
-    let mut tools = get_standard_tool_definitions();
-    tools.extend(get_indexer_tool_definitions());
+    get_all_tool_definitions_with_config(&ToolConfig::default())
+}
+
+/// Get all tool definitions with configuration control.
+pub fn get_all_tool_definitions_with_config(config: &ToolConfig) -> Vec<ToolDefinition> {
+    let mut tools = get_tool_definitions_with_config(config);
+    tools.extend(
+        get_indexer_tool_definitions()
+            .into_iter()
+            .filter(|t| config.is_tool_enabled(&t.name)),
+    );
     tools
 }
 
@@ -392,5 +566,216 @@ mod tests {
         let filtered = filter_tools_by_allowed(tools.clone(), &[]);
 
         assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn test_tool_preset_minimal() {
+        let preset = ToolPreset::Minimal;
+        let names = preset.tool_names().unwrap();
+
+        assert_eq!(names.len(), 4);
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"edit_file"));
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"run_pty_cmd"));
+    }
+
+    #[test]
+    fn test_tool_preset_standard() {
+        let preset = ToolPreset::Standard;
+        let names = preset.tool_names().unwrap();
+
+        // Should have core tools
+        assert!(names.contains(&"grep_file"));
+        assert!(names.contains(&"list_files"));
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"edit_file"));
+        assert!(names.contains(&"run_pty_cmd"));
+        assert!(names.contains(&"web_fetch"));
+
+        // Should NOT have skill tools or PTY session management
+        assert!(!names.contains(&"save_skill"));
+        assert!(!names.contains(&"create_pty_session"));
+    }
+
+    #[test]
+    fn test_tool_preset_coder() {
+        let preset = ToolPreset::Coder;
+        let names = preset.tool_names().unwrap();
+
+        // Should have all standard tools
+        assert!(names.contains(&"grep_file"));
+        assert!(names.contains(&"list_files"));
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"edit_file"));
+        assert!(names.contains(&"run_pty_cmd"));
+        assert!(names.contains(&"web_fetch"));
+
+        // Should also have indexer tools
+        assert!(names.contains(&"indexer_search_code"));
+        assert!(names.contains(&"indexer_search_files"));
+        assert!(names.contains(&"indexer_analyze_file"));
+        assert!(names.contains(&"indexer_extract_symbols"));
+        assert!(names.contains(&"indexer_get_metrics"));
+        assert!(names.contains(&"indexer_detect_language"));
+    }
+
+    #[test]
+    fn test_tool_preset_full() {
+        let preset = ToolPreset::Full;
+        // Full preset returns None (meaning all tools)
+        assert!(preset.tool_names().is_none());
+    }
+
+    #[test]
+    fn test_tool_config_default_is_standard() {
+        let config = ToolConfig::default();
+        assert_eq!(config.preset, ToolPreset::Standard);
+    }
+
+    #[test]
+    fn test_tool_config_is_tool_enabled() {
+        let config = ToolConfig::with_preset(ToolPreset::Standard);
+
+        // Standard tools should be enabled
+        assert!(config.is_tool_enabled("read_file"));
+        assert!(config.is_tool_enabled("grep_file"));
+
+        // Non-standard tools should be disabled
+        assert!(!config.is_tool_enabled("save_skill"));
+        assert!(!config.is_tool_enabled("create_pty_session"));
+    }
+
+    #[test]
+    fn test_tool_config_additional_tools() {
+        let config = ToolConfig {
+            preset: ToolPreset::Minimal,
+            additional: vec!["grep_file".to_string()],
+            disabled: vec![],
+        };
+
+        // Minimal preset tools
+        assert!(config.is_tool_enabled("read_file"));
+        // Additional tool
+        assert!(config.is_tool_enabled("grep_file"));
+        // Not in minimal or additional
+        assert!(!config.is_tool_enabled("web_fetch"));
+    }
+
+    #[test]
+    fn test_tool_config_disabled_tools() {
+        let config = ToolConfig {
+            preset: ToolPreset::Standard,
+            additional: vec![],
+            disabled: vec!["delete_file".to_string()],
+        };
+
+        // Standard tool that's not disabled
+        assert!(config.is_tool_enabled("read_file"));
+        // Disabled even though in preset
+        assert!(!config.is_tool_enabled("delete_file"));
+    }
+
+    #[test]
+    fn test_tool_config_disabled_overrides_additional() {
+        let config = ToolConfig {
+            preset: ToolPreset::Minimal,
+            additional: vec!["grep_file".to_string()],
+            disabled: vec!["grep_file".to_string()],
+        };
+
+        // Disabled takes precedence over additional
+        assert!(!config.is_tool_enabled("grep_file"));
+    }
+
+    #[test]
+    fn test_get_tool_definitions_for_preset_minimal() {
+        let tools = get_tool_definitions_for_preset(ToolPreset::Minimal);
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert_eq!(tools.len(), 4);
+        assert!(tool_names.contains(&"read_file"));
+        assert!(tool_names.contains(&"edit_file"));
+        assert!(tool_names.contains(&"write_file"));
+        assert!(tool_names.contains(&"run_pty_cmd"));
+    }
+
+    #[test]
+    fn test_get_tool_definitions_for_preset_full() {
+        let full_tools = get_tool_definitions_for_preset(ToolPreset::Full);
+        let standard_tools = get_tool_definitions_for_preset(ToolPreset::Standard);
+
+        // Full should have more tools than standard
+        assert!(full_tools.len() > standard_tools.len());
+    }
+
+    #[test]
+    fn test_tool_config_with_config() {
+        let config = ToolConfig {
+            preset: ToolPreset::Minimal,
+            additional: vec!["grep_file".to_string(), "list_files".to_string()],
+            disabled: vec![],
+        };
+
+        let tools = get_tool_definitions_with_config(&config);
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        // Minimal preset (4) + additional (2) = 6
+        assert_eq!(tools.len(), 6);
+        assert!(tool_names.contains(&"read_file"));
+        assert!(tool_names.contains(&"grep_file"));
+        assert!(tool_names.contains(&"list_files"));
+    }
+
+    #[test]
+    fn test_tool_config_main_agent() {
+        let config = ToolConfig::main_agent();
+
+        // Should be based on Standard preset
+        assert_eq!(config.preset, ToolPreset::Standard);
+
+        // Should have additional tools
+        assert!(config.additional.contains(&"execute_code".to_string()));
+        assert!(config.additional.contains(&"apply_patch".to_string()));
+
+        // Should have sub-agents disabled
+        assert!(config.disabled.contains(&"sub_agent_researcher".to_string()));
+        assert!(config.disabled.contains(&"sub_agent_shell_executor".to_string()));
+        assert!(config.disabled.contains(&"sub_agent_test_runner".to_string()));
+        assert!(config.disabled.contains(&"sub_agent_code_analyzer".to_string()));
+        assert!(config.disabled.contains(&"sub_agent_code_writer".to_string()));
+
+        // Verify the tools are actually enabled
+        assert!(config.is_tool_enabled("read_file")); // From Standard
+        assert!(config.is_tool_enabled("grep_file")); // From Standard
+        assert!(config.is_tool_enabled("execute_code")); // From additional
+        assert!(config.is_tool_enabled("apply_patch")); // From additional
+
+        // Verify sub-agents are disabled
+        assert!(!config.is_tool_enabled("sub_agent_researcher"));
+        assert!(!config.is_tool_enabled("sub_agent_code_writer"));
+
+        // Verify non-standard tools are still disabled
+        assert!(!config.is_tool_enabled("save_skill"));
+        assert!(!config.is_tool_enabled("create_pty_session"));
+    }
+
+    #[test]
+    fn test_main_agent_tool_definitions() {
+        let config = ToolConfig::main_agent();
+        let tools = get_tool_definitions_with_config(&config);
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        // Should have Standard preset tools + additional
+        assert!(tool_names.contains(&"grep_file"));
+        assert!(tool_names.contains(&"read_file"));
+        assert!(tool_names.contains(&"edit_file"));
+        assert!(tool_names.contains(&"run_pty_cmd"));
+        assert!(tool_names.contains(&"execute_code"));
+        assert!(tool_names.contains(&"apply_patch"));
+
+        // Should NOT have skill tools or PTY session management
+        assert!(!tool_names.contains(&"save_skill"));
+        assert!(!tool_names.contains(&"create_pty_session"));
     }
 }

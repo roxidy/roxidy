@@ -67,44 +67,6 @@ If anything unexpected occurs: STOP → explain → present revised plan → get
 User messages may include `<context>` with `<cwd>` indicating current terminal directory for relative path operations.
 </context_handling>
 
-<tools>
-## Filesystem
-- `read_file`, `write_file`, `create_file`, `delete_file`
-- `apply_patch`: Unified diff format for multi-file/complex edits
-- `edit_file`: Preferred for existing files
-
-## Search & Discovery
-- `grep_file`: Regex search via ripgrep (glob patterns, file-type filtering, context lines)
-- `list_files`: Modes: list, recursive, find_name, find_content, largest
-
-## Command Execution
-- `run_pty_cmd`: Execute shell commands. **Pass command as single STRING** (not array) for shell operators to work.
-
-## PTY Sessions (interactive)
-- `create_pty_session`, `send_pty_input`, `read_pty_session`, `list_pty_sessions`, `close_pty_session`, `resize_pty_session`
-
-## Network
-- `web_fetch`: Fetch URL content (converts HTML to markdown)
-
-## Planning
-- `update_plan`: Track 2-5 milestone items with status (pending|in_progress|completed)
-
-## Code Indexer (tree-sitter powered, faster than grep)
-- `indexer_search_code`: Regex code pattern search
-- `indexer_search_files`: Glob-style filename search
-- `indexer_analyze_file`: Semantic analysis (symbols, metrics, dependencies)
-- `indexer_extract_symbols`: Extract functions, classes, variables
-- `indexer_get_metrics`: LOC, comment ratio, function count
-- `indexer_detect_language`
-
-## Web Search
-- `web_search`: Search web for current info (returns titles, URLs, snippets)
-- `web_search_answer`: AI-synthesized answer from search results
-- `web_extract`: Extract full content from URLs
-
-Use for: current events, up-to-date docs, info beyond training cutoff, or explicit user requests.
-</tools>
-
 <project_instructions>
 {project_instructions}
 </project_instructions>

@@ -18,16 +18,13 @@ use super::sub_agent::{SubAgentContext, SubAgentDefinition, SubAgentResult};
 use super::tool_definitions::{
     filter_tools_by_allowed, get_all_tool_definitions, get_tavily_tool_definitions,
 };
-use super::tool_executors::{execute_in_terminal, execute_tavily_tool, normalize_run_pty_cmd_args};
-use crate::pty::PtyManager;
+use super::tool_executors::{execute_tavily_tool, normalize_run_pty_cmd_args};
 use crate::tavily::TavilyState;
 
 /// Context needed for sub-agent execution.
 pub struct SubAgentExecutorContext<'a> {
     pub event_tx: &'a mpsc::UnboundedSender<AiEvent>,
     pub tavily_state: Option<&'a Arc<TavilyState>>,
-    pub pty_manager: Option<&'a Arc<PtyManager>>,
-    pub current_session_id: &'a Arc<RwLock<Option<String>>>,
     pub tool_registry: &'a Arc<RwLock<ToolRegistry>>,
 }
 
@@ -192,19 +189,6 @@ pub async fn execute_sub_agent(
                 || tool_name == "web_extract"
             {
                 execute_tavily_tool(ctx.tavily_state, tool_name, &tool_args).await
-            } else if tool_name == "run_pty_cmd"
-                && ctx.pty_manager.is_some()
-                && ctx.current_session_id.read().await.is_some()
-            {
-                let command = tool_args
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                match execute_in_terminal(ctx.pty_manager, ctx.current_session_id, command).await {
-                    Ok(v) => (v, true),
-                    Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
-                }
             } else {
                 let mut registry = ctx.tool_registry.write().await;
                 let result = registry.execute_tool(tool_name, tool_args).await;
