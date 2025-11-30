@@ -75,7 +75,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
   }
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-auto p-4 space-y-4">
+    <div ref={containerRef} className="flex-1 min-w-0 overflow-auto p-4 space-y-4">
       {timeline.map((block) => (
         <UnifiedBlock key={block.id} block={block} />
       ))}
@@ -113,7 +113,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
           <div className="w-8 h-8 rounded-full bg-[#bb9af7]/20 flex items-center justify-center flex-shrink-0">
             <Bot className="w-4 h-4 text-[#bb9af7]" />
           </div>
-          <div className="flex-1 max-w-[85%] bg-[#1f2335] border border-[#27293d] rounded-lg p-3">
+          <div className="flex-1 max-w-[85%] min-w-0 bg-[#1f2335] border border-[#27293d] rounded-lg p-3">
             <div className="flex items-center gap-2 text-sm text-[#a9b1d6]">
               <Loader2 className="w-4 h-4 animate-spin text-[#bb9af7]" />
               <span>Thinking...</span>
@@ -128,7 +128,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
           <div className="w-8 h-8 rounded-full bg-[#bb9af7]/20 flex items-center justify-center flex-shrink-0">
             <Bot className="w-4 h-4 text-[#bb9af7]" />
           </div>
-          <div className="flex-1 max-w-[85%] bg-[#1f2335] border border-[#27293d] rounded-lg p-3 space-y-2">
+          <div className="flex-1 max-w-[85%] min-w-0 overflow-hidden bg-[#1f2335] border border-[#27293d] rounded-lg p-3 space-y-2">
             {streamingBlocks.map((block, blockIndex) => {
               if (block.type === "text") {
                 const isLast = blockIndex === streamingBlocks.length - 1;

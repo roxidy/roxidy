@@ -64,8 +64,8 @@ export function AgentChatList({ sessionId }: AgentChatListProps) {
           <div className="w-8 h-8 rounded-full bg-[#bb9af7]/20 flex items-center justify-center flex-shrink-0">
             <Bot className="w-4 h-4 text-[#bb9af7]" />
           </div>
-          <div className="flex-1 max-w-[85%] bg-[#1f2335] border border-[#27293d] rounded-lg p-3">
-            <p className="text-sm text-[#c0caf5] whitespace-pre-wrap">
+          <div className="flex-1 max-w-[85%] min-w-0 overflow-hidden bg-[#1f2335] border border-[#27293d] rounded-lg p-3">
+            <p className="text-sm text-[#c0caf5] whitespace-pre-wrap break-words">
               {streaming}
               <span className="inline-block w-2 h-4 bg-[#bb9af7] animate-pulse ml-0.5 align-middle" />
             </p>

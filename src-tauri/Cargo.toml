@@ -46,6 +46,9 @@ vtcode-indexer = "0.47"
 futures = "0.3"
 dotenvy = "0.15"
 
+# Web search
+tavily = "0.2"
+
 # Anthropic on Vertex AI (custom crate)
 rig-anthropic-vertex = { path = "crates/rig-anthropic-vertex" }
 rig-core = "0.23"

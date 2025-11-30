@@ -66,6 +66,9 @@ pub async fn init_ai_agent(
     // Set IndexerState so code analysis tools are available
     bridge.set_indexer_state(state.indexer_state.clone());
 
+    // Set TavilyState so web search tools are available
+    bridge.set_tavily_state(state.tavily_state.clone());
+
     *state.ai_state.bridge.write().await = Some(bridge);
 
     tracing::info!(
@@ -250,6 +253,9 @@ pub async fn init_ai_agent_vertex(
 
     // Set IndexerState so code analysis tools are available
     bridge.set_indexer_state(state.indexer_state.clone());
+
+    // Set TavilyState so web search tools are available
+    bridge.set_tavily_state(state.tavily_state.clone());
 
     *state.ai_state.bridge.write().await = Some(bridge);
 

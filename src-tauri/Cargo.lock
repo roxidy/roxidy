@@ -5042,6 +5042,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "tavily",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -7149,6 +7150,16 @@ dependencies = [
  "dunce",
  "embed-resource",
  "toml 0.9.8",
+]
+
+[[package]]
+name = "tavily"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf9071394769189b31c7a9ca7548abce98a50aaa0e1cd35ef7c795aca6c7fc3b"
+dependencies = [
+ "reqwest",
+ "serde",
 ]
 
 [[package]]

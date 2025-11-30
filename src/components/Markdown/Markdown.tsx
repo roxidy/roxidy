@@ -63,7 +63,7 @@ function CodeBlock({
 
 export const Markdown = memo(function Markdown({ content, className }: MarkdownProps) {
   return (
-    <div className={cn("prose prose-invert prose-sm max-w-none", className)}>
+    <div className={cn("prose prose-invert prose-sm max-w-none break-words overflow-hidden", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

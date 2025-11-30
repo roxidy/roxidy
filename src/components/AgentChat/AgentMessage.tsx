@@ -18,7 +18,7 @@ export function AgentMessage({ message }: AgentMessageProps) {
   const hasStreamingHistory = message.streamingHistory && message.streamingHistory.length > 0;
 
   return (
-    <div className={cn("flex gap-3", isUser && "flex-row-reverse")}>
+    <div className={cn("flex gap-3 min-w-0", isUser && "flex-row-reverse")}>
       {/* Avatar */}
       <div
         className={cn(
@@ -36,7 +36,7 @@ export function AgentMessage({ message }: AgentMessageProps) {
       {/* Content */}
       <Card
         className={cn(
-          "flex-1 max-w-[85%]",
+          "flex-1 max-w-[85%] min-w-0 overflow-hidden",
           isUser
             ? "bg-[#7aa2f7]/10 border-[#7aa2f7]/20"
             : isSystem

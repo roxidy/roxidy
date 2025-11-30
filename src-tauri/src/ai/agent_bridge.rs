@@ -34,6 +34,7 @@ use super::token_trunc::aggregate_tool_output;
 use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyConfig, ToolPolicyManager};
 use crate::indexer::IndexerState;
 use crate::pty::PtyManager;
+use crate::tavily::TavilyState;
 
 /// Maximum number of tool call iterations before stopping
 const MAX_TOOL_ITERATIONS: usize = 100;
@@ -68,6 +69,8 @@ pub struct AgentBridge {
     conversation_history: Arc<RwLock<Vec<Message>>>,
     /// Reference to IndexerState for code analysis tools
     indexer_state: Option<Arc<IndexerState>>,
+    /// Reference to TavilyState for web search tools
+    tavily_state: Option<Arc<TavilyState>>,
     /// Session manager for persisting conversations (optional, initialized lazily)
     session_manager: Arc<RwLock<Option<QbitSessionManager>>>,
     /// Whether session persistence is enabled
@@ -145,6 +148,7 @@ impl AgentBridge {
             current_session_id: Arc::new(RwLock::new(None)),
             conversation_history: Arc::new(RwLock::new(Vec::new())),
             indexer_state: None,
+            tavily_state: None,
             session_manager: Arc::new(RwLock::new(None)),
             session_persistence_enabled: Arc::new(RwLock::new(true)), // Enabled by default
             approval_recorder,
@@ -218,6 +222,7 @@ impl AgentBridge {
             current_session_id: Arc::new(RwLock::new(None)),
             conversation_history: Arc::new(RwLock::new(Vec::new())),
             indexer_state: None,
+            tavily_state: None,
             session_manager: Arc::new(RwLock::new(None)),
             session_persistence_enabled: Arc::new(RwLock::new(true)), // Enabled by default
             approval_recorder,
@@ -237,6 +242,11 @@ impl AgentBridge {
     /// Set the IndexerState for code analysis tools
     pub fn set_indexer_state(&mut self, indexer_state: Arc<IndexerState>) {
         self.indexer_state = Some(indexer_state);
+    }
+
+    /// Set the TavilyState for web search tools
+    pub fn set_tavily_state(&mut self, tavily_state: Arc<TavilyState>) {
+        self.tavily_state = Some(tavily_state);
     }
 
     /// Execute an indexer tool
@@ -428,6 +438,95 @@ impl AgentBridge {
         }
     }
 
+    /// Execute a Tavily web search tool
+    async fn execute_tavily_tool(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> (serde_json::Value, bool) {
+        let tavily = match &self.tavily_state {
+            Some(state) => state,
+            None => {
+                return (json!({"error": "Web search not available - TAVILY_API_KEY not configured"}), false);
+            }
+        };
+
+        match tool_name {
+            "web_search" => {
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                let max_results = args.get("max_results").and_then(|v| v.as_u64()).map(|n| n as usize);
+
+                match tavily.search(query, max_results).await {
+                    Ok(results) => (
+                        json!({
+                            "query": results.query,
+                            "results": results.results.iter().map(|r| json!({
+                                "title": r.title,
+                                "url": r.url,
+                                "content": r.content,
+                                "score": r.score
+                            })).collect::<Vec<_>>(),
+                            "answer": results.answer,
+                            "count": results.results.len()
+                        }),
+                        true,
+                    ),
+                    Err(e) => (json!({"error": e.to_string()}), false),
+                }
+            }
+            "web_search_answer" => {
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+
+                match tavily.answer(query).await {
+                    Ok(result) => (
+                        json!({
+                            "query": result.query,
+                            "answer": result.answer,
+                            "sources": result.sources.iter().map(|r| json!({
+                                "title": r.title,
+                                "url": r.url,
+                                "content": r.content,
+                                "score": r.score
+                            })).collect::<Vec<_>>()
+                        }),
+                        true,
+                    ),
+                    Err(e) => (json!({"error": e.to_string()}), false),
+                }
+            }
+            "web_extract" => {
+                let urls: Vec<String> = args
+                    .get("urls")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                match tavily.extract(urls).await {
+                    Ok(results) => (
+                        json!({
+                            "results": results.results.iter().map(|r| json!({
+                                "url": r.url,
+                                "content": r.raw_content
+                            })).collect::<Vec<_>>(),
+                            "failed_urls": results.failed_urls,
+                            "count": results.results.len()
+                        }),
+                        true,
+                    ),
+                    Err(e) => (json!({"error": e.to_string()}), false),
+                }
+            }
+            _ => (
+                json!({"error": format!("Unknown web search tool: {}", tool_name)}),
+                false,
+            ),
+        }
+    }
+
     /// Set the current session ID for terminal execution
     pub async fn set_session_id(&self, session_id: Option<String>) {
         *self.current_session_id.write().await = session_id;
@@ -586,6 +685,66 @@ impl AgentBridge {
                 }),
             },
         ]
+    }
+
+    /// Get tool definitions for web search (Tavily).
+    fn get_tavily_tool_definitions(&self) -> Vec<ToolDefinition> {
+        // Only return tools if Tavily is available
+        if self.tavily_state.as_ref().map(|s| s.is_available()).unwrap_or(false) {
+            vec![
+                ToolDefinition {
+                    name: "web_search".to_string(),
+                    description: "Search the web for information. Returns relevant results with titles, URLs, and content snippets. Use this when you need current information, news, documentation, or facts beyond your training data.".to_string(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The search query"
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return (default: 5)"
+                            }
+                        },
+                        "required": ["query"]
+                    }),
+                },
+                ToolDefinition {
+                    name: "web_search_answer".to_string(),
+                    description: "Get an AI-generated answer from web search results. Best for direct questions that need a synthesized answer from multiple sources.".to_string(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The question to answer"
+                            }
+                        },
+                        "required": ["query"]
+                    }),
+                },
+                ToolDefinition {
+                    name: "web_extract".to_string(),
+                    description: "Extract and parse content from specific URLs. Use this to get the full content of web pages for deeper analysis.".to_string(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "urls": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "List of URLs to extract content from"
+                            }
+                        },
+                        "required": ["urls"]
+                    }),
+                },
+            ]
+        } else {
+            vec![]
+        }
     }
 
     /// Remove anyOf, allOf, oneOf from JSON schema as Anthropic doesn't support them.
@@ -787,8 +946,11 @@ impl AgentBridge {
             detector.reset();
         }
 
-        // Get all available tools (standard + sub-agents)
+        // Get all available tools (standard + sub-agents + web search)
         let mut tools = Self::get_tool_definitions();
+
+        // Add web search tools if Tavily is available
+        tools.extend(self.get_tavily_tool_definitions());
 
         // Only add sub-agent tools if we're not at max depth
         if context.depth < MAX_AGENT_DEPTH - 1 {
@@ -942,6 +1104,20 @@ The workspace has a semantic code indexer powered by tree-sitter. Use these tool
 - `indexer_detect_language`: Detect the programming language of a file.
 
 These tools provide faster, more accurate results than grep/find for code exploration.
+
+## Web Search Tools
+
+If web search is available (TAVILY_API_KEY is configured), you have access to these tools:
+
+- `web_search`: Search the web for current information, news, documentation, or facts. Returns results with titles, URLs, and content snippets.
+- `web_search_answer`: Get an AI-generated answer synthesized from web search results. Best for direct questions.
+- `web_extract`: Extract and parse full content from specific URLs for deeper analysis.
+
+Use these tools when:
+- The user asks about current events or recent information
+- You need up-to-date documentation or API references
+- Information is beyond your training data cutoff
+- The user explicitly asks you to search the web
 
 ## Sub-Agents: `sub_agent_*`
 
@@ -1324,7 +1500,10 @@ When to use sub-agents:
         });
 
         // Build filtered tools based on agent's allowed tools
-        let all_tools = Self::get_tool_definitions();
+        let mut all_tools = Self::get_tool_definitions();
+        // Add web search tools if available
+        all_tools.extend(self.get_tavily_tool_definitions());
+
         let tools: Vec<ToolDefinition> = if agent_def.allowed_tools.is_empty() {
             all_tools
         } else {
@@ -1441,7 +1620,10 @@ When to use sub-agents:
                 let tool_id = tool_call.id.clone();
 
                 // Execute the tool
-                let (result_value, _success) = if tool_name == "run_pty_cmd"
+                let (result_value, _success) = if tool_name.starts_with("web_search") || tool_name == "web_extract" {
+                    // Execute web search tools
+                    self.execute_tavily_tool(tool_name, &tool_args).await
+                } else if tool_name == "run_pty_cmd"
                     && self.pty_manager.is_some()
                     && self.current_session_id.read().await.is_some()
                 {
@@ -1951,6 +2133,11 @@ When to use sub-agents:
         // Check if this is an indexer tool call
         if tool_name.starts_with("indexer_") {
             return Ok(self.execute_indexer_tool(tool_name, tool_args).await);
+        }
+
+        // Check if this is a web search (Tavily) tool call
+        if tool_name.starts_with("web_search") || tool_name == "web_extract" {
+            return Ok(self.execute_tavily_tool(tool_name, tool_args).await);
         }
 
         // Check if this is a sub-agent call

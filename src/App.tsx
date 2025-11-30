@@ -366,7 +366,7 @@ function App() {
       <TabBar onNewTab={handleNewTab} />
 
       {/* Main content area with sidebar */}
-      <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 min-w-0 flex overflow-hidden">
         {/* Sidebar */}
         <Sidebar
           workingDirectory={workingDirectory}
@@ -378,11 +378,11 @@ function App() {
         />
 
         {/* Main content */}
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
           {activeSessionId ? (
             <>
               {/* Scrollable content area - auto-scroll handled in UnifiedTimeline */}
-              <div className="flex-1 overflow-auto bg-[#1a1b26]">
+              <div className="flex-1 min-w-0 overflow-auto bg-[#1a1b26]">
                 <ContentArea sessionId={activeSessionId} />
               </div>
 
