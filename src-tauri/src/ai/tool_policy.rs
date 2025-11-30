@@ -548,7 +548,9 @@ impl ToolPolicyManager {
     ) -> Result<()> {
         {
             let mut config = self.config.write().await;
-            config.constraints.insert(tool_name.to_string(), constraints);
+            config
+                .constraints
+                .insert(tool_name.to_string(), constraints);
         }
         self.save().await
     }
@@ -828,29 +830,18 @@ impl ToolPolicyManager {
         let full_auto = self.full_auto_allowlist.read().await;
 
         tracing::info!("=== Tool Policy Status ===");
-        tracing::info!(
-            "Default policy: {}",
-            config.default_policy
-        );
-        tracing::info!(
-            "Available tools: {}",
-            config.available_tools.len()
-        );
-        tracing::info!(
-            "Configured policies: {}",
-            config.policies.len()
-        );
-        tracing::info!(
-            "Configured constraints: {}",
-            config.constraints.len()
-        );
-        tracing::info!(
-            "Pre-approved this session: {}",
-            preapproved.len()
-        );
+        tracing::info!("Default policy: {}", config.default_policy);
+        tracing::info!("Available tools: {}", config.available_tools.len());
+        tracing::info!("Configured policies: {}", config.policies.len());
+        tracing::info!("Configured constraints: {}", config.constraints.len());
+        tracing::info!("Pre-approved this session: {}", preapproved.len());
         tracing::info!(
             "Full-auto mode: {}",
-            if full_auto.is_some() { "enabled" } else { "disabled" }
+            if full_auto.is_some() {
+                "enabled"
+            } else {
+                "disabled"
+            }
         );
 
         // Count by policy type
@@ -906,9 +897,7 @@ mod tests {
         constraints.blocked_schemes = Some(vec!["file://".to_string()]);
 
         // Blocked hosts
-        assert!(constraints
-            .is_url_blocked("http://localhost/api")
-            .is_some());
+        assert!(constraints.is_url_blocked("http://localhost/api").is_some());
         assert!(constraints
             .is_url_blocked("http://127.0.0.1:8080/")
             .is_some());
@@ -934,7 +923,9 @@ mod tests {
         // Blocked patterns
         assert!(constraints.is_path_blocked(".env").is_some());
         assert!(constraints.is_path_blocked("config/.env").is_some());
-        assert!(constraints.is_path_blocked("config/secrets/key.txt").is_some());
+        assert!(constraints
+            .is_path_blocked("config/secrets/key.txt")
+            .is_some());
 
         // Allowed extensions (only .rs and .ts allowed)
         assert!(constraints.is_path_blocked("main.py").is_some()); // .py not allowed
@@ -977,18 +968,9 @@ mod tests {
         let config = ToolPolicyConfig::default();
 
         // Check default policies
-        assert_eq!(
-            config.policies.get("read_file"),
-            Some(&ToolPolicy::Allow)
-        );
-        assert_eq!(
-            config.policies.get("write_file"),
-            Some(&ToolPolicy::Prompt)
-        );
-        assert_eq!(
-            config.policies.get("delete_file"),
-            Some(&ToolPolicy::Deny)
-        );
+        assert_eq!(config.policies.get("read_file"), Some(&ToolPolicy::Allow));
+        assert_eq!(config.policies.get("write_file"), Some(&ToolPolicy::Prompt));
+        assert_eq!(config.policies.get("delete_file"), Some(&ToolPolicy::Deny));
 
         // Check default policy for unknown tools
         assert_eq!(config.default_policy, ToolPolicy::Prompt);
@@ -1123,10 +1105,7 @@ mod tests {
         let merged = ToolPolicyManager::merge_configs(&Some(global), &Some(project));
 
         // custom_tool should be Allow (project overrides global's Deny)
-        assert_eq!(
-            merged.policies.get("custom_tool"),
-            Some(&ToolPolicy::Allow)
-        );
+        assert_eq!(merged.policies.get("custom_tool"), Some(&ToolPolicy::Allow));
 
         // global_only_tool should be Allow (from global, not in project)
         assert_eq!(
@@ -1180,10 +1159,7 @@ mod tests {
         let merged = ToolPolicyManager::merge_configs(&None, &None);
 
         // Should use defaults
-        assert_eq!(
-            merged.policies.get("read_file"),
-            Some(&ToolPolicy::Allow)
-        );
+        assert_eq!(merged.policies.get("read_file"), Some(&ToolPolicy::Allow));
         assert_eq!(merged.default_policy, ToolPolicy::Prompt);
     }
 }

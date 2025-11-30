@@ -131,4 +131,28 @@ pub enum AiEvent {
         original_tokens: usize,
         truncated_tokens: usize,
     },
+
+    // Loop protection events
+    /// Warning: approaching loop detection threshold
+    LoopWarning {
+        tool_name: String,
+        current_count: usize,
+        max_count: usize,
+        message: String,
+    },
+
+    /// Tool call blocked due to loop detection
+    LoopBlocked {
+        tool_name: String,
+        repeat_count: usize,
+        max_count: usize,
+        message: String,
+    },
+
+    /// Maximum tool iterations reached for this turn
+    MaxIterationsReached {
+        iterations: usize,
+        max_iterations: usize,
+        message: String,
+    },
 }

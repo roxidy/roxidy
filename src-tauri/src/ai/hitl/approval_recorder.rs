@@ -314,7 +314,10 @@ impl ApprovalRecorder {
             }
 
             // Check if pattern qualifies
-            pattern.qualifies_for_auto_approve(data.config.min_approvals, data.config.approval_threshold)
+            pattern.qualifies_for_auto_approve(
+                data.config.min_approvals,
+                data.config.approval_threshold,
+            )
         } else {
             false
         }

@@ -21,14 +21,17 @@ use super::events::AiEvent;
 use super::hitl::{
     ApprovalDecision, ApprovalPattern, ApprovalRecorder, RiskLevel, ToolApprovalConfig,
 };
+use super::loop_detection::{
+    LoopDetectionResult, LoopDetector, LoopDetectorStats, LoopProtectionConfig,
+};
 use super::session::QbitSessionManager;
-use super::token_budget::{TokenAlertLevel, TokenBudgetConfig, TokenUsageStats};
-use super::token_trunc::aggregate_tool_output;
-use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyConfig, ToolPolicyManager};
 use super::sub_agent::{
     create_default_sub_agents, SubAgentContext, SubAgentDefinition, SubAgentRegistry,
     SubAgentResult, MAX_AGENT_DEPTH,
 };
+use super::token_budget::{TokenAlertLevel, TokenBudgetConfig, TokenUsageStats};
+use super::token_trunc::aggregate_tool_output;
+use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyConfig, ToolPolicyManager};
 use crate::indexer::IndexerState;
 use crate::pty::PtyManager;
 
@@ -79,6 +82,8 @@ pub struct AgentBridge {
     context_manager: Arc<ContextManager>,
     /// Channel for context events
     context_event_rx: Arc<RwLock<Option<mpsc::Receiver<ContextEvent>>>>,
+    /// Loop detector for preventing runaway agent behavior
+    loop_detector: Arc<RwLock<LoopDetector>>,
 }
 
 impl AgentBridge {
@@ -147,6 +152,7 @@ impl AgentBridge {
             tool_policy_manager,
             context_manager: Arc::new(context_manager),
             context_event_rx: Arc::new(RwLock::new(Some(context_rx))),
+            loop_detector: Arc::new(RwLock::new(LoopDetector::with_defaults())),
         })
     }
 
@@ -219,6 +225,7 @@ impl AgentBridge {
             tool_policy_manager,
             context_manager: Arc::new(context_manager),
             context_event_rx: Arc::new(RwLock::new(Some(context_rx))),
+            loop_detector: Arc::new(RwLock::new(LoopDetector::with_defaults())),
         })
     }
 
@@ -774,6 +781,12 @@ impl AgentBridge {
         start_time: std::time::Instant,
         context: SubAgentContext,
     ) -> Result<String> {
+        // Reset loop detector for new turn
+        {
+            let mut detector = self.loop_detector.write().await;
+            detector.reset();
+        }
+
         // Get all available tools (standard + sub-agents)
         let mut tools = Self::get_tool_definitions();
 
@@ -978,21 +991,31 @@ When to use sub-agents:
         drop(history_guard);
 
         // Update context manager with current history
-        self.context_manager.update_from_messages(&chat_history).await;
+        self.context_manager
+            .update_from_messages(&chat_history)
+            .await;
 
         // Enforce context window limits if needed
         let alert_level = self.context_manager.alert_level().await;
-        if matches!(alert_level, TokenAlertLevel::Alert | TokenAlertLevel::Critical) {
+        if matches!(
+            alert_level,
+            TokenAlertLevel::Alert | TokenAlertLevel::Critical
+        ) {
             let utilization_before = self.context_manager.utilization().await;
             tracing::info!(
                 "Context alert level {:?} ({:.1}% utilization), enforcing context window",
                 alert_level,
                 utilization_before * 100.0
             );
-            chat_history = self.context_manager.enforce_context_window(&chat_history).await;
+            chat_history = self
+                .context_manager
+                .enforce_context_window(&chat_history)
+                .await;
 
             // Update stats after pruning
-            self.context_manager.update_from_messages(&chat_history).await;
+            self.context_manager
+                .update_from_messages(&chat_history)
+                .await;
             let utilization_after = self.context_manager.utilization().await;
 
             // Emit context event to frontend
@@ -1093,13 +1116,98 @@ When to use sub-agents:
                 let tool_id = tool_call.id.clone();
 
                 // ================================================================
+                // Loop Detection: Check for potential infinite loops
+                // ================================================================
+                let loop_result = {
+                    let mut detector = self.loop_detector.write().await;
+                    detector.record_tool_call(tool_name, &tool_args)
+                };
+
+                match &loop_result {
+                    LoopDetectionResult::Blocked {
+                        tool_name,
+                        repeat_count,
+                        max_count,
+                        message,
+                    } => {
+                        // Emit loop blocked event
+                        let _ = self.event_tx.send(AiEvent::LoopBlocked {
+                            tool_name: tool_name.clone(),
+                            repeat_count: *repeat_count,
+                            max_count: *max_count,
+                            message: message.clone(),
+                        });
+                        // Return error to LLM instead of executing
+                        let result_text = serde_json::to_string(&json!({
+                            "error": message,
+                            "loop_detected": true,
+                            "repeat_count": repeat_count,
+                            "suggestion": "Try a different approach or modify the arguments"
+                        }))
+                        .unwrap_or_default();
+                        tool_results.push(UserContent::ToolResult(ToolResult {
+                            id: tool_id.clone(),
+                            call_id: Some(tool_id),
+                            content: OneOrMany::one(ToolResultContent::Text(Text {
+                                text: result_text,
+                            })),
+                        }));
+                        continue;
+                    }
+                    LoopDetectionResult::MaxIterationsReached {
+                        iterations,
+                        max_iterations,
+                        message,
+                    } => {
+                        // Emit max iterations event
+                        let _ = self.event_tx.send(AiEvent::MaxIterationsReached {
+                            iterations: *iterations,
+                            max_iterations: *max_iterations,
+                            message: message.clone(),
+                        });
+                        // Return error to LLM
+                        let result_text = serde_json::to_string(&json!({
+                            "error": message,
+                            "max_iterations_reached": true,
+                            "suggestion": "Provide a final response to the user"
+                        }))
+                        .unwrap_or_default();
+                        tool_results.push(UserContent::ToolResult(ToolResult {
+                            id: tool_id.clone(),
+                            call_id: Some(tool_id),
+                            content: OneOrMany::one(ToolResultContent::Text(Text {
+                                text: result_text,
+                            })),
+                        }));
+                        continue;
+                    }
+                    LoopDetectionResult::Warning {
+                        tool_name,
+                        current_count,
+                        max_count,
+                        message,
+                    } => {
+                        // Emit warning but continue execution
+                        let _ = self.event_tx.send(AiEvent::LoopWarning {
+                            tool_name: tool_name.clone(),
+                            current_count: *current_count,
+                            max_count: *max_count,
+                            message: message.clone(),
+                        });
+                    }
+                    LoopDetectionResult::Allowed => {}
+                }
+
+                // ================================================================
                 // HITL: Check if tool needs approval before execution
                 // ================================================================
-                let (result_value, success) =
-                    match self.execute_with_hitl(tool_name, &tool_args, &tool_id, &context, model).await {
-                        Ok((result, success)) => (result, success),
-                        Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
-                    };
+                let (result_value, success) = match self
+                    .execute_with_hitl(tool_name, &tool_args, &tool_id, &context, model)
+                    .await
+                {
+                    Ok((result, success)) => (result, success),
+                    Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
+                };
 
                 // Emit tool result event
                 let _ = self.event_tx.send(AiEvent::ToolResult {
@@ -1533,10 +1641,8 @@ When to use sub-agents:
         self.finalize_session().await;
 
         // Convert QbitSessionMessages to rig Messages
-        let rig_messages: Vec<Message> = messages
-            .iter()
-            .filter_map(|m| m.to_rig_message())
-            .collect();
+        let rig_messages: Vec<Message> =
+            messages.iter().filter_map(|m| m.to_rig_message()).collect();
 
         // Replace conversation history
         let mut history = self.conversation_history.write().await;
@@ -1711,11 +1817,7 @@ When to use sub-agents:
                 ));
             }
             PolicyConstraintResult::Modified(modified_args, note) => {
-                tracing::info!(
-                    "Tool '{}' args modified by constraint: {}",
-                    tool_name,
-                    note
-                );
+                tracing::info!("Tool '{}' args modified by constraint: {}", tool_name, note);
                 (modified_args, Some(note))
             }
         };
@@ -1799,12 +1901,7 @@ When to use sub-agents:
                     // Record approval
                     let _ = self
                         .approval_recorder
-                        .record_approval(
-                            tool_name,
-                            true,
-                            decision.reason,
-                            decision.always_allow,
-                        )
+                        .record_approval(tool_name, true, decision.reason, decision.always_allow)
                         .await;
 
                     // Execute the tool with effective (possibly constrained) args
@@ -2008,7 +2105,9 @@ When to use sub-agents:
 
     /// Enable full-auto mode with the given allowed tools.
     pub async fn enable_full_auto_mode(&self, allowed_tools: Vec<String>) {
-        self.tool_policy_manager.enable_full_auto(allowed_tools).await;
+        self.tool_policy_manager
+            .enable_full_auto(allowed_tools)
+            .await;
     }
 
     /// Disable full-auto mode.
@@ -2094,6 +2193,53 @@ When to use sub-agents:
             .truncate_tool_response(content, tool_name)
             .await;
         result.content
+    }
+
+    // ========================================================================
+    // Loop Protection Methods
+    // ========================================================================
+
+    /// Get the loop protection configuration.
+    pub async fn get_loop_protection_config(&self) -> LoopProtectionConfig {
+        self.loop_detector.read().await.config().clone()
+    }
+
+    /// Set the loop protection configuration.
+    pub async fn set_loop_protection_config(&self, config: LoopProtectionConfig) {
+        self.loop_detector.write().await.set_config(config);
+    }
+
+    /// Get current loop detector statistics.
+    pub async fn get_loop_detector_stats(&self) -> LoopDetectorStats {
+        self.loop_detector.read().await.stats()
+    }
+
+    /// Check if loop detection is currently enabled.
+    pub async fn is_loop_detection_enabled(&self) -> bool {
+        self.loop_detector.read().await.is_enabled()
+    }
+
+    /// Disable loop detection for the current session.
+    pub async fn disable_loop_detection_for_session(&self) {
+        self.loop_detector.write().await.disable_for_session();
+    }
+
+    /// Re-enable loop detection.
+    pub async fn enable_loop_detection(&self) {
+        self.loop_detector.write().await.enable();
+    }
+
+    /// Reset the loop detector (clears all tracking).
+    pub async fn reset_loop_detector(&self) {
+        self.loop_detector.write().await.reset();
+    }
+
+    /// Reset tracking for a specific tool call signature.
+    pub async fn reset_loop_signature(&self, tool_name: &str, args: &serde_json::Value) {
+        self.loop_detector
+            .write()
+            .await
+            .reset_signature(tool_name, args);
     }
 }
 

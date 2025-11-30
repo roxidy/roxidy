@@ -658,7 +658,10 @@ mod tests {
 
         assert_eq!(deserialized.identifier, "session-test-123");
         assert_eq!(deserialized.workspace_label, "my-project");
-        assert_eq!(deserialized.first_prompt_preview, Some("Help me debug...".to_string()));
+        assert_eq!(
+            deserialized.first_prompt_preview,
+            Some("Help me debug...".to_string())
+        );
     }
 
     #[test]
@@ -715,12 +718,9 @@ mod tests {
         // Set VT_SESSION_DIR for this test
         std::env::set_var("VT_SESSION_DIR", temp_dir.path());
 
-        let manager = QbitSessionManager::new(
-            temp_dir.path().to_path_buf(),
-            "test-model",
-            "test-provider",
-        )
-        .await;
+        let manager =
+            QbitSessionManager::new(temp_dir.path().to_path_buf(), "test-model", "test-provider")
+                .await;
 
         assert!(manager.is_ok());
         let manager = manager.unwrap();
@@ -736,13 +736,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         std::env::set_var("VT_SESSION_DIR", temp_dir.path());
 
-        let mut manager = QbitSessionManager::new(
-            temp_dir.path().to_path_buf(),
-            "test-model",
-            "test-provider",
-        )
-        .await
-        .expect("Failed to create manager");
+        let mut manager =
+            QbitSessionManager::new(temp_dir.path().to_path_buf(), "test-model", "test-provider")
+                .await
+                .expect("Failed to create manager");
 
         manager.add_user_message("Hello, how are you?");
         assert_eq!(manager.message_count(), 1);
@@ -762,13 +759,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         std::env::set_var("VT_SESSION_DIR", temp_dir.path());
 
-        let mut manager = QbitSessionManager::new(
-            temp_dir.path().to_path_buf(),
-            "test-model",
-            "test-provider",
-        )
-        .await
-        .expect("Failed to create manager");
+        let mut manager =
+            QbitSessionManager::new(temp_dir.path().to_path_buf(), "test-model", "test-provider")
+                .await
+                .expect("Failed to create manager");
 
         manager.add_tool_use("read_file", "contents");
         manager.add_tool_use("write_file", "success");

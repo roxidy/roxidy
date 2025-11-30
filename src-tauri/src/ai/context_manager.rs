@@ -205,9 +205,9 @@ impl ContextManager {
             match message {
                 Message::User { content } => {
                     // Check if this contains tool results
-                    let has_tool_result = content.iter().any(|c| {
-                        matches!(c, rig::message::UserContent::ToolResult(_))
-                    });
+                    let has_tool_result = content
+                        .iter()
+                        .any(|c| matches!(c, rig::message::UserContent::ToolResult(_)));
                     if has_tool_result {
                         stats.tool_results_tokens += tokens;
                     } else {
@@ -358,11 +358,7 @@ impl ContextManager {
     }
 
     /// Truncate tool response if it exceeds limits
-    pub async fn truncate_tool_response(
-        &self,
-        content: &str,
-        tool_name: &str,
-    ) -> TruncationResult {
+    pub async fn truncate_tool_response(&self, content: &str, tool_name: &str) -> TruncationResult {
         let result = aggregate_tool_output(content, self.trim_config.max_tool_response_tokens);
 
         if result.truncated {
@@ -390,7 +386,10 @@ impl ContextManager {
 
     /// Check if there's room for a new message
     pub async fn can_add_message(&self, estimated_tokens: usize) -> bool {
-        !self.token_budget.would_exceed_budget(estimated_tokens).await
+        !self
+            .token_budget
+            .would_exceed_budget(estimated_tokens)
+            .await
     }
 
     /// Get prune result without applying it

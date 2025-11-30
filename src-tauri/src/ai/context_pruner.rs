@@ -217,7 +217,8 @@ impl ContextPruner {
             .iter()
             .enumerate()
             .map(|(i, msg)| {
-                let token_count = TokenBudgetManager::estimate_tokens(&Self::message_to_string(msg));
+                let token_count =
+                    TokenBudgetManager::estimate_tokens(&Self::message_to_string(msg));
                 ScoredMessage::new(i, msg.clone(), token_count)
             })
             .collect();
@@ -272,7 +273,11 @@ impl ContextPruner {
         }
 
         // Sort prunable by priority (highest first)
-        prunable.sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap_or(std::cmp::Ordering::Equal));
+        prunable.sort_by(|a, b| {
+            b.priority
+                .partial_cmp(&a.priority)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Greedily add messages until budget is exhausted
         let remaining_budget = budget - protected_tokens;
@@ -333,9 +338,12 @@ impl ContextPruner {
                         UserContent::Text(t) => t.text.clone(),
                         UserContent::Image(_) => "[image]".to_string(),
                         UserContent::Document(_) => "[document]".to_string(),
-                        UserContent::ToolResult(result) => {
-                            result.content.iter().map(|tc| format!("{:?}", tc)).collect::<Vec<_>>().join("\n")
-                        }
+                        UserContent::ToolResult(result) => result
+                            .content
+                            .iter()
+                            .map(|tc| format!("{:?}", tc))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
                         _ => "[media]".to_string(), // Audio, Video, etc.
                     })
                     .collect::<Vec<_>>()
@@ -377,14 +385,18 @@ mod tests {
 
     fn create_user_message(text: &str) -> Message {
         Message::User {
-            content: OneOrMany::one(UserContent::Text(Text { text: text.to_string() })),
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: text.to_string(),
+            })),
         }
     }
 
     fn create_assistant_message(text: &str) -> Message {
         Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text { text: text.to_string() })),
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: text.to_string(),
+            })),
         }
     }
 
