@@ -56,6 +56,67 @@ export function useAiEvents() {
           break;
         }
 
+        case "tool_approval_request": {
+          // Enhanced tool request with HITL metadata
+          // Deduplicate: ignore already-processed requests
+          if (state.isToolRequestProcessed(event.request_id)) {
+            console.debug("Ignoring duplicate tool_approval_request:", event.request_id);
+            break;
+          }
+          state.setAgentThinking(sessionId, false);
+
+          // Convert backend ApprovalPattern to store format
+          const stats = event.stats
+            ? {
+                toolName: event.stats.tool_name,
+                totalRequests: event.stats.total_requests,
+                approvals: event.stats.approvals,
+                denials: event.stats.denials,
+                alwaysAllow: event.stats.always_allow,
+              }
+            : undefined;
+
+          const toolCall = {
+            id: event.request_id,
+            name: event.tool_name,
+            args: event.args as Record<string, unknown>,
+            executedByAgent: true,
+            riskLevel: event.risk_level,
+            stats,
+            suggestion: event.suggestion ?? undefined,
+            canLearn: event.can_learn,
+          };
+
+          // Track the tool call
+          state.addActiveToolCall(sessionId, toolCall);
+          state.addStreamingToolBlock(sessionId, toolCall);
+
+          // Set pending tool approval for the dialog
+          state.setPendingToolApproval(sessionId, {
+            ...toolCall,
+            status: "pending",
+          });
+          break;
+        }
+
+        case "tool_auto_approved": {
+          // Tool was auto-approved based on learned patterns
+          state.setAgentThinking(sessionId, false);
+          const autoApprovedTool = {
+            id: event.request_id,
+            name: event.tool_name,
+            args: event.args as Record<string, unknown>,
+            executedByAgent: true,
+            autoApproved: true,
+            autoApprovalReason: event.reason,
+          };
+          state.addActiveToolCall(sessionId, autoApprovedTool);
+          state.addStreamingToolBlock(sessionId, autoApprovedTool);
+          // Show a toast notification for auto-approval
+          console.log(`Tool '${event.tool_name}' auto-approved: ${event.reason}`);
+          break;
+        }
+
         case "tool_result":
           // Update tool call status to completed/error
           state.completeActiveToolCall(sessionId, event.request_id, event.success, event.result);

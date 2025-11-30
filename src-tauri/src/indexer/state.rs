@@ -30,10 +30,8 @@ fn load_existing_index(indexer: &mut SimpleIndexer, index_dir: &PathBuf) -> anyh
                 if let Some(file_path) = line.strip_prefix("- **Path**: ") {
                     let file_path = PathBuf::from(file_path.trim());
                     // Re-index if the file still exists
-                    if file_path.exists() {
-                        if indexer.index_file(&file_path).is_ok() {
-                            loaded += 1;
-                        }
+                    if file_path.exists() && indexer.index_file(&file_path).is_ok() {
+                        loaded += 1;
                     }
                     break;
                 }
@@ -74,7 +72,11 @@ impl IndexerState {
         tracing::debug!("Index directory created successfully");
 
         // Create the indexer with custom index directory
-        tracing::debug!("Creating SimpleIndexer with workspace: {:?}, index_dir: {:?}", workspace_path, index_dir);
+        tracing::debug!(
+            "Creating SimpleIndexer with workspace: {:?}, index_dir: {:?}",
+            workspace_path,
+            index_dir
+        );
         let mut indexer = SimpleIndexer::with_index_dir(workspace_path.clone(), index_dir.clone());
 
         // Initialize the indexer storage

@@ -123,15 +123,15 @@ pub async fn init_indexer(
 
     tracing::debug!("Workspace path exists, initializing indexer state...");
 
-    state
-        .indexer_state
-        .initialize(path)
-        .map_err(|e| {
-            tracing::error!("Failed to initialize indexer: {}", e);
-            e.to_string()
-        })?;
+    state.indexer_state.initialize(path).map_err(|e| {
+        tracing::error!("Failed to initialize indexer: {}", e);
+        e.to_string()
+    })?;
 
-    tracing::info!("init_indexer completed successfully for: {}", workspace_path);
+    tracing::info!(
+        "init_indexer completed successfully for: {}",
+        workspace_path
+    );
 
     Ok(IndexResult {
         files_indexed: 0,
@@ -210,7 +210,10 @@ pub async fn index_directory(
     }
 
     tracing::debug!("Directory exists, checking indexer state...");
-    tracing::debug!("Indexer initialized: {}", state.indexer_state.is_initialized());
+    tracing::debug!(
+        "Indexer initialized: {}",
+        state.indexer_state.is_initialized()
+    );
 
     state
         .indexer_state
@@ -220,10 +223,7 @@ pub async fn index_directory(
 
             indexer.index_directory(&path)?;
 
-            tracing::info!(
-                "Directory indexing completed in {:?}",
-                start.elapsed(),
-            );
+            tracing::info!("Directory indexing completed in {:?}", start.elapsed(),);
             Ok(())
         })
         .map_err(|e| {
@@ -241,12 +241,18 @@ pub async fn index_directory(
         })
         .unwrap_or(0);
 
-    tracing::info!("index_directory completed successfully, {} files now in index", files_indexed);
+    tracing::info!(
+        "index_directory completed successfully, {} files now in index",
+        files_indexed
+    );
 
     Ok(IndexResult {
         files_indexed,
         success: true,
-        message: format!("Indexed directory: {} ({} files in index)", dir_path, files_indexed),
+        message: format!(
+            "Indexed directory: {} ({} files in index)",
+            dir_path, files_indexed
+        ),
     })
 }
 

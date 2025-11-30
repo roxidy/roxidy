@@ -1,6 +1,10 @@
+import { enableMapSet } from "immer";
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
+
+// Enable Immer support for Set and Map (needed for processedToolRequests)
+enableMapSet();
 
 // Types
 export type SessionMode = "terminal" | "agent";
@@ -75,6 +79,18 @@ export interface AgentMessage {
   streamingHistory?: FinalizedStreamingBlock[];
 }
 
+/** Risk level for tool operations */
+export type RiskLevel = "low" | "medium" | "high" | "critical";
+
+/** Approval stats for a tool */
+export interface ApprovalStats {
+  toolName: string;
+  totalRequests: number;
+  approvals: number;
+  denials: number;
+  alwaysAllow: boolean;
+}
+
 export interface ToolCall {
   id: string;
   name: string;
@@ -83,6 +99,18 @@ export interface ToolCall {
   result?: unknown;
   /** True if this tool was executed by the agent (vs user-initiated) */
   executedByAgent?: boolean;
+  /** Risk level of this tool */
+  riskLevel?: RiskLevel;
+  /** Approval stats for this tool (if available) */
+  stats?: ApprovalStats;
+  /** Suggestion for auto-approve threshold */
+  suggestion?: string;
+  /** Whether this tool can be auto-approved in the future */
+  canLearn?: boolean;
+  /** True if this tool was auto-approved */
+  autoApproved?: boolean;
+  /** Reason for auto-approval (if auto-approved) */
+  autoApprovalReason?: string;
 }
 
 /** Tool call being actively executed by the agent */
@@ -169,6 +197,7 @@ interface QbitState {
     result?: unknown
   ) => void;
   clearAgentMessages: (sessionId: string) => void;
+  restoreAgentMessages: (sessionId: string, messages: AgentMessage[]) => void;
   addActiveToolCall: (
     sessionId: string,
     toolCall: { id: string; name: string; args: Record<string, unknown> }
@@ -513,6 +542,22 @@ export const useStore = create<QbitState>()(
           state.agentStreaming[sessionId] = "";
         }),
 
+      restoreAgentMessages: (sessionId, messages) =>
+        set((state) => {
+          state.agentMessages[sessionId] = messages;
+          state.agentStreaming[sessionId] = "";
+          // Replace the timeline with restored messages (clear first, then add)
+          state.timelines[sessionId] = [];
+          for (const message of messages) {
+            state.timelines[sessionId].push({
+              id: message.id,
+              type: "agent_message",
+              timestamp: message.timestamp,
+              data: message,
+            });
+          }
+        }),
+
       addActiveToolCall: (sessionId, toolCall) =>
         set((state) => {
           if (!state.activeToolCalls[sessionId]) {
@@ -694,4 +739,33 @@ export async function clearConversation(sessionId: string): Promise<void> {
   } catch (error) {
     console.warn("Failed to clear backend conversation history:", error);
   }
+}
+
+// Helper function to restore a previous session (both frontend and backend)
+export async function restoreSession(sessionId: string, identifier: string): Promise<void> {
+  const { restoreAiSession } = await import("@/lib/ai");
+
+  // Restore backend conversation history and get the session data
+  const session = await restoreAiSession(identifier);
+
+  // Convert session messages to AgentMessages for the UI
+  const agentMessages: AgentMessage[] = session.messages
+    .filter((msg) => msg.role === "user" || msg.role === "assistant")
+    .map((msg, index) => ({
+      id: `restored-${identifier}-${index}`,
+      sessionId,
+      role: msg.role as "user" | "assistant",
+      content: msg.content,
+      timestamp: index === 0 ? session.started_at : session.ended_at,
+      isStreaming: false,
+    }));
+
+  // Clear existing state first
+  useStore.getState().clearTimeline(sessionId);
+
+  // Restore the messages to the store (this also populates the timeline)
+  useStore.getState().restoreAgentMessages(sessionId, agentMessages);
+
+  // Switch to agent mode since we're restoring an AI conversation
+  useStore.getState().setInputMode(sessionId, "agent");
 }
