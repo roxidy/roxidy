@@ -47,6 +47,15 @@ pub enum AiEvent {
         reason: String,
     },
 
+    /// Tool was denied by policy or constraint
+    ToolDenied {
+        request_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+        /// Reason for denial
+        reason: String,
+    },
+
     /// Tool execution completed
     ToolResult {
         tool_name: String,

@@ -6,14 +6,15 @@ mod pty;
 mod state;
 
 use ai::{
-    add_tool_always_allow, clear_ai_conversation, execute_ai_tool, export_ai_session_transcript,
-    finalize_ai_session, find_ai_session, get_ai_conversation_length, get_approval_patterns,
-    get_available_tools, get_hitl_config, get_openrouter_api_key, get_tool_approval_pattern,
+    add_tool_always_allow, clear_ai_conversation, disable_full_auto_mode, enable_full_auto_mode,
+    execute_ai_tool, export_ai_session_transcript, finalize_ai_session, find_ai_session,
+    get_ai_conversation_length, get_approval_patterns, get_available_tools, get_hitl_config,
+    get_openrouter_api_key, get_tool_approval_pattern, get_tool_policy, get_tool_policy_config,
     get_vertex_ai_config, init_ai_agent, init_ai_agent_vertex, is_ai_initialized,
-    is_ai_session_persistence_enabled, list_ai_sessions, load_ai_session, load_env_file,
-    remove_tool_always_allow, reset_approval_patterns, respond_to_tool_approval, restore_ai_session,
-    send_ai_prompt, set_ai_session_persistence, set_hitl_config, shutdown_ai_agent,
-    update_ai_workspace,
+    is_ai_session_persistence_enabled, is_full_auto_mode_enabled, list_ai_sessions, load_ai_session,
+    load_env_file, remove_tool_always_allow, reset_approval_patterns, reset_tool_policies,
+    respond_to_tool_approval, restore_ai_session, send_ai_prompt, set_ai_session_persistence,
+    set_hitl_config, set_tool_policy, set_tool_policy_config, shutdown_ai_agent, update_ai_workspace,
 };
 use commands::*;
 use indexer::{
@@ -97,6 +98,15 @@ pub fn run() {
             remove_tool_always_allow,
             reset_approval_patterns,
             respond_to_tool_approval,
+            // Tool policy commands
+            get_tool_policy_config,
+            set_tool_policy_config,
+            get_tool_policy,
+            set_tool_policy,
+            reset_tool_policies,
+            enable_full_auto_mode,
+            disable_full_auto_mode,
+            is_full_auto_mode_enabled,
             // Indexer commands
             init_indexer,
             is_indexer_initialized,

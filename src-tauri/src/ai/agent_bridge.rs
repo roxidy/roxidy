@@ -21,6 +21,7 @@ use super::hitl::{
     ApprovalDecision, ApprovalPattern, ApprovalRecorder, RiskLevel, ToolApprovalConfig,
 };
 use super::session::QbitSessionManager;
+use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyConfig, ToolPolicyManager};
 use super::sub_agent::{
     create_default_sub_agents, SubAgentContext, SubAgentDefinition, SubAgentRegistry,
     SubAgentResult, MAX_AGENT_DEPTH,
@@ -69,6 +70,8 @@ pub struct AgentBridge {
     approval_recorder: Arc<ApprovalRecorder>,
     /// Pending approval responses (request_id -> oneshot sender)
     pending_approvals: Arc<RwLock<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
+    /// Tool policy manager for allow/prompt/deny rules and constraints
+    tool_policy_manager: Arc<ToolPolicyManager>,
 }
 
 impl AgentBridge {
@@ -110,6 +113,9 @@ impl AgentBridge {
         let hitl_storage = workspace.join(".qbit").join("hitl");
         let approval_recorder = Arc::new(ApprovalRecorder::new(hitl_storage).await);
 
+        // Create tool policy manager (loads from workspace/.qbit/tool-policy.json)
+        let tool_policy_manager = Arc::new(ToolPolicyManager::new(&workspace).await);
+
         Ok(Self {
             workspace: Arc::new(RwLock::new(workspace)),
             provider_name: provider.to_string(),
@@ -126,6 +132,7 @@ impl AgentBridge {
             session_persistence_enabled: Arc::new(RwLock::new(true)), // Enabled by default
             approval_recorder,
             pending_approvals: Arc::new(RwLock::new(HashMap::new())),
+            tool_policy_manager,
         })
     }
 
@@ -171,6 +178,9 @@ impl AgentBridge {
         let hitl_storage = workspace.join(".qbit").join("hitl");
         let approval_recorder = Arc::new(ApprovalRecorder::new(hitl_storage).await);
 
+        // Create tool policy manager (loads from workspace/.qbit/tool-policy.json)
+        let tool_policy_manager = Arc::new(ToolPolicyManager::new(&workspace).await);
+
         Ok(Self {
             workspace: Arc::new(RwLock::new(workspace)),
             provider_name: "anthropic_vertex".to_string(),
@@ -187,6 +197,7 @@ impl AgentBridge {
             session_persistence_enabled: Arc::new(RwLock::new(true)), // Enabled by default
             approval_recorder,
             pending_approvals: Arc::new(RwLock::new(HashMap::new())),
+            tool_policy_manager,
         })
     }
 
@@ -1594,6 +1605,12 @@ When to use sub-agents:
 
     /// Execute a tool with HITL approval check.
     /// This is the main entry point for tool execution during agent loops.
+    ///
+    /// Policy flow:
+    /// 1. Check if tool is denied by policy → return error immediately
+    /// 2. Apply constraints → return error if violated, possibly modify args
+    /// 3. Check if tool is allowed by policy → execute directly
+    /// 4. Otherwise, proceed to HITL approval flow
     async fn execute_with_hitl(
         &self,
         tool_name: &str,
@@ -1602,19 +1619,99 @@ When to use sub-agents:
         context: &SubAgentContext,
         model: &rig_anthropic_vertex::CompletionModel,
     ) -> Result<(serde_json::Value, bool)> {
-        // Check if tool should be auto-approved
+        // ================================================================
+        // Step 1: Check if tool is denied by policy
+        // ================================================================
+        if self.tool_policy_manager.is_denied(tool_name).await {
+            let _ = self.event_tx.send(AiEvent::ToolDenied {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: tool_args.clone(),
+                reason: "Tool is denied by policy".to_string(),
+            });
+            return Ok((
+                json!({
+                    "error": format!("Tool '{}' is denied by policy", tool_name),
+                    "denied_by_policy": true
+                }),
+                false,
+            ));
+        }
+
+        // ================================================================
+        // Step 2: Apply constraints and check for violations
+        // ================================================================
+        let (effective_args, constraint_note) = match self
+            .tool_policy_manager
+            .apply_constraints(tool_name, tool_args)
+            .await
+        {
+            PolicyConstraintResult::Allowed => (tool_args.clone(), None),
+            PolicyConstraintResult::Violated(reason) => {
+                let _ = self.event_tx.send(AiEvent::ToolDenied {
+                    request_id: tool_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args: tool_args.clone(),
+                    reason: reason.clone(),
+                });
+                return Ok((
+                    json!({
+                        "error": format!("Tool constraint violated: {}", reason),
+                        "constraint_violated": true
+                    }),
+                    false,
+                ));
+            }
+            PolicyConstraintResult::Modified(modified_args, note) => {
+                tracing::info!(
+                    "Tool '{}' args modified by constraint: {}",
+                    tool_name,
+                    note
+                );
+                (modified_args, Some(note))
+            }
+        };
+
+        // ================================================================
+        // Step 3: Check if tool is allowed by policy (bypasses HITL)
+        // ================================================================
+        let policy = self.tool_policy_manager.get_policy(tool_name).await;
+        if policy == ToolPolicy::Allow {
+            // Emit auto-approval event for UI notification
+            let reason = if let Some(note) = constraint_note {
+                format!("Allowed by policy ({})", note)
+            } else {
+                "Allowed by tool policy".to_string()
+            };
+            let _ = self.event_tx.send(AiEvent::ToolAutoApproved {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: effective_args.clone(),
+                reason,
+            });
+
+            // Execute directly without approval
+            return self
+                .execute_tool_direct(tool_name, &effective_args, context, model)
+                .await;
+        }
+
+        // ================================================================
+        // Step 4: Fall through to HITL approval system
+        // ================================================================
+        // Check if tool should be auto-approved based on learned patterns
         if self.approval_recorder.should_auto_approve(tool_name).await {
             // Emit auto-approval event for UI notification
             let _ = self.event_tx.send(AiEvent::ToolAutoApproved {
                 request_id: tool_id.to_string(),
                 tool_name: tool_name.to_string(),
-                args: tool_args.clone(),
+                args: effective_args.clone(),
                 reason: "Auto-approved based on learned patterns or always-allow list".to_string(),
             });
 
             // Execute directly without approval
             return self
-                .execute_tool_direct(tool_name, tool_args, context, model)
+                .execute_tool_direct(tool_name, &effective_args, context, model)
                 .await;
         }
 
@@ -1640,7 +1737,7 @@ When to use sub-agents:
         let _ = self.event_tx.send(AiEvent::ToolApprovalRequest {
             request_id: tool_id.to_string(),
             tool_name: tool_name.to_string(),
-            args: tool_args.clone(),
+            args: effective_args.clone(),
             stats,
             risk_level,
             can_learn,
@@ -1662,8 +1759,8 @@ When to use sub-agents:
                         )
                         .await;
 
-                    // Execute the tool
-                    self.execute_tool_direct(tool_name, tool_args, context, model)
+                    // Execute the tool with effective (possibly constrained) args
+                    self.execute_tool_direct(tool_name, &effective_args, context, model)
                         .await
                 } else {
                     // Record denial
@@ -1830,6 +1927,50 @@ When to use sub-agents:
         }
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Tool Policy Methods
+    // ========================================================================
+
+    /// Get the tool policy configuration.
+    pub async fn get_tool_policy_config(&self) -> ToolPolicyConfig {
+        self.tool_policy_manager.get_config().await
+    }
+
+    /// Set the tool policy configuration.
+    pub async fn set_tool_policy_config(&self, config: ToolPolicyConfig) -> Result<()> {
+        self.tool_policy_manager.set_config(config).await
+    }
+
+    /// Get the policy for a specific tool.
+    pub async fn get_tool_policy(&self, tool_name: &str) -> ToolPolicy {
+        self.tool_policy_manager.get_policy(tool_name).await
+    }
+
+    /// Set the policy for a specific tool.
+    pub async fn set_tool_policy(&self, tool_name: &str, policy: ToolPolicy) -> Result<()> {
+        self.tool_policy_manager.set_policy(tool_name, policy).await
+    }
+
+    /// Reset tool policies to defaults.
+    pub async fn reset_tool_policies(&self) -> Result<()> {
+        self.tool_policy_manager.reset_to_defaults().await
+    }
+
+    /// Enable full-auto mode with the given allowed tools.
+    pub async fn enable_full_auto_mode(&self, allowed_tools: Vec<String>) {
+        self.tool_policy_manager.enable_full_auto(allowed_tools).await;
+    }
+
+    /// Disable full-auto mode.
+    pub async fn disable_full_auto_mode(&self) {
+        self.tool_policy_manager.disable_full_auto().await;
+    }
+
+    /// Check if full-auto mode is enabled.
+    pub async fn is_full_auto_mode_enabled(&self) -> bool {
+        self.tool_policy_manager.is_full_auto_enabled().await
     }
 }
 
