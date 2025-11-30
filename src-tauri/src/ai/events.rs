@@ -109,4 +109,26 @@ pub enum AiEvent {
 
     /// Sub-agent encountered an error
     SubAgentError { agent_id: String, error: String },
+
+    // Context management events
+    /// Context was pruned due to token limits
+    ContextPruned {
+        messages_removed: usize,
+        utilization_before: f64,
+        utilization_after: f64,
+    },
+
+    /// Context warning threshold exceeded
+    ContextWarning {
+        utilization: f64,
+        total_tokens: usize,
+        max_tokens: usize,
+    },
+
+    /// Tool response was truncated due to size limits
+    ToolResponseTruncated {
+        tool_name: String,
+        original_tokens: usize,
+        truncated_tokens: usize,
+    },
 }
