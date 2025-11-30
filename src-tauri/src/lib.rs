@@ -135,6 +135,9 @@ pub fn run() {
             get_file_metrics,
             detect_language,
             shutdown_indexer,
+            // Prompt commands
+            list_prompts,
+            read_prompt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

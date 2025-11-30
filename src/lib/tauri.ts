@@ -56,3 +56,18 @@ export async function shellIntegrationInstall(): Promise<void> {
 export async function shellIntegrationUninstall(): Promise<void> {
   return invoke("shell_integration_uninstall");
 }
+
+// Prompt Commands
+export interface PromptInfo {
+  name: string;
+  path: string;
+  source: "global" | "local";
+}
+
+export async function listPrompts(workingDirectory?: string): Promise<PromptInfo[]> {
+  return invoke("list_prompts", { workingDirectory });
+}
+
+export async function readPrompt(path: string): Promise<string> {
+  return invoke("read_prompt", { path });
+}
