@@ -145,7 +145,7 @@ pub fn read_project_instructions(workspace_path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::path::PathBuf;
 
     #[test]
     fn test_build_system_prompt_contains_required_sections() {

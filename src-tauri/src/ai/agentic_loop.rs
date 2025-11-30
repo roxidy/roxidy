@@ -489,8 +489,8 @@ pub async fn run_agentic_loop(
                 .unwrap_or_else(|_| OneOrMany::one(chat_history[0].clone())),
             documents: vec![],
             tools: tools.clone(),
-            temperature: Some(0.7),
-            max_tokens: Some(8192),
+            temperature: Some(0.5),
+            max_tokens: Some(10_000),
             tool_choice: None,
             additional_params: None,
         };
@@ -572,17 +572,13 @@ pub async fn run_agentic_loop(
             }
 
             // Execute tool with HITL approval check
-            let result = match execute_with_hitl(
+            let result = execute_with_hitl(
                 tool_name, &tool_args, &tool_id, &context, model, ctx,
             )
-            .await
-            {
-                Ok(r) => r,
-                Err(e) => ToolExecutionResult {
-                    value: json!({ "error": e.to_string() }),
-                    success: false,
-                },
-            };
+                .await.unwrap_or_else(|e| ToolExecutionResult {
+                value: json!({ "error": e.to_string() }),
+                success: false,
+            });
 
             // Emit tool result event
             let _ = ctx.event_tx.send(AiEvent::ToolResult {

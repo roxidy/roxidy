@@ -33,7 +33,7 @@ pub struct ContextTrimConfig {
 impl Default for ContextTrimConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false, // Disabled by default
             target_utilization: 0.7,
             aggressive_on_critical: true,
             max_tool_response_tokens: 25_000,
@@ -123,7 +123,7 @@ impl ContextManager {
             token_budget: Arc::new(TokenBudgetManager::new(budget_config)),
             pruner: Arc::new(RwLock::new(ContextPruner::new(pruner_config))),
             trim_config,
-            token_budget_enabled: true,
+            token_budget_enabled: false, // Disabled by default
             last_efficiency: Arc::new(RwLock::new(None)),
             event_tx: None,
         }
@@ -496,7 +496,8 @@ mod tests {
     #[tokio::test]
     async fn test_context_manager_creation() {
         let manager = ContextManager::for_model("claude-3-5-sonnet");
-        assert!(manager.is_enabled());
+        // Context management is disabled by default
+        assert!(!manager.is_enabled());
         assert_eq!(manager.alert_level().await, TokenAlertLevel::Normal);
     }
 

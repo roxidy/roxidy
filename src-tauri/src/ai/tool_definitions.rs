@@ -22,6 +22,7 @@ pub fn get_standard_tool_definitions() -> Vec<ToolDefinition> {
         .map(|fd| {
             // Override description for run_pty_cmd to instruct agent not to repeat output
             let description = if fd.name == "run_pty_cmd" {
+                // TODO: we should undo this
                 format!(
                     "{}. IMPORTANT: The command output is displayed directly in the user's terminal. \
                      Do NOT repeat or summarize the command output in your response - the user can already see it. \
@@ -222,6 +223,8 @@ pub async fn get_sub_agent_tool_definitions(registry: &SubAgentRegistry) -> Vec<
         })
         .collect()
 }
+
+// TODO: we need to limit the tools and not use everything from vtcode's registry
 
 /// Get all tool definitions (standard + indexer).
 pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
