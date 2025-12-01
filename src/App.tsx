@@ -28,11 +28,6 @@ import { ptyCreate, shellIntegrationInstall, shellIntegrationStatus } from "./li
 import { ComponentTestbed } from "./pages/ComponentTestbed";
 import { clearConversation, restoreSession, useStore } from "./store";
 
-// ContentArea now just renders the unified timeline
-function ContentArea({ sessionId }: { sessionId: string }) {
-  return <UnifiedTimeline sessionId={sessionId} />;
-}
-
 function App() {
   const { addSession, activeSessionId, sessions, setInputMode, setAiConfig } = useStore();
   const [isLoading, setIsLoading] = useState(true);
@@ -385,7 +380,7 @@ function App() {
             <>
               {/* Scrollable content area - auto-scroll handled in UnifiedTimeline */}
               <div className="flex-1 min-w-0 overflow-auto bg-[#1a1b26]">
-                <ContentArea sessionId={activeSessionId} />
+                <UnifiedTimeline sessionId={activeSessionId} />
               </div>
 
               {/* Unified input at bottom */}

@@ -18,13 +18,9 @@ import { TruncatedOutput } from "@/components/TruncatedOutput";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { formatToolResult, isAgentTerminalCommand } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 import type { ToolCall } from "@/store";
-
-/** Check if this is a terminal command executed by the agent */
-function isAgentTerminalCommand(tool: ToolCall): boolean {
-  return (tool.name === "run_pty_cmd" || tool.name === "shell") && tool.executedByAgent === true;
-}
 
 interface ToolCallCardProps {
   tool: ToolCall;
@@ -142,14 +138,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
             {/* For agent terminal commands, show truncated output */}
             {isTerminalCmd ? (
               tool.result !== undefined ? (
-                <TruncatedOutput
-                  content={
-                    typeof tool.result === "string"
-                      ? tool.result
-                      : JSON.stringify(tool.result, null, 2)
-                  }
-                  maxLines={10}
-                />
+                <TruncatedOutput content={formatToolResult(tool.result)} maxLines={10} />
               ) : (
                 <p className="text-xs text-[#565f89] italic">No output captured</p>
               )
@@ -170,9 +159,7 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
                   <div>
                     <span className="text-xs text-[#565f89]">Result</span>
                     <pre className="mt-1 text-xs text-[#a9b1d6] bg-[#1a1b26] p-2 rounded overflow-x-auto max-h-40 scrollbar-thin whitespace-pre-wrap break-all">
-                      {typeof tool.result === "string"
-                        ? tool.result
-                        : JSON.stringify(tool.result, null, 2)}
+                      {formatToolResult(tool.result)}
                     </pre>
                   </div>
                 )}

@@ -4,7 +4,7 @@
 //! - vtcode-core (OpenRouter, OpenAI, etc.)
 //! - Anthropic on Vertex AI
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -58,49 +58,57 @@ pub struct AgentBridgeComponents {
     pub loop_detector: Arc<RwLock<LoopDetector>>,
 }
 
+/// Shared components that are common to all LLM providers.
+struct SharedComponents {
+    tool_registry: Arc<RwLock<ToolRegistry>>,
+    sub_agent_registry: Arc<RwLock<SubAgentRegistry>>,
+    approval_recorder: Arc<ApprovalRecorder>,
+    tool_policy_manager: Arc<ToolPolicyManager>,
+    context_manager: Arc<ContextManager>,
+    loop_detector: Arc<RwLock<LoopDetector>>,
+}
+
+/// Initialize shared components from a workspace path and model name.
+async fn create_shared_components(workspace: &Path, model: &str) -> SharedComponents {
+    SharedComponents {
+        tool_registry: Arc::new(RwLock::new(
+            ToolRegistry::new(workspace.to_path_buf()).await,
+        )),
+        sub_agent_registry: Arc::new(RwLock::new(SubAgentRegistry::new())),
+        approval_recorder: Arc::new(
+            ApprovalRecorder::new(workspace.join(".qbit").join("hitl")).await,
+        ),
+        tool_policy_manager: Arc::new(ToolPolicyManager::new(workspace).await),
+        context_manager: Arc::new(ContextManager::for_model(model)),
+        loop_detector: Arc::new(RwLock::new(LoopDetector::with_defaults())),
+    }
+}
+
 /// Create components for a vtcode-core based client.
 pub async fn create_vtcode_components(
     config: VtcodeClientConfig<'_>,
 ) -> Result<AgentBridgeComponents> {
-    // Create the model ID using FromStr trait
     let model_id = vtcode_core::config::models::ModelId::from_str(config.model)
         .map_err(|e| anyhow::anyhow!("Invalid model ID '{}': {}", config.model, e))?;
 
-    // Create LLM client
     let client = Arc::new(RwLock::new(LlmClient::Vtcode(make_client(
         config.api_key.to_string(),
         model_id,
     ))));
 
-    // Create tool registry (async)
-    let tool_registry = Arc::new(RwLock::new(
-        ToolRegistry::new(config.workspace.clone()).await,
-    ));
-
-    // Create empty sub-agent registry (sub-agents disabled for main agent)
-    let sub_agent_registry = SubAgentRegistry::new();
-
-    // Create HITL approval recorder (stores in workspace/.qbit/hitl/)
-    let hitl_storage = config.workspace.join(".qbit").join("hitl");
-    let approval_recorder = Arc::new(ApprovalRecorder::new(hitl_storage).await);
-
-    // Create tool policy manager (loads from workspace/.qbit/tool-policy.json)
-    let tool_policy_manager = Arc::new(ToolPolicyManager::new(&config.workspace).await);
-
-    // Create context manager for token budgeting
-    let context_manager = ContextManager::for_model(config.model);
+    let shared = create_shared_components(&config.workspace, config.model).await;
 
     Ok(AgentBridgeComponents {
         workspace: Arc::new(RwLock::new(config.workspace)),
         provider_name: config.provider.to_string(),
         model_name: config.model.to_string(),
-        tool_registry,
+        tool_registry: shared.tool_registry,
         client,
-        sub_agent_registry: Arc::new(RwLock::new(sub_agent_registry)),
-        approval_recorder,
-        tool_policy_manager,
-        context_manager: Arc::new(context_manager),
-        loop_detector: Arc::new(RwLock::new(LoopDetector::with_defaults())),
+        sub_agent_registry: shared.sub_agent_registry,
+        approval_recorder: shared.approval_recorder,
+        tool_policy_manager: shared.tool_policy_manager,
+        context_manager: shared.context_manager,
+        loop_detector: shared.loop_detector,
     })
 }
 
@@ -108,7 +116,6 @@ pub async fn create_vtcode_components(
 pub async fn create_vertex_components(
     config: VertexAnthropicClientConfig<'_>,
 ) -> Result<AgentBridgeComponents> {
-    // Create Vertex AI client
     let vertex_client = rig_anthropic_vertex::Client::from_service_account(
         config.credentials_path,
         config.project_id,
@@ -117,41 +124,23 @@ pub async fn create_vertex_components(
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create Vertex AI client: {}", e))?;
 
-    // Create completion model with extended thinking enabled
-    // Opus 4.5 and other modern Claude models support extended thinking
-    // Using 16,000 token budget for thinking (minimum is 1,024)
+    // Enable extended thinking with 16,000 token budget (minimum is 1,024)
     let completion_model = vertex_client
         .completion_model(config.model)
         .with_thinking(16_000);
 
-    // Create tool registry (async)
-    let tool_registry = Arc::new(RwLock::new(
-        ToolRegistry::new(config.workspace.clone()).await,
-    ));
-
-    // Create empty sub-agent registry (sub-agents disabled for main agent)
-    let sub_agent_registry = SubAgentRegistry::new();
-
-    // Create HITL approval recorder (stores in workspace/.qbit/hitl/)
-    let hitl_storage = config.workspace.join(".qbit").join("hitl");
-    let approval_recorder = Arc::new(ApprovalRecorder::new(hitl_storage).await);
-
-    // Create tool policy manager (loads from workspace/.qbit/tool-policy.json)
-    let tool_policy_manager = Arc::new(ToolPolicyManager::new(&config.workspace).await);
-
-    // Create context manager for token budgeting
-    let context_manager = ContextManager::for_model(config.model);
+    let shared = create_shared_components(&config.workspace, config.model).await;
 
     Ok(AgentBridgeComponents {
         workspace: Arc::new(RwLock::new(config.workspace)),
         provider_name: "anthropic_vertex".to_string(),
         model_name: config.model.to_string(),
-        tool_registry,
+        tool_registry: shared.tool_registry,
         client: Arc::new(RwLock::new(LlmClient::VertexAnthropic(completion_model))),
-        sub_agent_registry: Arc::new(RwLock::new(sub_agent_registry)),
-        approval_recorder,
-        tool_policy_manager,
-        context_manager: Arc::new(context_manager),
-        loop_detector: Arc::new(RwLock::new(LoopDetector::with_defaults())),
+        sub_agent_registry: shared.sub_agent_registry,
+        approval_recorder: shared.approval_recorder,
+        tool_policy_manager: shared.tool_policy_manager,
+        context_manager: shared.context_manager,
+        loop_detector: shared.loop_detector,
     })
 }

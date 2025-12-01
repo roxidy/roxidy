@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 interface SlashCommandPopupProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  searchQuery: string;
+  /** Already-filtered prompts to display */
   prompts: PromptInfo[];
   selectedIndex: number;
   onSelect: (prompt: PromptInfo) => void;
@@ -17,21 +17,12 @@ interface SlashCommandPopupProps {
 export function SlashCommandPopup({
   open,
   onOpenChange,
-  searchQuery,
   prompts,
   selectedIndex,
   onSelect,
   children,
 }: SlashCommandPopupProps) {
   const listRef = useRef<HTMLDivElement>(null);
-
-  // Filter prompts based on search query
-  const filteredPrompts = prompts.filter((prompt) =>
-    prompt.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  // All filtered prompts are visible (scrollable)
-  const visiblePrompts = filteredPrompts;
 
   // Scroll selected item into view
   useEffect(() => {
@@ -55,11 +46,11 @@ export function SlashCommandPopup({
           ref={listRef}
           className="bg-[#1a1b26] border border-[#1f2335] rounded-md overflow-hidden"
         >
-          {visiblePrompts.length === 0 ? (
+          {prompts.length === 0 ? (
             <div className="py-3 text-center text-sm text-[#565f89]">No prompts found</div>
           ) : (
             <div className="max-h-[200px] overflow-y-auto py-1" role="listbox">
-              {visiblePrompts.map((prompt, index) => (
+              {prompts.map((prompt, index) => (
                 <div
                   key={prompt.path}
                   role="option"

@@ -279,37 +279,36 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
         return;
       }
 
+      // History navigation - shared between terminal and agent modes
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (history.length > 0) {
+          const newIndex = historyIndex < history.length - 1 ? historyIndex + 1 : historyIndex;
+          setHistoryIndex(newIndex);
+          setInput(history[history.length - 1 - newIndex] || "");
+        }
+        return;
+      }
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (historyIndex > 0) {
+          const newIndex = historyIndex - 1;
+          setHistoryIndex(newIndex);
+          setInput(history[history.length - 1 - newIndex] || "");
+        } else if (historyIndex === 0) {
+          setHistoryIndex(-1);
+          setInput("");
+        }
+        return;
+      }
+
       // Terminal-specific shortcuts
       if (inputMode === "terminal") {
         // Handle Tab - send to PTY for completion
         if (e.key === "Tab") {
           e.preventDefault();
           await ptyWrite(sessionId, "\t");
-          return;
-        }
-
-        // Handle Up arrow - history navigation
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          if (history.length > 0) {
-            const newIndex = historyIndex < history.length - 1 ? historyIndex + 1 : historyIndex;
-            setHistoryIndex(newIndex);
-            setInput(history[history.length - 1 - newIndex] || "");
-          }
-          return;
-        }
-
-        // Handle Down arrow - history navigation
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          if (historyIndex > 0) {
-            const newIndex = historyIndex - 1;
-            setHistoryIndex(newIndex);
-            setInput(history[history.length - 1 - newIndex] || "");
-          } else if (historyIndex === 0) {
-            setHistoryIndex(-1);
-            setInput("");
-          }
           return;
         }
 
@@ -332,33 +331,6 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
         if (e.ctrlKey && e.key === "l") {
           e.preventDefault();
           await ptyWrite(sessionId, "\x0c");
-          return;
-        }
-      }
-
-      // Agent-specific shortcuts
-      if (inputMode === "agent") {
-        // Up/Down for history in agent mode too
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          if (history.length > 0) {
-            const newIndex = historyIndex < history.length - 1 ? historyIndex + 1 : historyIndex;
-            setHistoryIndex(newIndex);
-            setInput(history[history.length - 1 - newIndex] || "");
-          }
-          return;
-        }
-
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          if (historyIndex > 0) {
-            const newIndex = historyIndex - 1;
-            setHistoryIndex(newIndex);
-            setInput(history[history.length - 1 - newIndex] || "");
-          } else if (historyIndex === 0) {
-            setHistoryIndex(-1);
-            setInput("");
-          }
           return;
         }
       }
@@ -389,8 +361,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
         <SlashCommandPopup
           open={showSlashPopup}
           onOpenChange={setShowSlashPopup}
-          searchQuery={slashQuery}
-          prompts={prompts}
+          prompts={filteredSlashPrompts}
           selectedIndex={slashSelectedIndex}
           onSelect={handleSlashSelect}
         >

@@ -10,24 +10,12 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { TruncatedOutput } from "@/components/TruncatedOutput";
+import { formatToolName, formatToolResult, isAgentTerminalCommand } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 import type { ActiveToolCall } from "@/store";
 
-/** Check if this is a terminal command executed by the agent */
-function isAgentTerminalCommand(tool: ActiveToolCall): boolean {
-  return (tool.name === "run_pty_cmd" || tool.name === "shell") && tool.executedByAgent === true;
-}
-
 interface ToolCallDisplayProps {
   toolCalls: ActiveToolCall[];
-}
-
-/** Format tool name for display (e.g., "read_file" -> "Read File") */
-function formatToolName(name: string): string {
-  return name
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 /** Single tool call item with collapsible details */
@@ -85,12 +73,7 @@ function ToolCallItem({ tool }: { tool: ActiveToolCall }) {
       {isTerminalCmd ? (
         <div className="px-3 pb-2">
           {tool.result !== undefined && tool.status !== "running" ? (
-            <TruncatedOutput
-              content={
-                typeof tool.result === "string" ? tool.result : JSON.stringify(tool.result, null, 2)
-              }
-              maxLines={10}
-            />
+            <TruncatedOutput content={formatToolResult(tool.result)} maxLines={10} />
           ) : (
             <span className="text-[10px] text-[#565f89] italic">
               {tool.status === "running" ? "Running..." : "Awaiting output"}
@@ -122,9 +105,7 @@ function ToolCallItem({ tool }: { tool: ActiveToolCall }) {
                     tool.status === "error" ? "text-[#f7768e]" : "text-[#9aa5ce]"
                   )}
                 >
-                  {typeof tool.result === "string"
-                    ? tool.result
-                    : JSON.stringify(tool.result, null, 2)}
+                  {formatToolResult(tool.result)}
                 </pre>
               </div>
             )}
