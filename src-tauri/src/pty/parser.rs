@@ -15,6 +15,57 @@ pub enum OscEvent {
     DirectoryChanged { path: String },
 }
 
+impl OscEvent {
+    /// Convert to a tuple of (event_name, CommandBlockEvent) for emission.
+    /// Returns None for DirectoryChanged events (handled separately).
+    pub fn to_command_block_event(
+        self,
+        session_id: &str,
+    ) -> Option<(&'static str, super::manager::CommandBlockEvent)> {
+        use super::manager::CommandBlockEvent;
+
+        Some(match self {
+            OscEvent::PromptStart => (
+                "command_block",
+                CommandBlockEvent {
+                    session_id: session_id.to_string(),
+                    command: None,
+                    exit_code: None,
+                    event_type: "prompt_start".to_string(),
+                },
+            ),
+            OscEvent::PromptEnd => (
+                "command_block",
+                CommandBlockEvent {
+                    session_id: session_id.to_string(),
+                    command: None,
+                    exit_code: None,
+                    event_type: "prompt_end".to_string(),
+                },
+            ),
+            OscEvent::CommandStart { command } => (
+                "command_block",
+                CommandBlockEvent {
+                    session_id: session_id.to_string(),
+                    command,
+                    exit_code: None,
+                    event_type: "command_start".to_string(),
+                },
+            ),
+            OscEvent::CommandEnd { exit_code } => (
+                "command_block",
+                CommandBlockEvent {
+                    session_id: session_id.to_string(),
+                    command: None,
+                    exit_code: Some(exit_code),
+                    event_type: "command_end".to_string(),
+                },
+            ),
+            OscEvent::DirectoryChanged { .. } => return None,
+        })
+    }
+}
+
 /// Terminal output parser that extracts OSC sequences
 pub struct TerminalParser {
     parser: Parser,

@@ -41,6 +41,12 @@ use crate::tavily::TavilyState;
 /// Maximum number of tool call iterations before stopping
 pub const MAX_TOOL_ITERATIONS: usize = 100;
 
+/// Timeout for approval requests in seconds (5 minutes)
+pub const APPROVAL_TIMEOUT_SECS: u64 = 300;
+
+/// Maximum tokens for a single completion request
+pub const MAX_COMPLETION_TOKENS: i32 = 10_000;
+
 /// Context for the agentic loop execution.
 pub struct AgenticLoopContext<'a> {
     pub event_tx: &'a mpsc::UnboundedSender<AiEvent>,
@@ -176,8 +182,8 @@ pub async fn execute_with_hitl(
         suggestion,
     });
 
-    // Wait for approval response (with timeout of 5 minutes)
-    match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+    // Wait for approval response (with timeout)
+    match tokio::time::timeout(std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS), rx).await {
         Ok(Ok(decision)) => {
             if decision.approved {
                 let _ = ctx
@@ -207,7 +213,7 @@ pub async fn execute_with_hitl(
             pending.remove(tool_id);
 
             Ok(ToolExecutionResult {
-                value: json!({"error": "Approval request timed out after 5 minutes", "timeout": true}),
+                value: json!({"error": format!("Approval request timed out after {} seconds", APPROVAL_TIMEOUT_SECS), "timeout": true}),
                 success: false,
             })
         }
@@ -478,7 +484,7 @@ pub async fn run_agentic_loop(
             documents: vec![],
             tools: tools.clone(),
             temperature: Some(0.5),
-            max_tokens: Some(10_000),
+            max_tokens: Some(MAX_COMPLETION_TOKENS),
             tool_choice: None,
             additional_params: None,
         };

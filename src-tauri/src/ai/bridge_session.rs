@@ -48,29 +48,33 @@ impl AgentBridge {
         }
     }
 
+    /// Execute an operation with the session manager if available.
+    async fn with_session_manager<F>(&self, f: F)
+    where
+        F: FnOnce(&mut QbitSessionManager),
+    {
+        let mut guard = self.session_manager.write().await;
+        if let Some(ref mut manager) = *guard {
+            f(manager);
+        }
+    }
+
     /// Record a user message in the current session.
     pub(crate) async fn record_user_message(&self, content: &str) {
-        let mut manager_guard = self.session_manager.write().await;
-        if let Some(ref mut manager) = *manager_guard {
-            manager.add_user_message(content);
-        }
+        self.with_session_manager(|m| m.add_user_message(content))
+            .await;
     }
 
     /// Record an assistant message in the current session.
     pub(crate) async fn record_assistant_message(&self, content: &str) {
-        let mut manager_guard = self.session_manager.write().await;
-        if let Some(ref mut manager) = *manager_guard {
-            manager.add_assistant_message(content);
-        }
+        self.with_session_manager(|m| m.add_assistant_message(content))
+            .await;
     }
 
     /// Record a tool use in the current session.
-    #[allow(dead_code)]
     pub(crate) async fn record_tool_use(&self, tool_name: &str, result: &str) {
-        let mut manager_guard = self.session_manager.write().await;
-        if let Some(ref mut manager) = *manager_guard {
-            manager.add_tool_use(tool_name, result);
-        }
+        self.with_session_manager(|m| m.add_tool_use(tool_name, result))
+            .await;
     }
 
     /// Save the current session to disk.

@@ -146,26 +146,39 @@ impl AgentBridge {
         components: AgentBridgeComponents,
         event_tx: mpsc::UnboundedSender<AiEvent>,
     ) -> Self {
+        let AgentBridgeComponents {
+            workspace,
+            provider_name,
+            model_name,
+            tool_registry,
+            client,
+            sub_agent_registry,
+            approval_recorder,
+            tool_policy_manager,
+            context_manager,
+            loop_detector,
+        } = components;
+
         Self {
-            workspace: components.workspace,
-            provider_name: components.provider_name,
-            model_name: components.model_name,
-            tool_registry: components.tool_registry,
-            client: components.client,
+            workspace,
+            provider_name,
+            model_name,
+            tool_registry,
+            client,
             event_tx,
-            sub_agent_registry: components.sub_agent_registry,
+            sub_agent_registry,
             pty_manager: None,
-            current_session_id: Arc::new(RwLock::new(None)),
-            conversation_history: Arc::new(RwLock::new(Vec::new())),
+            current_session_id: Default::default(),
+            conversation_history: Default::default(),
             indexer_state: None,
             tavily_state: None,
-            session_manager: Arc::new(RwLock::new(None)),
+            session_manager: Default::default(),
             session_persistence_enabled: Arc::new(RwLock::new(true)),
-            approval_recorder: components.approval_recorder,
-            pending_approvals: Arc::new(RwLock::new(HashMap::new())),
-            tool_policy_manager: components.tool_policy_manager,
-            context_manager: components.context_manager,
-            loop_detector: components.loop_detector,
+            approval_recorder,
+            pending_approvals: Default::default(),
+            tool_policy_manager,
+            context_manager,
+            loop_detector,
             tool_config: ToolConfig::main_agent(),
         }
     }
@@ -190,7 +203,6 @@ impl AgentBridge {
     }
 
     /// Set the tool configuration for filtering available tools
-    #[allow(dead_code)] // Public API for external configuration
     pub fn set_tool_config(&mut self, tool_config: ToolConfig) {
         self.tool_config = tool_config;
     }
@@ -207,19 +219,16 @@ impl AgentBridge {
     }
 
     /// Get the workspace path.
-    #[allow(dead_code)]
     pub async fn workspace(&self) -> PathBuf {
         self.workspace.read().await.clone()
     }
 
     /// Get provider name.
-    #[allow(dead_code)]
     pub fn provider(&self) -> &str {
         &self.provider_name
     }
 
     /// Get model name.
-    #[allow(dead_code)]
     pub fn model(&self) -> &str {
         &self.model_name
     }
@@ -260,41 +269,9 @@ impl AgentBridge {
         let client = self.client.read().await;
 
         match &*client {
-            LlmClient::Vtcode(_vtcode_client) => {
+            LlmClient::Vtcode(_) => {
                 drop(client);
-                let mut client = self.client.write().await;
-                if let LlmClient::Vtcode(vtcode_client) = &mut *client {
-                    let result = vtcode_client
-                        .generate(prompt)
-                        .await
-                        .map(|r| r.content)
-                        .map_err(|e| anyhow::anyhow!("{}", e));
-
-                    match result {
-                        Ok(content) => {
-                            let duration_ms = start_time.elapsed().as_millis() as u64;
-                            let _ = self.event_tx.send(AiEvent::TextDelta {
-                                delta: content.clone(),
-                                accumulated: content.clone(),
-                            });
-                            let _ = self.event_tx.send(AiEvent::Completed {
-                                response: content.clone(),
-                                tokens_used: None,
-                                duration_ms: Some(duration_ms),
-                            });
-                            Ok(content)
-                        }
-                        Err(e) => {
-                            let _ = self.event_tx.send(AiEvent::Error {
-                                message: e.to_string(),
-                                error_type: "llm_error".to_string(),
-                            });
-                            Err(e)
-                        }
-                    }
-                } else {
-                    Err(anyhow::anyhow!("Client type mismatch"))
-                }
+                self.execute_with_vtcode(prompt, start_time).await
             }
             LlmClient::VertexAnthropic(vertex_model) => {
                 let vertex_model = vertex_model.clone();
@@ -302,6 +279,47 @@ impl AgentBridge {
 
                 self.execute_with_vertex_model(&vertex_model, prompt, start_time, context)
                     .await
+            }
+        }
+    }
+
+    /// Execute with vtcode-core client.
+    async fn execute_with_vtcode(
+        &self,
+        prompt: &str,
+        start_time: std::time::Instant,
+    ) -> Result<String> {
+        let mut client = self.client.write().await;
+        let LlmClient::Vtcode(vtcode_client) = &mut *client else {
+            unreachable!("execute_with_vtcode called with non-vtcode client");
+        };
+
+        let result = vtcode_client
+            .generate(prompt)
+            .await
+            .map(|r| r.content)
+            .map_err(|e| anyhow::anyhow!("{}", e));
+
+        match result {
+            Ok(content) => {
+                let duration_ms = start_time.elapsed().as_millis() as u64;
+                let _ = self.event_tx.send(AiEvent::TextDelta {
+                    delta: content.clone(),
+                    accumulated: content.clone(),
+                });
+                let _ = self.event_tx.send(AiEvent::Completed {
+                    response: content.clone(),
+                    tokens_used: None,
+                    duration_ms: Some(duration_ms),
+                });
+                Ok(content)
+            }
+            Err(e) => {
+                let _ = self.event_tx.send(AiEvent::Error {
+                    message: e.to_string(),
+                    error_type: "llm_error".to_string(),
+                });
+                Err(e)
             }
         }
     }
@@ -409,21 +427,18 @@ impl AgentBridge {
     // ========================================================================
 
     /// Register a new sub-agent.
-    #[allow(dead_code)]
     pub async fn register_sub_agent(&self, agent: SubAgentDefinition) {
         let mut registry = self.sub_agent_registry.write().await;
         registry.register(agent);
     }
 
     /// Remove a sub-agent by ID.
-    #[allow(dead_code)]
     pub async fn unregister_sub_agent(&self, agent_id: &str) -> Option<SubAgentDefinition> {
         let mut registry = self.sub_agent_registry.write().await;
         registry.remove(agent_id)
     }
 
     /// Get list of registered sub-agents.
-    #[allow(dead_code)]
     pub async fn list_sub_agents(&self) -> Vec<serde_json::Value> {
         let registry = self.sub_agent_registry.read().await;
         registry
@@ -441,7 +456,6 @@ impl AgentBridge {
     }
 
     /// Check if a sub-agent exists.
-    #[allow(dead_code)]
     pub async fn has_sub_agent(&self, agent_id: &str) -> bool {
         let registry = self.sub_agent_registry.read().await;
         registry.contains(agent_id)

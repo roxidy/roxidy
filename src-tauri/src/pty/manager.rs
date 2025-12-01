@@ -41,7 +41,6 @@ pub struct DirectoryChangedEvent {
 }
 
 struct ActiveSession {
-    #[allow(dead_code)]
     child: Mutex<Box<dyn Child + Send + Sync>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -169,61 +168,19 @@ impl PtyManager {
                         let events = parser.parse(data);
 
                         for event in events {
-                            match event {
-                                OscEvent::PromptStart => {
-                                    let _ = reader_app_handle.emit(
-                                        "command_block",
-                                        CommandBlockEvent {
-                                            session_id: reader_session_id.clone(),
-                                            command: None,
-                                            exit_code: None,
-                                            event_type: "prompt_start".to_string(),
-                                        },
-                                    );
-                                }
-                                OscEvent::PromptEnd => {
-                                    let _ = reader_app_handle.emit(
-                                        "command_block",
-                                        CommandBlockEvent {
-                                            session_id: reader_session_id.clone(),
-                                            command: None,
-                                            exit_code: None,
-                                            event_type: "prompt_end".to_string(),
-                                        },
-                                    );
-                                }
-                                OscEvent::CommandStart { command } => {
-                                    let _ = reader_app_handle.emit(
-                                        "command_block",
-                                        CommandBlockEvent {
-                                            session_id: reader_session_id.clone(),
-                                            command,
-                                            exit_code: None,
-                                            event_type: "command_start".to_string(),
-                                        },
-                                    );
-                                }
-                                OscEvent::CommandEnd { exit_code } => {
-                                    let _ = reader_app_handle.emit(
-                                        "command_block",
-                                        CommandBlockEvent {
-                                            session_id: reader_session_id.clone(),
-                                            command: None,
-                                            exit_code: Some(exit_code),
-                                            event_type: "command_end".to_string(),
-                                        },
-                                    );
-                                }
-                                OscEvent::DirectoryChanged { path } => {
-                                    tracing::info!("[cwd-sync] Emitting directory_changed event: session={}, path={}", reader_session_id, path);
-                                    let _ = reader_app_handle.emit(
-                                        "directory_changed",
-                                        DirectoryChangedEvent {
-                                            session_id: reader_session_id.clone(),
-                                            path,
-                                        },
-                                    );
-                                }
+                            // Emit command block events using the helper method
+                            if let Some((event_name, payload)) = event.to_command_block_event(&reader_session_id) {
+                                let _ = reader_app_handle.emit(event_name, payload);
+                            } else if let OscEvent::DirectoryChanged { path } = &event {
+                                // Handle DirectoryChanged events separately
+                                tracing::info!("[cwd-sync] Emitting directory_changed event: session={}, path={}", reader_session_id, path);
+                                let _ = reader_app_handle.emit(
+                                    "directory_changed",
+                                    DirectoryChangedEvent {
+                                        session_id: reader_session_id.clone(),
+                                        path: path.clone(),
+                                    },
+                                );
                             }
                         }
 

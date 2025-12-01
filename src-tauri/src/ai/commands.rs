@@ -39,7 +39,7 @@ impl AiState {
     /// Execute a closure with access to the bridge reference.
     ///
     /// This helper eliminates the two-step pattern of `get_bridge().await?.as_ref().unwrap()`.
-    /// Only use for synchronous operations. For async operations, use `get_bridge()` directly.
+    /// Only use for synchronous operations. For async operations, use `with_bridge_async()`.
     pub async fn with_bridge<F, T>(&self, f: F) -> Result<T, String>
     where
         F: FnOnce(&AgentBridge) -> T,
@@ -47,6 +47,20 @@ impl AiState {
         let guard = self.bridge.read().await;
         let bridge = guard.as_ref().ok_or(AI_NOT_INITIALIZED_ERROR)?;
         Ok(f(bridge))
+    }
+
+    /// Execute an async operation with access to the bridge reference.
+    ///
+    /// This helper eliminates the two-step pattern of `get_bridge().await?.as_ref().unwrap()`
+    /// for async operations that need to await on bridge methods.
+    pub async fn with_bridge_async<F, Fut, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce(&AgentBridge) -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let guard = self.bridge.read().await;
+        let bridge = guard.as_ref().ok_or(AI_NOT_INITIALIZED_ERROR)?;
+        Ok(f(bridge).await)
     }
 }
 
@@ -199,9 +213,10 @@ pub async fn execute_ai_tool(
 pub async fn get_available_tools(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.available_tools().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.available_tools())
+        .await
 }
 
 /// Shutdown the AI agent and cleanup resources.
@@ -343,20 +358,23 @@ pub fn get_vertex_ai_config() -> VertexAiEnvConfig {
 /// Call this when starting a new conversation or when the user wants to reset context.
 #[tauri::command]
 pub async fn clear_ai_conversation(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    bridge.clear_conversation_history().await;
-    tracing::info!("AI conversation history cleared");
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.clear_conversation_history().await;
+            tracing::info!("AI conversation history cleared");
+        })
+        .await
 }
 
 /// Get the current conversation history length.
 /// Useful for debugging or showing context status in the UI.
 #[tauri::command]
 pub async fn get_ai_conversation_length(state: State<'_, AppState>) -> Result<usize, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.conversation_history_len().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.conversation_history_len())
+        .await
 }
 
 // ============================================================================
@@ -406,20 +424,19 @@ pub async fn set_ai_session_persistence(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge.set_session_persistence_enabled(enabled).await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.set_session_persistence_enabled(enabled))
+        .await
 }
 
 /// Check if session persistence is enabled.
 #[tauri::command]
 pub async fn is_ai_session_persistence_enabled(state: State<'_, AppState>) -> Result<bool, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    Ok(bridge.is_session_persistence_enabled().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.is_session_persistence_enabled())
+        .await
 }
 
 /// Manually finalize and save the current session.
@@ -427,11 +444,12 @@ pub async fn is_ai_session_persistence_enabled(state: State<'_, AppState>) -> Re
 /// Returns the path to the saved session file, if any.
 #[tauri::command]
 pub async fn finalize_ai_session(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    let path = bridge.finalize_session().await;
-    Ok(path.map(|p| p.display().to_string()))
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.finalize_session().await.map(|p| p.display().to_string())
+        })
+        .await
 }
 
 /// Export a session transcript to a file.
@@ -532,11 +550,10 @@ use super::hitl::{ApprovalDecision, ApprovalPattern, ToolApprovalConfig};
 pub async fn get_approval_patterns(
     state: State<'_, AppState>,
 ) -> Result<Vec<ApprovalPattern>, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    let patterns = bridge.get_approval_patterns().await;
-    Ok(patterns)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_approval_patterns())
+        .await
 }
 
 /// Get the approval pattern for a specific tool.
@@ -545,21 +562,19 @@ pub async fn get_tool_approval_pattern(
     state: State<'_, AppState>,
     tool_name: String,
 ) -> Result<Option<ApprovalPattern>, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    let pattern = bridge.get_tool_approval_pattern(&tool_name).await;
-    Ok(pattern)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_tool_approval_pattern(&tool_name))
+        .await
 }
 
 /// Get the HITL configuration.
 #[tauri::command]
 pub async fn get_hitl_config(state: State<'_, AppState>) -> Result<ToolApprovalConfig, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    let config = bridge.get_hitl_config().await;
-    Ok(config)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_hitl_config())
+        .await
 }
 
 /// Update the HITL configuration.
@@ -568,13 +583,10 @@ pub async fn set_hitl_config(
     state: State<'_, AppState>,
     config: ToolApprovalConfig,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .set_hitl_config(config)
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async { b.set_hitl_config(config).await.map_err(|e| e.to_string()) })
+        .await?
 }
 
 /// Add a tool to the always-allow list.
@@ -583,13 +595,14 @@ pub async fn add_tool_always_allow(
     state: State<'_, AppState>,
     tool_name: String,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .add_tool_always_allow(&tool_name)
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.add_tool_always_allow(&tool_name)
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await?
 }
 
 /// Remove a tool from the always-allow list.
@@ -598,25 +611,27 @@ pub async fn remove_tool_always_allow(
     state: State<'_, AppState>,
     tool_name: String,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .remove_tool_always_allow(&tool_name)
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.remove_tool_always_allow(&tool_name)
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await?
 }
 
 /// Reset all approval patterns (does not reset configuration).
 #[tauri::command]
 pub async fn reset_approval_patterns(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .reset_approval_patterns()
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.reset_approval_patterns()
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await?
 }
 
 /// Respond to a tool approval request.
@@ -627,13 +642,14 @@ pub async fn respond_to_tool_approval(
     state: State<'_, AppState>,
     decision: ApprovalDecision,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .respond_to_approval(decision)
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.respond_to_approval(decision)
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await?
 }
 
 // ============================================================================
@@ -647,11 +663,10 @@ use super::tool_policy::{ToolPolicy, ToolPolicyConfig};
 pub async fn get_tool_policy_config(
     state: State<'_, AppState>,
 ) -> Result<ToolPolicyConfig, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    let config = bridge.get_tool_policy_config().await;
-    Ok(config)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_tool_policy_config())
+        .await
 }
 
 /// Update the tool policy configuration.
@@ -660,13 +675,14 @@ pub async fn set_tool_policy_config(
     state: State<'_, AppState>,
     config: ToolPolicyConfig,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .set_tool_policy_config(config)
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.set_tool_policy_config(config)
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await?
 }
 
 /// Get the policy for a specific tool.
@@ -675,11 +691,10 @@ pub async fn get_tool_policy(
     state: State<'_, AppState>,
     tool_name: String,
 ) -> Result<ToolPolicy, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    let policy = bridge.get_tool_policy(&tool_name).await;
-    Ok(policy)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_tool_policy(&tool_name))
+        .await
 }
 
 /// Set the policy for a specific tool.
@@ -689,25 +704,27 @@ pub async fn set_tool_policy(
     tool_name: String,
     policy: ToolPolicy,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .set_tool_policy(&tool_name, policy)
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.set_tool_policy(&tool_name, policy)
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await?
 }
 
 /// Reset tool policies to defaults.
 #[tauri::command]
 pub async fn reset_tool_policies(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge
-        .reset_tool_policies()
-        .await
-        .map_err(|e| e.to_string())
+    state
+        .ai_state
+        .with_bridge_async(|b| async {
+            b.reset_tool_policies()
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await?
 }
 
 /// Enable full-auto mode for tool execution.
@@ -718,30 +735,28 @@ pub async fn enable_full_auto_mode(
     state: State<'_, AppState>,
     allowed_tools: Vec<String>,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge.enable_full_auto_mode(allowed_tools).await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.enable_full_auto_mode(allowed_tools))
+        .await
 }
 
 /// Disable full-auto mode for tool execution.
 #[tauri::command]
 pub async fn disable_full_auto_mode(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    bridge.disable_full_auto_mode().await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.disable_full_auto_mode())
+        .await
 }
 
 /// Check if full-auto mode is enabled.
 #[tauri::command]
 pub async fn is_full_auto_mode_enabled(state: State<'_, AppState>) -> Result<bool, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    Ok(bridge.is_full_auto_mode_enabled().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.is_full_auto_mode_enabled())
+        .await
 }
 
 // ============================================================================
@@ -754,60 +769,66 @@ use super::token_budget::{TokenAlertLevel, TokenUsageStats};
 /// Get the current context summary including token usage and alert level.
 #[tauri::command]
 pub async fn get_context_summary(state: State<'_, AppState>) -> Result<ContextSummary, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.get_context_summary().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_context_summary())
+        .await
 }
 
 /// Get detailed token usage statistics.
 #[tauri::command]
 pub async fn get_token_usage_stats(state: State<'_, AppState>) -> Result<TokenUsageStats, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.get_token_usage_stats().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_token_usage_stats())
+        .await
 }
 
 /// Get the current token alert level.
 #[tauri::command]
 pub async fn get_token_alert_level(state: State<'_, AppState>) -> Result<TokenAlertLevel, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.get_token_alert_level().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_token_alert_level())
+        .await
 }
 
 /// Get the context utilization percentage (0.0 - 1.0+).
 #[tauri::command]
 pub async fn get_context_utilization(state: State<'_, AppState>) -> Result<f64, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.get_context_utilization().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_context_utilization())
+        .await
 }
 
 /// Get remaining available tokens in the context window.
 #[tauri::command]
 pub async fn get_remaining_tokens(state: State<'_, AppState>) -> Result<usize, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.get_remaining_tokens().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_remaining_tokens())
+        .await
 }
 
 /// Manually enforce context window limits by pruning old messages.
 /// Returns the number of messages that were pruned.
 #[tauri::command]
 pub async fn enforce_context_window(state: State<'_, AppState>) -> Result<usize, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.enforce_context_window().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.enforce_context_window())
+        .await
 }
 
 /// Reset the context manager (clear all token tracking).
 /// This does not clear the conversation history, only the token stats.
 #[tauri::command]
 pub async fn reset_context_manager(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    bridge.reset_context_manager().await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.reset_context_manager())
+        .await
 }
 
 /// Get the context trim configuration.
@@ -841,9 +862,10 @@ use super::loop_detection::{LoopDetectorStats, LoopProtectionConfig};
 pub async fn get_loop_protection_config(
     state: State<'_, AppState>,
 ) -> Result<LoopProtectionConfig, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.get_loop_protection_config().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_loop_protection_config())
+        .await
 }
 
 /// Set the loop protection configuration.
@@ -852,10 +874,10 @@ pub async fn set_loop_protection_config(
     state: State<'_, AppState>,
     config: LoopProtectionConfig,
 ) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    bridge.set_loop_protection_config(config).await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.set_loop_protection_config(config))
+        .await
 }
 
 /// Get current loop detector statistics.
@@ -863,43 +885,45 @@ pub async fn set_loop_protection_config(
 pub async fn get_loop_detector_stats(
     state: State<'_, AppState>,
 ) -> Result<LoopDetectorStats, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.get_loop_detector_stats().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.get_loop_detector_stats())
+        .await
 }
 
 /// Check if loop detection is currently enabled.
 #[tauri::command]
 pub async fn is_loop_detection_enabled(state: State<'_, AppState>) -> Result<bool, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    Ok(bridge.is_loop_detection_enabled().await)
+    state
+        .ai_state
+        .with_bridge_async(|b| b.is_loop_detection_enabled())
+        .await
 }
 
 /// Disable loop detection for the current session.
 /// This allows the agent to continue even if loops are detected.
 #[tauri::command]
 pub async fn disable_loop_detection(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    bridge.disable_loop_detection_for_session().await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.disable_loop_detection_for_session())
+        .await
 }
 
 /// Re-enable loop detection.
 #[tauri::command]
 pub async fn enable_loop_detection(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    bridge.enable_loop_detection().await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.enable_loop_detection())
+        .await
 }
 
 /// Reset the loop detector (clears all tracking).
 #[tauri::command]
 pub async fn reset_loop_detector(state: State<'_, AppState>) -> Result<(), String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-    bridge.reset_loop_detector().await;
-    Ok(())
+    state
+        .ai_state
+        .with_bridge_async(|b| b.reset_loop_detector())
+        .await
 }
