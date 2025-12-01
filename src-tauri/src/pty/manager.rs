@@ -50,15 +50,14 @@ struct ActiveSession {
     cols: Mutex<u16>,
 }
 
+#[derive(Default)]
 pub struct PtyManager {
     sessions: Mutex<HashMap<String, Arc<ActiveSession>>>,
 }
 
 impl PtyManager {
     pub fn new() -> Self {
-        Self {
-            sessions: Mutex::new(HashMap::new()),
-        }
+        Self::default()
     }
 
     pub fn create_session(
@@ -319,8 +318,3 @@ impl PtyManager {
     }
 }
 
-impl Default for PtyManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}

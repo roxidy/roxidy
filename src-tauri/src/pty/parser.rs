@@ -84,50 +84,33 @@ impl OscPerformer {
             Err(_) => return,
         };
 
-        match marker {
-            "A" => {
-                self.events.push(OscEvent::PromptStart);
-            }
-            "B" => {
-                self.events.push(OscEvent::PromptEnd);
-            }
-            "C" => {
-                // C marker may include command text: "C;command"
-                let command = if params.len() > 2 {
-                    std::str::from_utf8(params[2]).ok().map(|s| s.to_string())
-                } else {
-                    None
-                };
+        // Get extra argument from params[2] if present
+        let extra_arg = params
+            .get(2)
+            .and_then(|p| std::str::from_utf8(p).ok());
+
+        // Match on first character, handling both "C" and "C;command" formats
+        match marker.chars().next() {
+            Some('A') => self.events.push(OscEvent::PromptStart),
+            Some('B') => self.events.push(OscEvent::PromptEnd),
+            Some('C') => {
+                // Command may come from marker suffix (C;cmd) or params[2]
+                let command = marker
+                    .strip_prefix("C;")
+                    .or(extra_arg)
+                    .map(|s| s.to_string());
                 self.events.push(OscEvent::CommandStart { command });
             }
-            "D" => {
-                // D marker includes exit code: "D;0" or "D;1"
-                let exit_code = if params.len() > 2 {
-                    std::str::from_utf8(params[2])
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(0)
-                } else {
-                    0
-                };
+            Some('D') => {
+                // Exit code may come from marker suffix (D;0) or params[2]
+                let exit_code = marker
+                    .strip_prefix("D;")
+                    .or(extra_arg)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
                 self.events.push(OscEvent::CommandEnd { exit_code });
             }
-            _ => {
-                // Handle markers that might have the command/exit code attached
-                // e.g., "C;ls -la" comes as a single param "C;ls -la"
-                if marker.starts_with("C;") {
-                    let command = marker.strip_prefix("C;").map(|s| s.to_string());
-                    self.events.push(OscEvent::CommandStart { command });
-                } else if marker.starts_with("C") && marker.len() == 1 {
-                    self.events.push(OscEvent::CommandStart { command: None });
-                } else if marker.starts_with("D;") {
-                    let exit_code = marker
-                        .strip_prefix("D;")
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(0);
-                    self.events.push(OscEvent::CommandEnd { exit_code });
-                }
-            }
+            _ => {}
         }
     }
 

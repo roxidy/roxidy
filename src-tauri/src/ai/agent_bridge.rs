@@ -31,7 +31,6 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use vtcode_core::tools::ToolRegistry;
 
 use super::agentic_loop::{run_agentic_loop, AgenticLoopContext};
-use super::context_manager::ContextEvent;
 use super::context_manager::ContextManager;
 use super::events::AiEvent;
 use super::hitl::{ApprovalDecision, ApprovalRecorder};
@@ -87,8 +86,6 @@ pub struct AgentBridge {
 
     // Context management
     pub(crate) context_manager: Arc<ContextManager>,
-    #[allow(dead_code)]
-    pub(crate) context_event_rx: Arc<RwLock<Option<mpsc::Receiver<ContextEvent>>>>,
 
     // Loop detection
     pub(crate) loop_detector: Arc<RwLock<LoopDetector>>,
@@ -118,9 +115,8 @@ impl AgentBridge {
         };
 
         let components = create_vtcode_components(config).await?;
-        let (_context_tx, context_rx) = mpsc::channel::<ContextEvent>(100);
 
-        Ok(Self::from_components(components, event_tx, context_rx))
+        Ok(Self::from_components(components, event_tx))
     }
 
     /// Create a new AgentBridge for Anthropic on Google Cloud Vertex AI.
@@ -141,16 +137,14 @@ impl AgentBridge {
         };
 
         let components = create_vertex_components(config).await?;
-        let (_context_tx, context_rx) = mpsc::channel::<ContextEvent>(100);
 
-        Ok(Self::from_components(components, event_tx, context_rx))
+        Ok(Self::from_components(components, event_tx))
     }
 
     /// Create an AgentBridge from pre-built components.
     fn from_components(
         components: AgentBridgeComponents,
         event_tx: mpsc::UnboundedSender<AiEvent>,
-        context_rx: mpsc::Receiver<ContextEvent>,
     ) -> Self {
         Self {
             workspace: components.workspace,
@@ -171,7 +165,6 @@ impl AgentBridge {
             pending_approvals: Arc::new(RwLock::new(HashMap::new())),
             tool_policy_manager: components.tool_policy_manager,
             context_manager: components.context_manager,
-            context_event_rx: Arc::new(RwLock::new(Some(context_rx))),
             loop_detector: components.loop_detector,
             tool_config: ToolConfig::main_agent(),
         }

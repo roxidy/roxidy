@@ -9,6 +9,7 @@ use crate::state::AppState;
 
 /// Shared AI state.
 /// Uses tokio RwLock for async compatibility with AgentBridge methods.
+#[derive(Default)]
 pub struct AiState {
     pub bridge: Arc<RwLock<Option<AgentBridge>>>,
 }
@@ -18,9 +19,7 @@ const AI_NOT_INITIALIZED_ERROR: &str = "AI agent not initialized. Call init_ai_a
 
 impl AiState {
     pub fn new() -> Self {
-        Self {
-            bridge: Arc::new(RwLock::new(None)),
-        }
+        Self::default()
     }
 
     /// Get a read guard to the bridge, returning an error if not initialized.
@@ -36,13 +35,21 @@ impl AiState {
         }
         Ok(guard)
     }
-}
 
-impl Default for AiState {
-    fn default() -> Self {
-        Self::new()
+    /// Execute a closure with access to the bridge reference.
+    ///
+    /// This helper eliminates the two-step pattern of `get_bridge().await?.as_ref().unwrap()`.
+    /// Only use for synchronous operations. For async operations, use `get_bridge()` directly.
+    pub async fn with_bridge<F, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce(&AgentBridge) -> T,
+    {
+        let guard = self.bridge.read().await;
+        let bridge = guard.as_ref().ok_or(AI_NOT_INITIALIZED_ERROR)?;
+        Ok(f(bridge))
     }
 }
+
 
 /// Spawn an event forwarder task that sends AI events to the frontend.
 ///
@@ -194,11 +201,7 @@ pub async fn get_available_tools(
 ) -> Result<Vec<serde_json::Value>, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
-    // available_tools now returns Vec<serde_json::Value> directly
-    let tools = bridge.available_tools().await;
-
-    Ok(tools)
+    Ok(bridge.available_tools().await)
 }
 
 /// Shutdown the AI agent and cleanup resources.
@@ -342,7 +345,6 @@ pub fn get_vertex_ai_config() -> VertexAiEnvConfig {
 pub async fn clear_ai_conversation(state: State<'_, AppState>) -> Result<(), String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     bridge.clear_conversation_history().await;
     tracing::info!("AI conversation history cleared");
     Ok(())
@@ -354,7 +356,6 @@ pub async fn clear_ai_conversation(state: State<'_, AppState>) -> Result<(), Str
 pub async fn get_ai_conversation_length(state: State<'_, AppState>) -> Result<usize, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.conversation_history_len().await)
 }
 
@@ -755,7 +756,6 @@ use super::token_budget::{TokenAlertLevel, TokenUsageStats};
 pub async fn get_context_summary(state: State<'_, AppState>) -> Result<ContextSummary, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.get_context_summary().await)
 }
 
@@ -764,7 +764,6 @@ pub async fn get_context_summary(state: State<'_, AppState>) -> Result<ContextSu
 pub async fn get_token_usage_stats(state: State<'_, AppState>) -> Result<TokenUsageStats, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.get_token_usage_stats().await)
 }
 
@@ -773,7 +772,6 @@ pub async fn get_token_usage_stats(state: State<'_, AppState>) -> Result<TokenUs
 pub async fn get_token_alert_level(state: State<'_, AppState>) -> Result<TokenAlertLevel, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.get_token_alert_level().await)
 }
 
@@ -782,7 +780,6 @@ pub async fn get_token_alert_level(state: State<'_, AppState>) -> Result<TokenAl
 pub async fn get_context_utilization(state: State<'_, AppState>) -> Result<f64, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.get_context_utilization().await)
 }
 
@@ -791,7 +788,6 @@ pub async fn get_context_utilization(state: State<'_, AppState>) -> Result<f64, 
 pub async fn get_remaining_tokens(state: State<'_, AppState>) -> Result<usize, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.get_remaining_tokens().await)
 }
 
@@ -801,7 +797,6 @@ pub async fn get_remaining_tokens(state: State<'_, AppState>) -> Result<usize, S
 pub async fn enforce_context_window(state: State<'_, AppState>) -> Result<usize, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.enforce_context_window().await)
 }
 
@@ -811,7 +806,6 @@ pub async fn enforce_context_window(state: State<'_, AppState>) -> Result<usize,
 pub async fn reset_context_manager(state: State<'_, AppState>) -> Result<(), String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     bridge.reset_context_manager().await;
     Ok(())
 }
@@ -821,19 +815,19 @@ pub async fn reset_context_manager(state: State<'_, AppState>) -> Result<(), Str
 pub async fn get_context_trim_config(
     state: State<'_, AppState>,
 ) -> Result<ContextTrimConfig, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    Ok(bridge.get_context_trim_config())
+    state
+        .ai_state
+        .with_bridge(|b| b.get_context_trim_config())
+        .await
 }
 
 /// Check if context management is enabled.
 #[tauri::command]
 pub async fn is_context_management_enabled(state: State<'_, AppState>) -> Result<bool, String> {
-    let bridge_guard = state.ai_state.get_bridge().await?;
-    let bridge = bridge_guard.as_ref().unwrap();
-
-    Ok(bridge.is_context_management_enabled())
+    state
+        .ai_state
+        .with_bridge(|b| b.is_context_management_enabled())
+        .await
 }
 
 // ============================================================================
@@ -849,7 +843,6 @@ pub async fn get_loop_protection_config(
 ) -> Result<LoopProtectionConfig, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.get_loop_protection_config().await)
 }
 
@@ -861,7 +854,6 @@ pub async fn set_loop_protection_config(
 ) -> Result<(), String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     bridge.set_loop_protection_config(config).await;
     Ok(())
 }
@@ -873,7 +865,6 @@ pub async fn get_loop_detector_stats(
 ) -> Result<LoopDetectorStats, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.get_loop_detector_stats().await)
 }
 
@@ -882,7 +873,6 @@ pub async fn get_loop_detector_stats(
 pub async fn is_loop_detection_enabled(state: State<'_, AppState>) -> Result<bool, String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     Ok(bridge.is_loop_detection_enabled().await)
 }
 
@@ -892,7 +882,6 @@ pub async fn is_loop_detection_enabled(state: State<'_, AppState>) -> Result<boo
 pub async fn disable_loop_detection(state: State<'_, AppState>) -> Result<(), String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     bridge.disable_loop_detection_for_session().await;
     Ok(())
 }
@@ -902,7 +891,6 @@ pub async fn disable_loop_detection(state: State<'_, AppState>) -> Result<(), St
 pub async fn enable_loop_detection(state: State<'_, AppState>) -> Result<(), String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     bridge.enable_loop_detection().await;
     Ok(())
 }
@@ -912,7 +900,6 @@ pub async fn enable_loop_detection(state: State<'_, AppState>) -> Result<(), Str
 pub async fn reset_loop_detector(state: State<'_, AppState>) -> Result<(), String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
-
     bridge.reset_loop_detector().await;
     Ok(())
 }
