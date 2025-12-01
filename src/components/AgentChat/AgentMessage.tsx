@@ -1,4 +1,5 @@
-import { Bot, User } from "lucide-react";
+import { Bot, Brain, ChevronDown, ChevronRight, User } from "lucide-react";
+import { useState } from "react";
 import { Markdown } from "@/components/Markdown";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,6 +14,7 @@ interface AgentMessageProps {
 export function AgentMessage({ message }: AgentMessageProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
+  const [isThinkingExpanded, setIsThinkingExpanded] = useState(false);
 
   // Use streamingHistory if available (interleaved text + tool calls), otherwise fallback to legacy
   const hasStreamingHistory = message.streamingHistory && message.streamingHistory.length > 0;
@@ -44,7 +46,7 @@ export function AgentMessage({ message }: AgentMessageProps) {
               : "bg-[#1f2335] border-[#27293d]"
         )}
       >
-        <CardContent className="p-3">
+        <CardContent className="p-3 space-y-3">
           {/* Role label for system messages */}
           {isSystem && (
             <Badge
@@ -53,6 +55,39 @@ export function AgentMessage({ message }: AgentMessageProps) {
             >
               System
             </Badge>
+          )}
+
+          {/* Thinking content (collapsible) */}
+          {message.thinkingContent && (
+            <div className="rounded-md bg-[#16161e] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setIsThinkingExpanded(!isThinkingExpanded)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-[#1a1b26] transition-colors text-left"
+              >
+                <div className="flex items-center gap-2 flex-1">
+                  <Brain className="w-3.5 h-3.5 text-[#7dcfff]" />
+                  <span className="text-xs font-medium text-[#787c99]">Thinking</span>
+                  <span className="text-xs text-[#565f89]">
+                    ({message.thinkingContent.length.toLocaleString()} chars)
+                  </span>
+                </div>
+                {isThinkingExpanded ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-[#565f89]" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-[#565f89]" />
+                )}
+              </button>
+              {isThinkingExpanded && (
+                <div className="px-2.5 pb-2.5 border-t border-[#1f2335]">
+                  <div className="mt-2 max-h-48 overflow-y-auto">
+                    <pre className="text-xs text-[#565f89] whitespace-pre-wrap break-words font-mono leading-relaxed">
+                      {message.thinkingContent}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Render interleaved streaming history if available */}

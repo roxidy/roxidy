@@ -13,9 +13,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures::StreamExt;
 use rig::completion::{AssistantContent, CompletionModel as RigCompletionModel, Message};
-use rig::message::{Text, ToolCall, ToolResult, ToolResultContent, UserContent};
+use rig::message::{Reasoning, Text, ToolCall, ToolResult, ToolResultContent, UserContent};
 use rig::one_or_many::OneOrMany;
-use rig::streaming::RawStreamingChoice;
+use rig::streaming::StreamedAssistantContent;
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use vtcode_core::tools::ToolRegistry;
@@ -480,29 +480,40 @@ pub async fn run_agentic_loop(
         };
 
         // Make streaming completion request to capture thinking content
+        tracing::info!("Starting streaming completion request");
         let mut stream = model
             .stream(request)
             .await
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+            .map_err(|e| {
+                tracing::error!("Failed to start stream: {}", e);
+                anyhow::anyhow!("{}", e)
+            })?;
+        tracing::info!("Stream started successfully");
 
         // Process streaming response
         let mut has_tool_calls = false;
         let mut tool_calls_to_execute: Vec<ToolCall> = vec![];
         let mut text_content = String::new();
         let mut thinking_content = String::new();
-        
+        let mut thinking_signature: Option<String> = None;
+        let mut chunk_count = 0;
+
         // Track tool call state for streaming
         let mut current_tool_id: Option<String> = None;
         let mut current_tool_name: Option<String> = None;
         let mut current_tool_args = String::new();
 
         while let Some(chunk_result) = stream.next().await {
+            chunk_count += 1;
             match chunk_result {
                 Ok(chunk) => {
                     match chunk {
-                        RawStreamingChoice::Message(text) => {
+                        StreamedAssistantContent::Text(text_msg) => {
+                            tracing::debug!("Received text chunk #{}: {} chars", chunk_count, text_msg.text.len());
                             // Check if this is thinking content (prefixed by our streaming impl)
-                            if let Some(thinking) = text.strip_prefix("[Thinking] ") {
+                            // This handles the case where thinking is sent as a [Thinking] prefixed message
+                            if let Some(thinking) = text_msg.text.strip_prefix("[Thinking] ") {
+                                tracing::debug!("Text chunk is [Thinking] prefixed");
                                 thinking_content.push_str(thinking);
                                 accumulated_thinking.push_str(thinking);
                                 // Emit reasoning event for frontend
@@ -511,25 +522,81 @@ pub async fn run_agentic_loop(
                                 });
                             } else {
                                 // Regular text content
-                                text_content.push_str(&text);
-                                accumulated_response.push_str(&text);
+                                text_content.push_str(&text_msg.text);
+                                accumulated_response.push_str(&text_msg.text);
                                 let _ = ctx.event_tx.send(AiEvent::TextDelta {
-                                    delta: text,
+                                    delta: text_msg.text,
                                     accumulated: accumulated_response.clone(),
                                 });
                             }
                         }
-                        RawStreamingChoice::ToolCall { id, name, arguments, .. } => {
-                            has_tool_calls = true;
-                            current_tool_id = Some(id.clone());
-                            current_tool_name = Some(name.clone());
-                            current_tool_args = serde_json::to_string(&arguments).unwrap_or_default();
+                        StreamedAssistantContent::Reasoning(reasoning) => {
+                            // Native reasoning/thinking content from extended thinking models
+                            let reasoning_text = reasoning.reasoning.join("");
+                            tracing::debug!("Received reasoning chunk #{}: {} chars", chunk_count, reasoning_text.len());
+                            thinking_content.push_str(&reasoning_text);
+                            accumulated_thinking.push_str(&reasoning_text);
+                            // Capture the signature (needed for API when sending back history)
+                            if reasoning.signature.is_some() {
+                                thinking_signature = reasoning.signature.clone();
+                            }
+                            // Emit reasoning event for frontend
+                            let _ = ctx.event_tx.send(AiEvent::Reasoning {
+                                content: reasoning_text,
+                            });
                         }
-                        RawStreamingChoice::ToolCallDelta { delta, .. } => {
+                        StreamedAssistantContent::ToolCall(tool_call) => {
+                            tracing::info!("Received tool call chunk #{}: {}", chunk_count, tool_call.function.name);
+                            has_tool_calls = true;
+
+                            // Finalize any previous pending tool call first
+                            if let (Some(prev_id), Some(prev_name)) = (current_tool_id.take(), current_tool_name.take()) {
+                                let args: serde_json::Value = serde_json::from_str(&current_tool_args)
+                                    .unwrap_or(serde_json::Value::Null);
+                                tracing::info!("Finalizing previous tool call: {} with args: {}", prev_name, current_tool_args);
+                                tool_calls_to_execute.push(ToolCall {
+                                    id: prev_id.clone(),
+                                    call_id: Some(prev_id),
+                                    function: rig::message::ToolFunction {
+                                        name: prev_name,
+                                        arguments: args,
+                                    },
+                                });
+                                current_tool_args.clear();
+                            }
+
+                            // Check if this tool call has complete args (non-streaming case)
+                            // If args are empty object {}, we'll wait for deltas
+                            let has_complete_args = !tool_call.function.arguments.is_null()
+                                && tool_call.function.arguments != serde_json::json!({});
+
+                            if has_complete_args {
+                                // Tool call came complete, add directly
+                                tracing::info!("Tool call has complete args, adding directly");
+                                tool_calls_to_execute.push(tool_call);
+                            } else {
+                                // Tool call has empty args, wait for deltas
+                                tracing::info!("Tool call has empty args, tracking for delta accumulation");
+                                current_tool_id = Some(tool_call.id.clone());
+                                current_tool_name = Some(tool_call.function.name.clone());
+                                // Start with any existing args (might be empty object serialized)
+                                if !tool_call.function.arguments.is_null() && tool_call.function.arguments != serde_json::json!({}) {
+                                    current_tool_args = tool_call.function.arguments.to_string();
+                                }
+                            }
+                        }
+                        StreamedAssistantContent::ToolCallDelta { id, delta } => {
+                            tracing::debug!("Received tool call delta #{}: id={}, {} chars", chunk_count, id, delta.len());
+                            // If we don't have a current tool ID but the delta has one, use it
+                            if current_tool_id.is_none() && !id.is_empty() {
+                                current_tool_id = Some(id);
+                            }
+                            // Accumulate tool call argument deltas
                             current_tool_args.push_str(&delta);
                         }
-                        RawStreamingChoice::FinalResponse(_) => {
-                            // Finalize any pending tool call
+                        StreamedAssistantContent::Final(ref resp) => {
+                            tracing::info!("Received final response chunk #{}: {:?}", chunk_count, resp);
+                            // Finalize any pending tool call from deltas
                             if let (Some(id), Some(name)) = (current_tool_id.take(), current_tool_name.take()) {
                                 let args: serde_json::Value = serde_json::from_str(&current_tool_args)
                                     .unwrap_or(serde_json::Value::Null);
@@ -547,10 +614,13 @@ pub async fn run_agentic_loop(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Stream chunk error: {}", e);
+                    tracing::warn!("Stream chunk error at #{}: {}", chunk_count, e);
                 }
             }
         }
+
+        tracing::info!("Stream completed: {} chunks, {} chars text, {} chars thinking, {} tool calls",
+            chunk_count, text_content.len(), thinking_content.len(), tool_calls_to_execute.len());
 
         // Finalize any remaining tool call that wasn't closed by FinalResponse
         if let (Some(id), Some(name)) = (current_tool_id.take(), current_tool_name.take()) {
@@ -577,8 +647,18 @@ pub async fn run_agentic_loop(
             break;
         }
 
-        // Build assistant content for history (text + tool calls)
+        // Build assistant content for history (thinking + text + tool calls)
+        // IMPORTANT: Thinking blocks MUST come first when extended thinking is enabled
         let mut assistant_content: Vec<AssistantContent> = vec![];
+
+        // Add thinking content first (required by Anthropic API when thinking is enabled)
+        if !thinking_content.is_empty() {
+            assistant_content.push(AssistantContent::Reasoning(
+                Reasoning::multi(vec![thinking_content.clone()])
+                    .with_signature(thinking_signature.clone())
+            ));
+        }
+
         if !text_content.is_empty() {
             assistant_content.push(AssistantContent::Text(Text {
                 text: text_content.clone(),

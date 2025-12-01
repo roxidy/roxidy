@@ -94,21 +94,49 @@ impl CompletionModel {
                 }
             }
             Message::Assistant { content, .. } => {
-                let blocks: Vec<ContentBlock> = content
-                    .iter()
-                    .filter_map(|c| match c {
-                        AssistantContent::Text(text) => Some(ContentBlock::Text {
-                            text: text.text.clone(),
-                        }),
-                        AssistantContent::ToolCall(tool_call) => Some(ContentBlock::ToolUse {
-                            id: tool_call.id.clone(),
-                            name: tool_call.function.name.clone(),
-                            input: tool_call.function.arguments.clone(),
-                        }),
-                        // Skip reasoning and image content
-                        _ => None,
-                    })
-                    .collect();
+                // When thinking is enabled, assistant messages must start with thinking blocks
+                // Collect thinking blocks first, then other content
+                let mut thinking_blocks: Vec<ContentBlock> = Vec::new();
+                let mut other_blocks: Vec<ContentBlock> = Vec::new();
+
+                for c in content.iter() {
+                    match c {
+                        AssistantContent::Text(text) => {
+                            other_blocks.push(ContentBlock::Text {
+                                text: text.text.clone(),
+                            });
+                        }
+                        AssistantContent::ToolCall(tool_call) => {
+                            // Ensure input is always a valid object (Anthropic API requirement)
+                            let input = match &tool_call.function.arguments {
+                                serde_json::Value::Object(_) => tool_call.function.arguments.clone(),
+                                serde_json::Value::Null => serde_json::json!({}),
+                                other => serde_json::json!({ "value": other }),
+                            };
+                            other_blocks.push(ContentBlock::ToolUse {
+                                id: tool_call.id.clone(),
+                                name: tool_call.function.name.clone(),
+                                input,
+                            });
+                        }
+                        AssistantContent::Reasoning(reasoning) => {
+                            // Include thinking blocks for extended thinking mode
+                            let thinking_text = reasoning.reasoning.join("");
+                            if !thinking_text.is_empty() {
+                                thinking_blocks.push(ContentBlock::Thinking {
+                                    thinking: thinking_text,
+                                    // Signature is required but we may not have it from history
+                                    // Use empty string as placeholder (API may reject this)
+                                    signature: reasoning.signature.clone().unwrap_or_default(),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Combine: thinking blocks first (required by API), then other content
+                let mut blocks = thinking_blocks;
+                blocks.append(&mut other_blocks);
 
                 types::Message {
                     role: Role::Assistant,
@@ -153,10 +181,18 @@ impl CompletionModel {
         }
 
         // Determine max tokens
-        let max_tokens = request
+        let mut max_tokens = request
             .max_tokens
             .map(|t| t as u32)
             .unwrap_or_else(|| default_max_tokens_for_model(&self.model));
+
+        // When thinking is enabled, max_tokens must be greater than budget_tokens
+        if let Some(ref thinking) = self.thinking {
+            let min_required = thinking.budget_tokens + 1;
+            if max_tokens <= thinking.budget_tokens {
+                max_tokens = min_required.max(thinking.budget_tokens + 8192);
+            }
+        }
 
         // Convert tools
         let tools: Option<Vec<types::ToolDefinition>> = if request.tools.is_empty() {
@@ -303,8 +339,13 @@ impl completion::CompletionModel for CompletionModel {
     ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
         let anthropic_request = self.build_request(&request, true);
 
+        // Log request details
+        tracing::info!("stream(): Building request with thinking={:?}", anthropic_request.thinking.as_ref().map(|t| t.budget_tokens));
+        tracing::debug!("stream(): max_tokens={}, messages={}", anthropic_request.max_tokens, anthropic_request.messages.len());
+
         // Build URL for streamRawPredict
         let url = self.client.endpoint_url(&self.model, "streamRawPredict");
+        tracing::info!("stream(): POST {}", url);
 
         // Get headers with auth
         let headers = self
@@ -322,19 +363,27 @@ impl completion::CompletionModel for CompletionModel {
             .json(&anthropic_request)
             .send()
             .await
-            .map_err(|e| CompletionError::RequestError(Box::new(e)))?;
+            .map_err(|e| {
+                tracing::error!("stream(): Request failed: {}", e);
+                CompletionError::RequestError(Box::new(e))
+            })?;
+
+        let status = response.status();
+        tracing::info!("stream(): Response status: {}", status);
 
         // Check for errors
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
+        if !status.is_success() {
+            let status_code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
+            tracing::error!("stream(): API error ({}): {}", status_code, body);
             return Err(CompletionError::ProviderError(format!(
                 "API error ({}): {}",
-                status, body
+                status_code, body
             )));
         }
 
         // Create streaming response
+        tracing::info!("stream(): Creating streaming response wrapper, status={}", status);
         let stream = StreamingResponse::new(response);
 
         // Convert to rig's streaming format
@@ -344,43 +393,69 @@ impl completion::CompletionModel for CompletionModel {
             use crate::streaming::StreamChunk;
 
             chunk_result
-                .map(|chunk| match chunk {
-                    StreamChunk::TextDelta { text, .. } => {
-                        RawStreamingChoice::Message(text)
-                    }
-                    StreamChunk::ToolUseStart { id, name } => {
-                        RawStreamingChoice::ToolCall {
-                            id: id.clone(),
-                            call_id: Some(id),
-                            name,
-                            arguments: serde_json::Value::Null,
+                .map(|chunk| {
+                    let raw_choice = match chunk {
+                        StreamChunk::TextDelta { text, .. } => {
+                            tracing::debug!("map_to_raw: TextDelta -> Message len={}", text.len());
+                            RawStreamingChoice::Message(text)
                         }
-                    }
-                    StreamChunk::ToolInputDelta { partial_json } => {
-                        RawStreamingChoice::ToolCallDelta {
-                            id: String::new(),
-                            delta: partial_json,
+                        StreamChunk::ToolUseStart { id, name } => {
+                            tracing::info!("map_to_raw: ToolUseStart -> ToolCall name={}", name);
+                            RawStreamingChoice::ToolCall {
+                                id: id.clone(),
+                                call_id: Some(id),
+                                name,
+                                arguments: serde_json::json!({}), // Must be a valid object
+                            }
                         }
-                    }
-                    StreamChunk::Done { usage, .. } => {
-                        // Return final response with usage info
-                        RawStreamingChoice::FinalResponse(StreamingCompletionResponseData {
-                            text: String::new(),
-                            usage,
-                        })
-                    }
-                    StreamChunk::Error { message } => {
-                        // Can't return error directly, emit as message
-                        RawStreamingChoice::Message(format!("[Error: {}]", message))
-                    }
-                    StreamChunk::ThinkingDelta { thinking } => {
-                        // Emit thinking content as a special message (prefixed for identification)
-                        RawStreamingChoice::Message(format!("[Thinking] {}", thinking))
-                    }
+                        StreamChunk::ToolInputDelta { partial_json } => {
+                            tracing::debug!("map_to_raw: ToolInputDelta -> ToolCallDelta len={}", partial_json.len());
+                            RawStreamingChoice::ToolCallDelta {
+                                id: String::new(),
+                                delta: partial_json,
+                            }
+                        }
+                        StreamChunk::Done { usage, .. } => {
+                            tracing::info!("map_to_raw: Done -> FinalResponse usage={:?}", usage);
+                            // Return final response with usage info
+                            RawStreamingChoice::FinalResponse(StreamingCompletionResponseData {
+                                text: String::new(),
+                                usage,
+                            })
+                        }
+                        StreamChunk::Error { message } => {
+                            tracing::error!("map_to_raw: Error -> Message error={}", message);
+                            // Can't return error directly, emit as message
+                            RawStreamingChoice::Message(format!("[Error: {}]", message))
+                        }
+                        StreamChunk::ThinkingDelta { thinking } => {
+                            tracing::debug!("map_to_raw: ThinkingDelta -> Reasoning len={}", thinking.len());
+                            // Emit thinking content using native reasoning type
+                            RawStreamingChoice::Reasoning {
+                                id: None,
+                                reasoning: thinking,
+                                signature: None,
+                            }
+                        }
+                        StreamChunk::ThinkingSignature { signature } => {
+                            tracing::info!("map_to_raw: ThinkingSignature -> Reasoning with signature len={}", signature.len());
+                            // Emit signature as a Reasoning event (empty reasoning, signature set)
+                            RawStreamingChoice::Reasoning {
+                                id: None,
+                                reasoning: String::new(),
+                                signature: Some(signature),
+                            }
+                        }
+                    };
+                    raw_choice
                 })
-                .map_err(|e| CompletionError::ProviderError(e.to_string()))
+                .map_err(|e| {
+                    tracing::error!("map_to_raw: chunk error: {}", e);
+                    CompletionError::ProviderError(e.to_string())
+                })
         });
 
+        tracing::info!("Returning StreamingCompletionResponse");
         Ok(StreamingCompletionResponse::stream(Box::pin(mapped_stream)))
     }
 }

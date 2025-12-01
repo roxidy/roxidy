@@ -126,16 +126,17 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
         </div>
       )}
 
-      {/* Extended thinking block - shows model's reasoning process */}
-      {thinkingContent && <ThinkingBlock sessionId={sessionId} />}
-
-      {/* Streaming indicator for agent responses - interleaved text and tool calls */}
-      {streamingBlocks.length > 0 && (
+      {/* Agent response card - contains thinking (if any) and streaming content */}
+      {(thinkingContent || streamingBlocks.length > 0) && (
         <div className="flex gap-3">
           <div className="w-8 h-8 rounded-full bg-[#bb9af7]/20 flex items-center justify-center flex-shrink-0">
             <Bot className="w-4 h-4 text-[#bb9af7]" />
           </div>
-          <div className="flex-1 max-w-[85%] min-w-0 overflow-hidden bg-[#1f2335] border border-[#27293d] rounded-lg p-3 space-y-2">
+          <div className="flex-1 max-w-[85%] min-w-0 overflow-hidden bg-[#1f2335] border border-[#27293d] rounded-lg p-3 space-y-3">
+            {/* Extended thinking block inside the card */}
+            {thinkingContent && <ThinkingBlock sessionId={sessionId} />}
+
+            {/* Streaming text and tool calls */}
             {streamingBlocks.map((block, blockIndex) => {
               if (block.type === "text") {
                 const isLast = blockIndex === streamingBlocks.length - 1;

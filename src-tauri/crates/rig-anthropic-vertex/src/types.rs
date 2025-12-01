@@ -173,6 +173,8 @@ impl Default for CompletionRequest {
 /// Usage statistics in the response
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Usage {
+    /// Input tokens (may be missing in message_delta events)
+    #[serde(default)]
     pub input_tokens: u32,
     pub output_tokens: u32,
 }

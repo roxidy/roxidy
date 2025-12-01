@@ -18,7 +18,6 @@ const AVAILABLE_MODELS = [
   { id: VERTEX_AI_MODELS.CLAUDE_HAIKU_4_5, name: "Claude Haiku 4.5" },
 ];
 
-
 function formatModel(model: string): string {
   // Simplify Vertex AI model names
   if (model.includes("claude-opus-4")) return "Claude Opus 4.5";
@@ -54,7 +53,6 @@ export function StatusBar({ sessionId }: StatusBarProps) {
   const inputMode = useInputMode(sessionId ?? "");
   const setInputMode = useStore((state) => state.setInputMode);
   const setAiConfig = useStore((state) => state.setAiConfig);
-
 
   const handleModelSelect = async (modelId: string) => {
     // Don't switch if already on this model or no vertex config

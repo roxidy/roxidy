@@ -22,46 +22,39 @@ export function ThinkingBlock({ sessionId }: ThinkingBlockProps) {
   };
 
   return (
-    <div className="border border-[#3b4261] rounded-lg bg-[#1a1b26]/50 overflow-hidden">
+    <div className="rounded-md bg-[#16161e] overflow-hidden">
       {/* Header - always visible */}
       <button
         type="button"
         onClick={toggleExpanded}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#1f2335]/50 transition-colors text-left"
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-[#1a1b26] transition-colors text-left"
       >
         <div className="flex items-center gap-2 flex-1">
-          <div
+          <Brain
             className={cn(
-              "w-6 h-6 rounded-full flex items-center justify-center",
-              isThinking ? "bg-[#bb9af7]/30" : "bg-[#7dcfff]/20"
+              "w-3.5 h-3.5",
+              isThinking ? "text-[#bb9af7] animate-pulse" : "text-[#7dcfff]"
             )}
-          >
-            <Brain
-              className={cn(
-                "w-3.5 h-3.5",
-                isThinking ? "text-[#bb9af7] animate-pulse" : "text-[#7dcfff]"
-              )}
-            />
-          </div>
-          <span className="text-xs font-medium text-[#a9b1d6]">
-            {isThinking ? "Thinking..." : "Extended Thinking"}
+          />
+          <span className="text-xs font-medium text-[#787c99]">
+            {isThinking ? "Thinking..." : "Thinking"}
           </span>
           <span className="text-xs text-[#565f89]">
             ({thinkingContent.length.toLocaleString()} chars)
           </span>
         </div>
         {isExpanded ? (
-          <ChevronDown className="w-4 h-4 text-[#565f89]" />
+          <ChevronDown className="w-3.5 h-3.5 text-[#565f89]" />
         ) : (
-          <ChevronRight className="w-4 h-4 text-[#565f89]" />
+          <ChevronRight className="w-3.5 h-3.5 text-[#565f89]" />
         )}
       </button>
 
       {/* Content - collapsible */}
       {isExpanded && (
-        <div className="px-3 pb-3 border-t border-[#3b4261]">
-          <div className="mt-2 max-h-64 overflow-y-auto">
-            <pre className="text-xs text-[#787c99] whitespace-pre-wrap break-words font-mono leading-relaxed">
+        <div className="px-2.5 pb-2.5 border-t border-[#1f2335]">
+          <div className="mt-2 max-h-48 overflow-y-auto">
+            <pre className="text-xs text-[#565f89] whitespace-pre-wrap break-words font-mono leading-relaxed">
               {thinkingContent}
               {isThinking && (
                 <span className="inline-block w-1.5 h-3 bg-[#bb9af7] animate-pulse ml-0.5 align-middle" />

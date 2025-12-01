@@ -134,6 +134,7 @@ export function useAiEvents() {
           // Convert streaming blocks to a final assistant message preserving interleaved history
           const blocks = state.streamingBlocks[sessionId] || [];
           const streaming = state.agentStreaming[sessionId] || "";
+          const thinkingContent = state.thinkingContent[sessionId] || "";
 
           // Preserve the interleaved streaming history (text + tool calls in order)
           const streamingHistory: import("@/store").FinalizedStreamingBlock[] = blocks.map(
@@ -180,9 +181,12 @@ export function useAiEvents() {
               timestamp: new Date().toISOString(),
               toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
               streamingHistory: streamingHistory.length > 0 ? streamingHistory : undefined,
+              thinkingContent: thinkingContent || undefined,
             });
           }
           state.clearAgentStreaming(sessionId);
+          state.clearStreamingBlocks(sessionId);
+          state.clearThinkingContent(sessionId);
           state.setAgentThinking(sessionId, false);
           break;
         }

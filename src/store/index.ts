@@ -77,6 +77,8 @@ export interface AgentMessage {
   toolCalls?: ToolCall[];
   /** Interleaved text and tool call blocks from streaming (preserves order) */
   streamingHistory?: FinalizedStreamingBlock[];
+  /** Extended thinking content from the model's reasoning process */
+  thinkingContent?: string;
 }
 
 /** Risk level for tool operations */

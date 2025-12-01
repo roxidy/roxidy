@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import type { PromptInfo } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
@@ -56,9 +56,7 @@ export function SlashCommandPopup({
           className="bg-[#1a1b26] border border-[#1f2335] rounded-md overflow-hidden"
         >
           {visiblePrompts.length === 0 ? (
-            <div className="py-3 text-center text-sm text-[#565f89]">
-              No prompts found
-            </div>
+            <div className="py-3 text-center text-sm text-[#565f89]">No prompts found</div>
           ) : (
             <div className="max-h-[200px] overflow-y-auto py-1">
               {visiblePrompts.map((prompt, index) => (
@@ -69,14 +67,10 @@ export function SlashCommandPopup({
                   className={cn(
                     "flex items-center justify-between gap-2 px-3 py-2",
                     "cursor-pointer transition-colors",
-                    index === selectedIndex
-                      ? "bg-[#292e42]"
-                      : "hover:bg-[#1f2335]"
+                    index === selectedIndex ? "bg-[#292e42]" : "hover:bg-[#1f2335]"
                   )}
                 >
-                  <span className="font-mono text-sm text-[#c0caf5]">
-                    /{prompt.name}
-                  </span>
+                  <span className="font-mono text-sm text-[#c0caf5]">/{prompt.name}</span>
                   <Badge
                     variant="outline"
                     className={cn(
@@ -100,7 +94,5 @@ export function SlashCommandPopup({
 
 // Export helper to get filtered prompts (for use in parent component)
 export function filterPrompts(prompts: PromptInfo[], query: string): PromptInfo[] {
-  return prompts.filter((prompt) =>
-    prompt.name.toLowerCase().includes(query.toLowerCase())
-  );
+  return prompts.filter((prompt) => prompt.name.toLowerCase().includes(query.toLowerCase()));
 }
