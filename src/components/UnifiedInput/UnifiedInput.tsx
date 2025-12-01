@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { filterPrompts, SlashCommandPopup } from "@/components/SlashCommandPopup";
+import { useCommandHistory } from "@/hooks/useCommandHistory";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { sendPrompt } from "@/lib/ai";
 import { type PromptInfo, ptyWrite, readPrompt } from "@/lib/tauri";
@@ -49,11 +50,12 @@ const INTERACTIVE_COMMANDS = [
 export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps) {
   const [input, setInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [history, setHistory] = useState<string[]>([]);
   const [showSlashPopup, setShowSlashPopup] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Command history for up/down navigation
+  const { add: addToHistory, navigateUp, navigateDown, reset: resetHistory } = useCommandHistory();
 
   // Slash commands
   const { prompts } = useSlashCommands(workingDirectory);
@@ -119,7 +121,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
 
     const value = input.trim();
     setInput("");
-    setHistoryIndex(-1);
+    resetHistory();
 
     if (inputMode === "terminal") {
       // Terminal mode: send to PTY
@@ -131,7 +133,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
       }
 
       // Add to history
-      setHistory((prev) => [...prev, value]);
+      addToHistory(value);
 
       // Send command + newline to PTY
       await ptyWrite(sessionId, `${value}\n`);
@@ -140,7 +142,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
       setIsSubmitting(true);
 
       // Add to history
-      setHistory((prev) => [...prev, value]);
+      addToHistory(value);
 
       // Add user message to store
       addAgentMessage(sessionId, {
@@ -171,6 +173,8 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
     addAgentMessage,
     isInteractiveCommand,
     workingDirectory,
+    addToHistory,
+    resetHistory,
   ]);
 
   // Handle slash command selection
@@ -282,24 +286,16 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
       // History navigation - shared between terminal and agent modes
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        if (history.length > 0) {
-          const newIndex = historyIndex < history.length - 1 ? historyIndex + 1 : historyIndex;
-          setHistoryIndex(newIndex);
-          setInput(history[history.length - 1 - newIndex] || "");
+        const cmd = navigateUp();
+        if (cmd !== null) {
+          setInput(cmd);
         }
         return;
       }
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        if (historyIndex > 0) {
-          const newIndex = historyIndex - 1;
-          setHistoryIndex(newIndex);
-          setInput(history[history.length - 1 - newIndex] || "");
-        } else if (historyIndex === 0) {
-          setHistoryIndex(-1);
-          setInput("");
-        }
+        setInput(navigateDown());
         return;
       }
 
@@ -339,8 +335,8 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
       inputMode,
       sessionId,
       handleSubmit,
-      history,
-      historyIndex,
+      navigateUp,
+      navigateDown,
       toggleInputMode,
       showSlashPopup,
       filteredSlashPrompts,
@@ -371,7 +367,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
             onChange={(e) => {
               const value = e.target.value;
               setInput(value);
-              setHistoryIndex(-1);
+              resetHistory();
 
               // Show slash popup when "/" is typed at the start
               if (value.startsWith("/") && value.length >= 1) {

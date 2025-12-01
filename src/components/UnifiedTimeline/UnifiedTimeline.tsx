@@ -2,7 +2,7 @@ import Ansi from "ansi-to-react";
 import { Bot, Loader2, Sparkles, TerminalSquare } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { Markdown } from "@/components/Markdown";
-import { ThinkingBlock } from "@/components/ThinkingBlock";
+import { StreamingThinkingBlock } from "@/components/ThinkingBlock";
 import { ToolCallDisplay } from "@/components/ToolCallDisplay";
 import { stripOscSequences } from "@/lib/ansi";
 import {
@@ -58,22 +58,6 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
           Run terminal commands or ask the AI assistant for help. Toggle between modes using the
           button in the input bar.
         </p>
-        <div className="mt-6 flex flex-wrap gap-2 justify-center">
-          {["ls -la", "git status", "Explain this codebase", "Find TODO comments"].map(
-            (suggestion) => (
-              <button
-                type="button"
-                key={suggestion}
-                className="px-3 py-1.5 text-xs bg-[#1f2335] hover:bg-[#292e42] text-[#7aa2f7] rounded-full transition-colors border border-[#3b4261]"
-                onClick={() => {
-                  // TODO: Fill input with suggestion
-                }}
-              >
-                {suggestion}
-              </button>
-            )
-          )}
-        </div>
       </div>
     );
   }
@@ -100,10 +84,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
           {/* Streaming output */}
           {pendingOutput && (
             <div className="px-3 pb-3 pl-9">
-              <div
-                className="ansi-output font-mono text-[13px] leading-5 whitespace-pre-wrap break-words bg-[#13131a] rounded-md p-3 border border-[#1f2335] max-h-96 overflow-auto"
-                style={{ fontFamily: "JetBrains Mono, Menlo, Monaco, Consolas, monospace" }}
-              >
+              <div className="ansi-output text-[13px] leading-5 whitespace-pre-wrap break-words bg-[#13131a] rounded-md p-3 border border-[#1f2335] max-h-96 overflow-auto">
                 <Ansi useClasses>{pendingOutput}</Ansi>
               </div>
             </div>
@@ -134,7 +115,7 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
           </div>
           <div className="flex-1 max-w-[85%] min-w-0 overflow-hidden bg-[#1f2335] border border-[#27293d] rounded-lg p-3 space-y-3">
             {/* Extended thinking block inside the card */}
-            {thinkingContent && <ThinkingBlock sessionId={sessionId} />}
+            {thinkingContent && <StreamingThinkingBlock sessionId={sessionId} />}
 
             {/* Streaming text and tool calls */}
             {streamingBlocks.map((block, blockIndex) => {

@@ -2,6 +2,10 @@ import { enableMapSet } from "immer";
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
+import type { ApprovalPattern } from "@/lib/ai";
+import type { RiskLevel } from "@/lib/tools";
+
+export type { ApprovalPattern, RiskLevel };
 
 // Enable Immer support for Set and Map (needed for processedToolRequests)
 enableMapSet();
@@ -81,18 +85,6 @@ export interface AgentMessage {
   thinkingContent?: string;
 }
 
-/** Risk level for tool operations */
-export type RiskLevel = "low" | "medium" | "high" | "critical";
-
-/** Approval stats for a tool */
-export interface ApprovalStats {
-  toolName: string;
-  totalRequests: number;
-  approvals: number;
-  denials: number;
-  alwaysAllow: boolean;
-}
-
 export interface ToolCall {
   id: string;
   name: string;
@@ -103,8 +95,8 @@ export interface ToolCall {
   executedByAgent?: boolean;
   /** Risk level of this tool */
   riskLevel?: RiskLevel;
-  /** Approval stats for this tool (if available) */
-  stats?: ApprovalStats;
+  /** Approval pattern/stats for this tool (if available) */
+  stats?: ApprovalPattern;
   /** Suggestion for auto-approve threshold */
   suggestion?: string;
   /** Whether this tool can be auto-approved in the future */

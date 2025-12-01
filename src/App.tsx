@@ -369,8 +369,8 @@ function App() {
           workingDirectory={workingDirectory}
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen(false)}
-          onFileSelect={(filePath, line) => {
-            console.log(`Selected file: ${filePath}${line ? `:${line}` : ""}`);
+          onFileSelect={(_filePath, _line) => {
+            // File selection is handled by Sidebar internally for now
           }}
         />
 

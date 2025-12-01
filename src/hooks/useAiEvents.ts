@@ -66,24 +66,13 @@ export function useAiEvents() {
           }
           state.setAgentThinking(sessionId, false);
 
-          // Convert backend ApprovalPattern to store format
-          const stats = event.stats
-            ? {
-                toolName: event.stats.tool_name,
-                totalRequests: event.stats.total_requests,
-                approvals: event.stats.approvals,
-                denials: event.stats.denials,
-                alwaysAllow: event.stats.always_allow,
-              }
-            : undefined;
-
           const toolCall = {
             id: event.request_id,
             name: event.tool_name,
             args: event.args as Record<string, unknown>,
             executedByAgent: true,
             riskLevel: event.risk_level,
-            stats,
+            stats: event.stats ?? undefined,
             suggestion: event.suggestion ?? undefined,
             canLearn: event.can_learn,
           };
@@ -113,8 +102,6 @@ export function useAiEvents() {
           };
           state.addActiveToolCall(sessionId, autoApprovedTool);
           state.addStreamingToolBlock(sessionId, autoApprovedTool);
-          // Show a toast notification for auto-approval
-          console.log(`Tool '${event.tool_name}' auto-approved: ${event.reason}`);
           break;
         }
 

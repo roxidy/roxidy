@@ -82,10 +82,7 @@ export function CommandBlock({ block, onToggleCollapse }: CommandBlockProps) {
       {/* Output */}
       <CollapsibleContent>
         <div className="px-3 pb-3 pl-9">
-          <div
-            className="ansi-output font-mono text-[13px] leading-5 whitespace-pre-wrap break-words bg-[#13131a] rounded-md p-3 border border-[#1f2335]"
-            style={{ fontFamily: "JetBrains Mono, Menlo, Monaco, Consolas, monospace" }}
-          >
+          <div className="ansi-output text-[13px] leading-5 whitespace-pre-wrap break-words bg-[#13131a] rounded-md p-3 border border-[#1f2335]">
             <Ansi useClasses>{cleanOutput}</Ansi>
           </div>
         </div>

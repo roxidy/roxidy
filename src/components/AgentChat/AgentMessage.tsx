@@ -1,11 +1,11 @@
 import { Bot, User } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
-import { ThinkingBlock } from "@/components/ThinkingBlock";
+import { StaticThinkingBlock } from "@/components/ThinkingBlock";
+import { ToolItem } from "@/components/ToolCallDisplay";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { AgentMessage as AgentMessageType } from "@/store";
-import { ToolCallCard } from "./ToolCallCard";
 
 interface AgentMessageProps {
   message: AgentMessageType;
@@ -57,7 +57,7 @@ export function AgentMessage({ message }: AgentMessageProps) {
           )}
 
           {/* Thinking content (collapsible) */}
-          {message.thinkingContent && <ThinkingBlock content={message.thinkingContent} />}
+          {message.thinkingContent && <StaticThinkingBlock content={message.thinkingContent} />}
 
           {/* Render interleaved streaming history if available */}
           {hasStreamingHistory ? (
@@ -72,7 +72,7 @@ export function AgentMessage({ message }: AgentMessageProps) {
                     </div>
                   );
                 }
-                return <ToolCallCard key={block.toolCall.id} tool={block.toolCall} />;
+                return <ToolItem key={block.toolCall.id} tool={block.toolCall} />;
               })}
             </div>
           ) : (
@@ -90,7 +90,7 @@ export function AgentMessage({ message }: AgentMessageProps) {
               {message.toolCalls && message.toolCalls.length > 0 && (
                 <div className="mt-3 space-y-2">
                   {message.toolCalls.map((tool) => (
-                    <ToolCallCard key={tool.id} tool={tool} />
+                    <ToolItem key={tool.id} tool={tool} />
                   ))}
                 </div>
               )}

@@ -23,7 +23,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { type ApprovalPattern, calculateApprovalRate, respondToToolApproval } from "@/lib/ai";
-import { getRiskLevel, isDangerousTool, type RiskLevel } from "@/lib/tools";
+import { getRiskLevel, isDangerousTool } from "@/lib/tools";
+import type { RiskLevel } from "@/store";
 import { cn } from "@/lib/utils";
 import { usePendingToolApproval, useStore } from "@/store";
 
@@ -71,10 +72,9 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
   if (!tool) return null;
 
   // Get risk level - use provided or calculate from tool name
-  const riskLevel = (tool as { riskLevel?: RiskLevel }).riskLevel ?? getRiskLevel(tool.name);
-  const stats = (tool as { stats?: ApprovalPattern }).stats;
-  const suggestion = (tool as { suggestion?: string | null }).suggestion;
-  const canLearn = (tool as { canLearn?: boolean }).canLearn ?? true;
+  const riskLevel = tool.riskLevel ?? getRiskLevel(tool.name);
+  const { stats, suggestion } = tool;
+  const canLearn = tool.canLearn ?? true;
   const isDangerous = isDangerousTool(tool.name, riskLevel);
   const RiskIcon = RISK_STYLES[riskLevel].icon;
 

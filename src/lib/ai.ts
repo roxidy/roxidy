@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { RiskLevel } from "./tools";
+
+export type { RiskLevel };
 
 export type AiProvider =
   | "openai"
@@ -16,11 +19,6 @@ export interface AiConfig {
   model: string;
   apiKey: string;
 }
-
-/**
- * Risk level for a tool operation.
- */
-export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 /**
  * Approval pattern/statistics for a specific tool.

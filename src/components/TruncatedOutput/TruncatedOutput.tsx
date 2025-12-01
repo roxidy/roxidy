@@ -33,13 +33,10 @@ export function TruncatedOutput({ content, maxLines = 10, className }: Truncated
     <div className={cn("space-y-1", className)}>
       <pre
         className={cn(
-          "text-[11px] text-[#9aa5ce] bg-[#13131a] rounded p-2",
-          "whitespace-pre-wrap break-all font-mono",
+          "ansi-output text-[11px] text-[#9aa5ce] bg-[#13131a] rounded p-2",
+          "whitespace-pre-wrap break-all",
           "overflow-x-auto"
         )}
-        style={{
-          fontFamily: "JetBrains Mono, Menlo, Monaco, Consolas, monospace",
-        }}
       >
         <Ansi useClasses>{displayContent}</Ansi>
       </pre>

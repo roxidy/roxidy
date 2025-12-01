@@ -37,14 +37,6 @@ describe("UnifiedTimeline", () => {
       expect(screen.getByText(/Run terminal commands or ask the AI assistant/)).toBeInTheDocument();
     });
 
-    it("should show suggestion buttons in empty state", () => {
-      render(<UnifiedTimeline sessionId="test-session" />);
-
-      expect(screen.getByText("ls -la")).toBeInTheDocument();
-      expect(screen.getByText("git status")).toBeInTheDocument();
-      expect(screen.getByText("Explain this codebase")).toBeInTheDocument();
-    });
-
     it("should NOT show empty state when there is a running command with command text", () => {
       useStore.getState().handleCommandStart("test-session", "ls -la");
 

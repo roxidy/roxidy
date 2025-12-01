@@ -1,1 +1,1 @@
-export { ThinkingBlock } from "./ThinkingBlock";
+export { ThinkingBlock, StreamingThinkingBlock, StaticThinkingBlock } from "./ThinkingBlock";
