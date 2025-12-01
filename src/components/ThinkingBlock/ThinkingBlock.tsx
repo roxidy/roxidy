@@ -1,16 +1,43 @@
 import { Brain, ChevronDown, ChevronRight } from "lucide-react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useIsAgentThinking, useIsThinkingExpanded, useStore, useThinkingContent } from "@/store";
 
 interface ThinkingBlockProps {
-  sessionId: string;
+  /** Session ID for live streaming mode */
+  sessionId?: string;
+  /** Static thinking content for finalized messages */
+  content?: string;
+  /** Whether the thinking is still in progress (for streaming mode) */
+  isThinking?: boolean;
 }
 
-export function ThinkingBlock({ sessionId }: ThinkingBlockProps) {
-  const thinkingContent = useThinkingContent(sessionId);
-  const isExpanded = useIsThinkingExpanded(sessionId);
-  const isThinking = useIsAgentThinking(sessionId);
+/**
+ * ThinkingBlock - Displays extended thinking content from the model.
+ *
+ * Can be used in two modes:
+ * 1. Streaming mode: Pass sessionId to read live thinking content from store
+ * 2. Static mode: Pass content directly for finalized messages
+ */
+export function ThinkingBlock({
+  sessionId,
+  content: staticContent,
+  isThinking: staticIsThinking,
+}: ThinkingBlockProps) {
+  // For streaming mode, read from store
+  const storeThinkingContent = useThinkingContent(sessionId ?? "");
+  const storeIsThinkingExpanded = useIsThinkingExpanded(sessionId ?? "");
+  const storeIsThinking = useIsAgentThinking(sessionId ?? "");
   const setThinkingExpanded = useStore((state) => state.setThinkingExpanded);
+
+  // For static mode, use local state for expansion
+  const [localExpanded, setLocalExpanded] = useState(false);
+
+  // Determine which mode we're in
+  const isStreamingMode = sessionId !== undefined;
+  const thinkingContent = isStreamingMode ? storeThinkingContent : staticContent;
+  const isExpanded = isStreamingMode ? storeIsThinkingExpanded : localExpanded;
+  const isThinking = isStreamingMode ? storeIsThinking : (staticIsThinking ?? false);
 
   // Don't render if no thinking content
   if (!thinkingContent) {
@@ -18,7 +45,11 @@ export function ThinkingBlock({ sessionId }: ThinkingBlockProps) {
   }
 
   const toggleExpanded = () => {
-    setThinkingExpanded(sessionId, !isExpanded);
+    if (isStreamingMode && sessionId) {
+      setThinkingExpanded(sessionId, !isExpanded);
+    } else {
+      setLocalExpanded(!localExpanded);
+    }
   };
 
   return (

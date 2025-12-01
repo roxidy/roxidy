@@ -22,12 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  type ApprovalPattern,
-  calculateApprovalRate,
-  type RiskLevel,
-  respondToToolApproval,
-} from "@/lib/ai";
+import { type ApprovalPattern, calculateApprovalRate, respondToToolApproval } from "@/lib/ai";
+import { getRiskLevel, isDangerousTool, type RiskLevel } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 import { usePendingToolApproval, useStore } from "@/store";
 
@@ -42,68 +38,6 @@ const RISK_STYLES: Record<RiskLevel, { color: string; bg: string; icon: typeof S
   high: { color: "text-[#e0af68]", bg: "bg-[#e0af68]/10", icon: AlertTriangle },
   critical: { color: "text-[#f7768e]", bg: "bg-[#f7768e]/10", icon: AlertTriangle },
 };
-
-// Tools that can modify files or execute code (for backward compatibility)
-const DANGEROUS_TOOLS = [
-  "write_file",
-  "edit_file",
-  "apply_patch",
-  "run_pty_cmd",
-  "shell",
-  "execute_code",
-  "delete_file",
-];
-
-function getRiskLevel(toolName: string): RiskLevel {
-  // Read-only operations
-  if (
-    [
-      "read_file",
-      "grep_file",
-      "list_files",
-      "indexer_search_code",
-      "indexer_search_files",
-      "indexer_analyze_file",
-      "indexer_extract_symbols",
-      "indexer_get_metrics",
-      "indexer_detect_language",
-      "debug_agent",
-      "analyze_agent",
-      "get_errors",
-      "list_skills",
-      "search_skills",
-      "load_skill",
-      "search_tools",
-      "update_plan",
-      "web_fetch",
-    ].includes(toolName)
-  ) {
-    return "low";
-  }
-
-  // Write operations (recoverable)
-  if (["write_file", "create_file", "edit_file", "apply_patch", "save_skill"].includes(toolName)) {
-    return "medium";
-  }
-
-  // Shell execution
-  if (["run_pty_cmd", "create_pty_session", "send_pty_input"].includes(toolName)) {
-    return "high";
-  }
-
-  // Destructive operations
-  if (["delete_file", "execute_code"].includes(toolName)) {
-    return "critical";
-  }
-
-  // Sub-agents are medium risk
-  if (toolName.startsWith("sub_agent_")) {
-    return "medium";
-  }
-
-  // Default for unknown tools
-  return "high";
-}
 
 function ApprovalStats({ stats }: { stats: ApprovalPattern }) {
   const rate = calculateApprovalRate(stats);
@@ -141,8 +75,7 @@ export function ToolApprovalDialog({ sessionId }: ToolApprovalDialogProps) {
   const stats = (tool as { stats?: ApprovalPattern }).stats;
   const suggestion = (tool as { suggestion?: string | null }).suggestion;
   const canLearn = (tool as { canLearn?: boolean }).canLearn ?? true;
-  const isDangerous =
-    DANGEROUS_TOOLS.includes(tool.name) || riskLevel === "high" || riskLevel === "critical";
+  const isDangerous = isDangerousTool(tool.name, riskLevel);
   const RiskIcon = RISK_STYLES[riskLevel].icon;
 
   const handleApprove = async () => {

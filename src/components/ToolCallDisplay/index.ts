@@ -1,1 +1,1 @@
-export { ToolCallDisplay } from "./ToolCallDisplay";
+export { ToolCallDisplay, ToolItem } from "./ToolCallDisplay";
