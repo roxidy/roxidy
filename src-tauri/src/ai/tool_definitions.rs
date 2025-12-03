@@ -32,8 +32,6 @@ pub enum ToolPreset {
     /// Standard tools for most development tasks (default)
     #[default]
     Standard,
-    /// Standard tools + indexer tools for code exploration
-    Coder,
     /// All tools from vtcode-core
     Full,
 }
@@ -61,30 +59,6 @@ impl ToolPreset {
                 "web_fetch",
                 // Planning
                 "update_plan",
-            ]),
-            ToolPreset::Coder => Some(vec![
-                // Search & discovery
-                "grep_file",
-                "list_files",
-                // File operations
-                "read_file",
-                "create_file",
-                "edit_file",
-                "write_file",
-                "delete_file",
-                // Shell execution
-                "run_pty_cmd",
-                // Web
-                "web_fetch",
-                // Planning
-                "update_plan",
-                // Indexer tools for code exploration
-                "indexer_search_code",
-                "indexer_search_files",
-                "indexer_analyze_file",
-                "indexer_extract_symbols",
-                "indexer_get_metrics",
-                "indexer_detect_language",
             ]),
             ToolPreset::Full => None, // None means all tools
         }
@@ -596,28 +570,6 @@ mod tests {
         // Should NOT have skill tools or PTY session management
         assert!(!names.contains(&"save_skill"));
         assert!(!names.contains(&"create_pty_session"));
-    }
-
-    #[test]
-    fn test_tool_preset_coder() {
-        let preset = ToolPreset::Coder;
-        let names = preset.tool_names().unwrap();
-
-        // Should have all standard tools
-        assert!(names.contains(&"grep_file"));
-        assert!(names.contains(&"list_files"));
-        assert!(names.contains(&"read_file"));
-        assert!(names.contains(&"edit_file"));
-        assert!(names.contains(&"run_pty_cmd"));
-        assert!(names.contains(&"web_fetch"));
-
-        // Should also have indexer tools
-        assert!(names.contains(&"indexer_search_code"));
-        assert!(names.contains(&"indexer_search_files"));
-        assert!(names.contains(&"indexer_analyze_file"));
-        assert!(names.contains(&"indexer_extract_symbols"));
-        assert!(names.contains(&"indexer_get_metrics"));
-        assert!(names.contains(&"indexer_detect_language"));
     }
 
     #[test]

@@ -1,10 +1,11 @@
 import { Bot, User } from "lucide-react";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { Markdown } from "@/components/Markdown";
 import { StaticThinkingBlock } from "@/components/ThinkingBlock";
-import { ToolItem } from "@/components/ToolCallDisplay";
+import { ToolGroup, ToolItem } from "@/components/ToolCallDisplay";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { groupConsecutiveTools } from "@/lib/toolGrouping";
 import { cn } from "@/lib/utils";
 import type { AgentMessage as AgentMessageType } from "@/store";
 
@@ -18,6 +19,12 @@ export const AgentMessage = memo(function AgentMessage({ message }: AgentMessage
 
   // Use streamingHistory if available (interleaved text + tool calls), otherwise fallback to legacy
   const hasStreamingHistory = message.streamingHistory && message.streamingHistory.length > 0;
+
+  // Group consecutive tool calls for cleaner display
+  const groupedHistory = useMemo(
+    () => (message.streamingHistory ? groupConsecutiveTools(message.streamingHistory) : []),
+    [message.streamingHistory]
+  );
 
   return (
     <div className={cn("flex gap-3 min-w-0", isUser && "flex-row-reverse")}>
@@ -60,10 +67,10 @@ export const AgentMessage = memo(function AgentMessage({ message }: AgentMessage
           {/* Thinking content (collapsible) */}
           {message.thinkingContent && <StaticThinkingBlock content={message.thinkingContent} />}
 
-          {/* Render interleaved streaming history if available */}
+          {/* Render interleaved streaming history if available (grouped for cleaner display) */}
           {hasStreamingHistory ? (
             <div className="space-y-2">
-              {message.streamingHistory?.map((block, blockIndex) => {
+              {groupedHistory.map((block, blockIndex) => {
                 if (block.type === "text") {
                   return (
                     // biome-ignore lint/suspicious/noArrayIndexKey: blocks are in fixed order and never reordered
@@ -72,7 +79,11 @@ export const AgentMessage = memo(function AgentMessage({ message }: AgentMessage
                     </div>
                   );
                 }
-                return <ToolItem key={block.toolCall.id} tool={block.toolCall} />;
+                if (block.type === "tool_group") {
+                  return <ToolGroup key={`group-${block.tools[0].id}`} group={block} />;
+                }
+                // Single tool - show with inline name
+                return <ToolItem key={block.toolCall.id} tool={block.toolCall} showInlineName />;
               })}
             </div>
           ) : (

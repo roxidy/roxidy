@@ -67,6 +67,16 @@ impl QbitSessionMessage {
         }
     }
 
+    pub fn tool_use(tool_name: impl Into<String>, result: impl Into<String>) -> Self {
+        let tool_name = tool_name.into();
+        Self {
+            role: QbitMessageRole::Tool,
+            content: result.into(),
+            tool_call_id: None,
+            tool_name: Some(tool_name),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn tool_result(content: impl Into<String>, tool_call_id: impl Into<String>) -> Self {
         Self {
@@ -225,6 +235,15 @@ impl QbitSessionManager {
         self.messages.push(QbitSessionMessage::assistant(content));
         self.transcript
             .push(format!("Assistant: {}", truncate(content, 200)));
+    }
+
+    /// Record a tool use.
+    pub fn add_tool_use(&mut self, tool_name: &str, result: &str) {
+        self.tools_used.insert(tool_name.to_string());
+        self.messages
+            .push(QbitSessionMessage::tool_use(tool_name, result));
+        self.transcript
+            .push(format!("Tool[{}]: {}", tool_name, truncate(result, 100)));
     }
 
     /// Convert rig Messages to session messages.

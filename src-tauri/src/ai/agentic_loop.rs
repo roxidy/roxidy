@@ -296,11 +296,14 @@ pub async fn execute_tool_direct(
 
     match &result {
         Ok(v) => {
-            let is_success = v
+            // Check for failure: exit_code != 0 OR presence of "error" field
+            let is_failure_by_exit_code = v
                 .get("exit_code")
                 .and_then(|ec| ec.as_i64())
-                .map(|ec| ec == 0)
-                .unwrap_or(true);
+                .map(|ec| ec != 0)
+                .unwrap_or(false);
+            let has_error_field = v.get("error").is_some();
+            let is_success = !is_failure_by_exit_code && !has_error_field;
             Ok(ToolExecutionResult {
                 value: v.clone(),
                 success: is_success,

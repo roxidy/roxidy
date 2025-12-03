@@ -16,6 +16,7 @@ import { memo, useState } from "react";
 import { TruncatedOutput } from "@/components/TruncatedOutput";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { formatPrimaryArg } from "@/lib/toolGrouping";
 import { formatToolResult, isAgentTerminalCommand } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 import type { ActiveToolCall, ToolCall } from "@/store";
@@ -28,6 +29,8 @@ interface ToolItemProps {
   tool: AnyToolCall;
   /** Compact mode uses less visual weight, suitable for inline display */
   compact?: boolean;
+  /** Show primary argument inline with tool name (e.g., "read_file: utils.ts") */
+  showInlineName?: boolean;
 }
 
 /** Tool name to icon mapping */
@@ -96,13 +99,18 @@ const statusConfig: Record<
 };
 
 /** Single tool call item with collapsible details */
-export const ToolItem = memo(function ToolItem({ tool, compact = false }: ToolItemProps) {
+export const ToolItem = memo(function ToolItem({
+  tool,
+  compact = false,
+  showInlineName = false,
+}: ToolItemProps) {
   const [isOpen, setIsOpen] = useState(false);
   const Icon = toolIcons[tool.name] || Terminal;
   const status = statusConfig[tool.status];
   const StatusIcon = status.icon;
   const isTerminalCmd = isAgentTerminalCommand(tool);
   const hasArgs = Object.keys(tool.args).length > 0;
+  const primaryArg = showInlineName ? formatPrimaryArg(tool) : null;
 
   // For terminal commands, always show output (non-collapsible header behavior)
   // For other tools, make the header clickable to expand
@@ -141,6 +149,11 @@ export const ToolItem = memo(function ToolItem({ tool, compact = false }: ToolIt
               />
               <span className={cn("font-mono text-[#c0caf5]", compact ? "text-xs" : "text-sm")}>
                 {tool.name}
+                {primaryArg && (
+                  <span className="text-[#565f89]">
+                    : <span className="text-[#9aa5ce]">{primaryArg}</span>
+                  </span>
+                )}
               </span>
               {isTerminalCmd && (
                 <Bot className={cn("text-[#bb9af7]", compact ? "w-3 h-3" : "w-3.5 h-3.5")} />

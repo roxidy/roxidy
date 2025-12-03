@@ -1,5 +1,15 @@
 AI-powered terminal emulator built with Tauri 2 (Rust backend, React 19 frontend).
 
+## About This Project
+
+This is **Qbit's own codebase**. If you are Qbit, then you are the AI agent being developed here. The system prompt you operate under is defined in `src-tauri/crates/vtcode-core/src/prompts/system.md`. When working on this project, you have unique insight into how changes will affect your own behavior.
+
+Key self-referential files:
+- `src-tauri/crates/vtcode-core/src/prompts/` - Your prompts and tool definitions
+- `src-tauri/crates/vtcode-core/src/agent/` - Your agent orchestration logic
+- `src-tauri/src/ai/` - Tauri bridge connecting you to the frontend
+- `src/components/AgentChat/` - How users see your responses
+
 ## Commands
 
 ```bash

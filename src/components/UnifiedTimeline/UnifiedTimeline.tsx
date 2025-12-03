@@ -3,8 +3,9 @@ import { Bot, Loader2, Sparkles, TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Markdown } from "@/components/Markdown";
 import { StreamingThinkingBlock } from "@/components/ThinkingBlock";
-import { ToolCallDisplay } from "@/components/ToolCallDisplay";
+import { ToolGroup, ToolItem } from "@/components/ToolCallDisplay";
 import { stripOscSequences } from "@/lib/ansi";
+import { groupConsecutiveTools } from "@/lib/toolGrouping";
 import {
   useIsAgentThinking,
   usePendingCommand,
@@ -33,6 +34,9 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
     [pendingCommand?.output]
   );
 
+  // Group consecutive tool calls for cleaner display
+  const groupedBlocks = useMemo(() => groupConsecutiveTools(streamingBlocks), [streamingBlocks]);
+
   // Debounced scroll to avoid thrashing on every character delta
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -45,15 +49,20 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
     }, 50); // Debounce by 50ms to batch updates
   }, []);
 
-  // Auto-scroll to bottom when new blocks arrive
+  // Auto-scroll to bottom when new content arrives
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional triggers for auto-scroll
   useEffect(() => {
     scrollToBottom();
+  }, [scrollToBottom, timeline.length, streamingBlocks.length, pendingOutput, thinkingContent]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
     return () => {
       if (scrollTimeoutRef.current) {
         clearTimeout(scrollTimeoutRef.current);
       }
     };
-  }, [scrollToBottom]);
+  }, []);
 
   // Empty state - only show if no timeline, no streaming, no thinking, and no command running
   const hasRunningCommand = pendingCommand?.command;
@@ -133,10 +142,10 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
             {/* Extended thinking block inside the card */}
             {thinkingContent && <StreamingThinkingBlock sessionId={sessionId} />}
 
-            {/* Streaming text and tool calls */}
-            {streamingBlocks.map((block, blockIndex) => {
+            {/* Streaming text and tool calls (grouped for cleaner display) */}
+            {groupedBlocks.map((block, blockIndex) => {
               if (block.type === "text") {
-                const isLast = blockIndex === streamingBlocks.length - 1;
+                const isLast = blockIndex === groupedBlocks.length - 1;
                 return (
                   // biome-ignore lint/suspicious/noArrayIndexKey: blocks are appended and never reordered
                   <div key={`text-${blockIndex}`}>
@@ -147,7 +156,11 @@ export function UnifiedTimeline({ sessionId }: UnifiedTimelineProps) {
                   </div>
                 );
               }
-              return <ToolCallDisplay key={block.toolCall.id} toolCalls={[block.toolCall]} />;
+              if (block.type === "tool_group") {
+                return <ToolGroup key={`group-${block.tools[0].id}`} group={block} />;
+              }
+              // Single tool - show with inline name
+              return <ToolItem key={block.toolCall.id} tool={block.toolCall} showInlineName />;
             })}
           </div>
         </div>
