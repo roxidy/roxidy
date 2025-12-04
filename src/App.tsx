@@ -219,7 +219,8 @@ function App() {
   const handleToggleMode = useCallback(() => {
     if (activeSessionId) {
       const currentSession = sessions[activeSessionId];
-      const newMode = currentSession?.mode === "agent" ? "terminal" : "agent";
+      const currentInputMode = currentSession?.inputMode ?? "terminal";
+      const newMode = currentInputMode === "agent" ? "terminal" : "agent";
       setInputMode(activeSessionId, newMode);
     }
   }, [activeSessionId, sessions, setInputMode]);
