@@ -67,6 +67,7 @@ impl QbitSessionMessage {
         }
     }
 
+    #[allow(dead_code)]
     pub fn tool_use(tool_name: impl Into<String>, result: impl Into<String>) -> Self {
         let tool_name = tool_name.into();
         Self {
@@ -238,6 +239,7 @@ impl QbitSessionManager {
     }
 
     /// Record a tool use.
+    #[allow(dead_code)]
     pub fn add_tool_use(&mut self, tool_name: &str, result: &str) {
         self.tools_used.insert(tool_name.to_string());
         self.messages

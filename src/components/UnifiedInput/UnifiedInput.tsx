@@ -347,6 +347,7 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
       filteredSlashPrompts,
       slashSelectedIndex,
       handleSlashSelect,
+      setInputMode,
     ]
   );
 
