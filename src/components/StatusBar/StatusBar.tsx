@@ -126,39 +126,46 @@ export function StatusBar({ sessionId }: StatusBarProps) {
           </button>
         </div>
 
-        {/* Model selector badge */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2.5 gap-1.5 text-sm font-normal rounded-md bg-[#bb9af7]/10 text-[#bb9af7] hover:bg-[#bb9af7]/20 hover:text-[#bb9af7]"
-            >
-              <Cpu className="w-4 h-4" />
-              <span>{formatModel(model)}</span>
-              <ChevronDown className="w-4 h-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            className="bg-[#1f2335] border-[#3b4261] min-w-[180px]"
-          >
-            {AVAILABLE_MODELS.map((m) => (
-              <DropdownMenuItem
-                key={m.id}
-                onClick={() => handleModelSelect(m.id)}
-                className={cn(
-                  "text-sm cursor-pointer",
-                  model === m.id
-                    ? "text-[#bb9af7] bg-[#bb9af7]/10"
-                    : "text-[#c0caf5] hover:text-[#bb9af7]"
-                )}
+        {/* Model selector badge or Terminal Mode indicator */}
+        {inputMode === "terminal" ? (
+          <div className="h-7 px-2.5 gap-1.5 text-sm font-normal rounded-md bg-[#7aa2f7]/10 text-[#7aa2f7] flex items-center">
+            <Terminal className="w-4 h-4" />
+            <span>Terminal Mode</span>
+          </div>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2.5 gap-1.5 text-sm font-normal rounded-md bg-[#bb9af7]/10 text-[#bb9af7] hover:bg-[#bb9af7]/20 hover:text-[#bb9af7]"
               >
-                {m.name}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                <Cpu className="w-4 h-4" />
+                <span>{formatModel(model)}</span>
+                <ChevronDown className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="bg-[#1f2335] border-[#3b4261] min-w-[180px]"
+            >
+              {AVAILABLE_MODELS.map((m) => (
+                <DropdownMenuItem
+                  key={m.id}
+                  onClick={() => handleModelSelect(m.id)}
+                  className={cn(
+                    "text-sm cursor-pointer",
+                    model === m.id
+                      ? "text-[#bb9af7] bg-[#bb9af7]/10"
+                      : "text-[#c0caf5] hover:text-[#bb9af7]"
+                  )}
+                >
+                  {m.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {/* Right side - Provider */}
