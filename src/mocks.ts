@@ -16,44 +16,72 @@
  */
 
 import { mockIPC, mockWindows, clearMocks } from "@tauri-apps/api/mocks";
+import * as tauriEvent from "@tauri-apps/api/event";
+
+// =============================================================================
+// Browser Mode Flag
+// =============================================================================
+
+// This flag is set to true when mocks are initialized.
+// It's exposed globally so App.tsx can check it even after mockWindows()
+// creates __TAURI_INTERNALS__.
+declare global {
+  interface Window {
+    __MOCK_BROWSER_MODE__?: boolean;
+  }
+}
+
+/**
+ * Check if we're running in mock browser mode.
+ * Use this instead of checking __TAURI_INTERNALS__ in components.
+ */
+export function isMockBrowserMode(): boolean {
+  return window.__MOCK_BROWSER_MODE__ === true;
+}
 
 // =============================================================================
 // Event System (custom implementation for browser mode)
 // =============================================================================
 
+// Auto-incrementing handler ID
+let nextHandlerId = 1;
+
 // Map of event name -> array of { handlerId, callback }
 const mockEventListeners: Map<string, Array<{ handlerId: number; callback: (event: { event: string; payload: unknown }) => void }>> = new Map();
 
-// Map of handler ID -> callback (for looking up callbacks by ID)
-const callbackRegistry: Map<number, (event: { event: string; payload: unknown }) => void> = new Map();
+// Map of handler ID -> { event, callback } (for unlisten)
+const handlerToEvent: Map<number, string> = new Map();
 
 /**
  * Register an event listener with its callback
  */
 export function mockRegisterListener(
   event: string,
-  handlerId: number,
   callback: (event: { event: string; payload: unknown }) => void
-): void {
+): number {
+  const handlerId = nextHandlerId++;
   if (!mockEventListeners.has(event)) {
     mockEventListeners.set(event, []);
   }
   mockEventListeners.get(event)!.push({ handlerId, callback });
-  callbackRegistry.set(handlerId, callback);
+  handlerToEvent.set(handlerId, event);
   console.log(`[Mock Events] Registered listener for "${event}" (handler: ${handlerId})`);
+  return handlerId;
 }
 
 /**
- * Unregister an event listener
+ * Unregister an event listener by handler ID
  */
 export function mockUnregisterListener(handlerId: number): void {
-  callbackRegistry.delete(handlerId);
-  for (const [event, listeners] of mockEventListeners) {
+  const eventName = handlerToEvent.get(handlerId);
+  if (!eventName) return;
+
+  handlerToEvent.delete(handlerId);
+  const listeners = mockEventListeners.get(eventName);
+  if (listeners) {
     const filtered = listeners.filter((l) => l.handlerId !== handlerId);
-    if (filtered.length !== listeners.length) {
-      mockEventListeners.set(event, filtered);
-      console.log(`[Mock Events] Unregistered listener (handler: ${handlerId})`);
-    }
+    mockEventListeners.set(eventName, filtered);
+    console.log(`[Mock Events] Unregistered listener for "${eventName}" (handler: ${handlerId})`);
   }
 }
 
@@ -372,38 +400,56 @@ export function cleanupMocks(): void {
 export function setupMocks(): void {
   console.log("[Mocks] Setting up Tauri IPC mocks for browser development");
 
-  // Setup mock window context (required for events)
-  mockWindows("main");
+  // Set the browser mode flag BEFORE mockWindows creates __TAURI_INTERNALS__
+  // This allows components to check isMockBrowserMode() after mocks are set up
+  window.__MOCK_BROWSER_MODE__ = true;
 
-  // Hook into the Tauri callback system to capture event listeners
-  const tauriInternals = (window as unknown as {
-    __TAURI_INTERNALS__?: {
-      transformCallback: (callback: (response: unknown) => void, once?: boolean) => number;
-      [key: string]: unknown;
+  try {
+    // Setup mock window context (required for Tauri internals)
+    mockWindows("main");
+
+    // Patch the Tauri event module's listen function to use our mock event system
+    // ES module exports are read-only, so we use Object.defineProperty to override
+    const originalListen = tauriEvent.listen;
+
+    // Create our mock listen function
+    const mockListen = async <T>(
+      eventName: string,
+      callback: (event: { event: string; payload: T }) => void
+    ): Promise<() => void> => {
+      console.log(`[Mock Events] listen("${eventName}") called`);
+
+      // Register the callback with our mock event system
+      const handlerId = mockRegisterListener(eventName, callback as (event: { event: string; payload: unknown }) => void);
+
+      // Return an unlisten function
+      return () => {
+        mockUnregisterListener(handlerId);
+      };
     };
-  }).__TAURI_INTERNALS__;
 
-  if (tauriInternals) {
-    const originalTransformCallback = tauriInternals.transformCallback;
-    let pendingCallback: ((response: unknown) => void) | null = null;
-    let pendingHandlerId: number | null = null;
+    // Try to override the listen export using Object.defineProperty
+    // Note: This usually fails because ES modules have read-only exports,
+    // but we try anyway in case the bundler makes it writable
+    try {
+      Object.defineProperty(tauriEvent, "listen", {
+        value: mockListen,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      // Expected to fail - we use the global fallback instead
+      // Hooks check for window.__MOCK_LISTEN__ when in browser mode
+    }
 
-    // Wrap transformCallback to capture callbacks
-    tauriInternals.transformCallback = (callback: (response: unknown) => void, once?: boolean): number => {
-      const handlerId = originalTransformCallback.call(tauriInternals, callback, once);
-      // Store the callback temporarily - it will be associated with an event in plugin:event|listen
-      pendingCallback = callback;
-      pendingHandlerId = handlerId;
-      return handlerId;
-    };
+    // Store mock listen function globally as a fallback
+    // Hooks can check for this when the module patch doesn't work
+    (window as unknown as { __MOCK_LISTEN__?: typeof mockListen }).__MOCK_LISTEN__ = mockListen;
 
-    // Store reference to get pending callback in IPC handler
-    (window as unknown as { __MOCK_PENDING_CALLBACK__?: () => { callback: ((response: unknown) => void) | null; handlerId: number | null } }).__MOCK_PENDING_CALLBACK__ = () => {
-      const result = { callback: pendingCallback, handlerId: pendingHandlerId };
-      pendingCallback = null;
-      pendingHandlerId = null;
-      return result;
-    };
+    // Store reference to original for cleanup
+    (window as unknown as { __MOCK_ORIGINAL_LISTEN__?: typeof originalListen }).__MOCK_ORIGINAL_LISTEN__ = originalListen;
+  } catch (error) {
+    console.error("[Mocks] Error during initial setup:", error);
   }
 
   mockIPC((cmd, args) => {
@@ -756,22 +802,12 @@ export function setupMocks(): void {
 
       // =========================================================================
       // Tauri Plugin Commands (event system)
+      // Note: We patch tauriEvent.listen directly, so these handlers are just
+      // for compatibility if any code calls invoke() directly
       // =========================================================================
       case "plugin:event|listen": {
-        // Get the pending callback that was just registered via transformCallback
-        const getPending = (window as unknown as { __MOCK_PENDING_CALLBACK__?: () => { callback: ((response: unknown) => void) | null; handlerId: number | null } }).__MOCK_PENDING_CALLBACK__;
         const payload = args as { event: string; handler: number };
-
-        if (getPending) {
-          const { callback, handlerId } = getPending();
-          if (callback && handlerId !== null) {
-            // Register the callback with our mock event system
-            mockRegisterListener(payload.event, handlerId, (event) => {
-              callback(event);
-            });
-          }
-        }
-
+        // Return the handler ID - actual registration happens via patched listen()
         return payload.handler;
       }
 

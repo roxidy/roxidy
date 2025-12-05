@@ -21,22 +21,21 @@ test.describe("Tauri IPC Mocks", () => {
     expect(consoleLogs).toContain("[Mocks] Tauri IPC mocks initialized successfully");
   });
 
-  test("should have mocked __TAURI_INTERNALS__ after setup", async ({ page }) => {
+  test("should have browser mode flag set after setup", async ({ page }) => {
     await page.goto("/");
 
-    // After mockWindows("main") is called, __TAURI_INTERNALS__ should be present
-    // This is expected behavior - the mock creates a fake Tauri context
-    const tauriInternals = await page.evaluate(() => {
-      const internals = (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    // Wait for the app to initialize
+    await page.waitForTimeout(1000);
+
+    // Check that the mock browser mode flag is set
+    const mockModeFlag = await page.evaluate(() => {
       return {
-        exists: "__TAURI_INTERNALS__" in window,
-        hasMetadata: internals && typeof internals === "object" && "metadata" in internals,
+        isBrowserMode: (window as unknown as { __MOCK_BROWSER_MODE__?: boolean }).__MOCK_BROWSER_MODE__ === true,
       };
     });
 
-    // mockWindows creates __TAURI_INTERNALS__ with metadata
-    expect(tauriInternals.exists).toBe(true);
-    expect(tauriInternals.hasMetadata).toBe(true);
+    // setupMocks() sets __MOCK_BROWSER_MODE__ = true before any other initialization
+    expect(mockModeFlag.isBrowserMode).toBe(true);
   });
 
   test("should handle invoke calls without errors", async ({ page }) => {
@@ -144,5 +143,33 @@ test.describe("Tauri IPC Mocks", () => {
     await expect(page.locator("text=Build Failure")).toBeVisible();
     await expect(page.locator("text=Code Review")).toBeVisible();
     await expect(page.locator("text=Long Output")).toBeVisible();
+  });
+
+  test("should register event listeners correctly", async ({ page }) => {
+    const eventLogs: string[] = [];
+
+    // Capture console logs for event registration
+    page.on("console", (msg) => {
+      const text = msg.text();
+      if (text.includes("[Mock Events]")) {
+        eventLogs.push(text);
+      }
+    });
+
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+
+    // Wait for hooks to register listeners
+    await page.waitForTimeout(2000);
+
+    // Check that event listeners were registered
+    // The app's hooks (useTauriEvents, useAiEvents) should register listeners
+    const hasTerminalListener = eventLogs.some((log) => log.includes('listen("terminal_output")'));
+    const hasCommandBlockListener = eventLogs.some((log) => log.includes('listen("command_block")'));
+    const hasAiEventListener = eventLogs.some((log) => log.includes('listen("ai-event")'));
+
+    expect(hasTerminalListener).toBe(true);
+    expect(hasCommandBlockListener).toBe(true);
+    expect(hasAiEventListener).toBe(true);
   });
 });

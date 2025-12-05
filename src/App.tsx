@@ -29,8 +29,15 @@ import { ptyCreate, shellIntegrationInstall, shellIntegrationStatus } from "./li
 import { ComponentTestbed } from "./pages/ComponentTestbed";
 import { clearConversation, restoreSession, useStore } from "./store";
 
-// Check if running in browser mode (not Tauri)
-const isBrowserMode = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+// Check if running in browser mode (mocks are active)
+// The __MOCK_BROWSER_MODE__ flag is set by setupMocks() BEFORE mockWindows() creates __TAURI_INTERNALS__
+// This allows us to correctly detect browser mode even after mocks are initialized
+declare global {
+  interface Window {
+    __MOCK_BROWSER_MODE__?: boolean;
+  }
+}
+const isBrowserMode = typeof window !== "undefined" && window.__MOCK_BROWSER_MODE__ === true;
 
 function App() {
   const { addSession, activeSessionId, sessions, setInputMode, setAiConfig } = useStore();

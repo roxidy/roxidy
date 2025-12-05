@@ -1,6 +1,5 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
 import "./index.css";
 
 /**
@@ -14,6 +13,10 @@ function isTauri(): boolean {
 /**
  * Initialize the application.
  * In browser mode (not Tauri), load mocks before rendering.
+ *
+ * IMPORTANT: App is dynamically imported AFTER mocks are set up.
+ * This ensures the mock event system is in place before hooks import
+ * the listen() function from @tauri-apps/api/event.
  */
 async function initApp(): Promise<void> {
   if (!isTauri()) {
@@ -21,6 +24,10 @@ async function initApp(): Promise<void> {
     const { setupMocks } = await import("./mocks");
     setupMocks();
   }
+
+  // Dynamic import AFTER mocks are set up
+  // This ensures hooks get the patched listen() function
+  const { default: App } = await import("./App");
 
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
