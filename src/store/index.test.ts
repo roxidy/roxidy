@@ -367,9 +367,10 @@ describe("Store", () => {
 
       it("should accumulate streaming content with updates", () => {
         const store = useStore.getState();
+        // updateAgentStreaming appends deltas, not full strings
         store.updateAgentStreaming("session-1", "Hello");
-        store.updateAgentStreaming("session-1", "Hello, how");
-        store.updateAgentStreaming("session-1", "Hello, how can I help?");
+        store.updateAgentStreaming("session-1", ", how");
+        store.updateAgentStreaming("session-1", " can I help?");
 
         expect(useStore.getState().agentStreaming["session-1"]).toBe("Hello, how can I help?");
       });
