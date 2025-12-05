@@ -152,6 +152,8 @@ pub fn run() {
             // Prompt commands
             list_prompts,
             read_prompt,
+            // File commands
+            list_workspace_files,
             // Workflow commands (generic)
             list_workflows,
             start_workflow,
