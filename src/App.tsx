@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { ToolApprovalDialog } from "./components/AgentChat";
 import { CommandPalette, type PageRoute } from "./components/CommandPalette";
+import { MockDevTools } from "./components/MockDevTools";
 import { SessionBrowser } from "./components/SessionBrowser";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -27,6 +28,9 @@ import {
 import { ptyCreate, shellIntegrationInstall, shellIntegrationStatus } from "./lib/tauri";
 import { ComponentTestbed } from "./pages/ComponentTestbed";
 import { clearConversation, restoreSession, useStore } from "./store";
+
+// Check if running in browser mode (not Tauri)
+const isBrowserMode = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
 function App() {
   const { addSession, activeSessionId, sessions, setInputMode, setAiConfig } = useStore();
@@ -340,6 +344,9 @@ function App() {
           </div>
           <Skeleton className="h-8 w-full bg-[#1f2335]" />
         </div>
+
+        {/* Mock Dev Tools - available during loading in browser mode */}
+        {isBrowserMode && <MockDevTools />}
       </div>
     );
   }
@@ -348,6 +355,8 @@ function App() {
     return (
       <div className="flex items-center justify-center h-screen bg-[#1a1b26]">
         <div className="text-[#f7768e] text-lg">Error: {error}</div>
+        {/* Mock Dev Tools - available on error in browser mode */}
+        {isBrowserMode && <MockDevTools />}
       </div>
     );
   }
@@ -385,6 +394,8 @@ function App() {
             },
           }}
         />
+        {/* Mock Dev Tools - available on testbed in browser mode */}
+        {isBrowserMode && <MockDevTools />}
       </>
     );
   }
@@ -466,6 +477,9 @@ function App() {
           },
         }}
       />
+
+      {/* Mock Dev Tools - only in browser mode */}
+      {isBrowserMode && <MockDevTools />}
     </div>
   );
 }

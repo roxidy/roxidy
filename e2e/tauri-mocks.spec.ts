@@ -21,14 +21,22 @@ test.describe("Tauri IPC Mocks", () => {
     expect(consoleLogs).toContain("[Mocks] Tauri IPC mocks initialized successfully");
   });
 
-  test("should not have __TAURI_INTERNALS__ in browser mode", async ({ page }) => {
+  test("should have mocked __TAURI_INTERNALS__ after setup", async ({ page }) => {
     await page.goto("/");
 
-    const hasTauriInternals = await page.evaluate(() => {
-      return "__TAURI_INTERNALS__" in window;
+    // After mockWindows("main") is called, __TAURI_INTERNALS__ should be present
+    // This is expected behavior - the mock creates a fake Tauri context
+    const tauriInternals = await page.evaluate(() => {
+      const internals = (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      return {
+        exists: "__TAURI_INTERNALS__" in window,
+        hasMetadata: internals && typeof internals === "object" && "metadata" in internals,
+      };
     });
 
-    expect(hasTauriInternals).toBe(false);
+    // mockWindows creates __TAURI_INTERNALS__ with metadata
+    expect(tauriInternals.exists).toBe(true);
+    expect(tauriInternals.hasMetadata).toBe(true);
   });
 
   test("should handle invoke calls without errors", async ({ page }) => {
@@ -91,5 +99,27 @@ test.describe("Tauri IPC Mocks", () => {
     // The root should have some content (not empty)
     const rootContent = await root.innerHTML();
     expect(rootContent.length).toBeGreaterThan(0);
+  });
+
+  test("should show MockDevTools toggle button in browser mode", async ({ page }) => {
+    await page.goto("/");
+
+    // Wait for the app to load
+    await page.waitForLoadState("networkidle");
+
+    // The MockDevTools toggle button should be visible (wrench icon)
+    const toggleButton = page.locator('button[title="Toggle Mock Dev Tools"]');
+    await expect(toggleButton).toBeVisible();
+
+    // Click to open the dev tools panel
+    await toggleButton.click();
+
+    // The panel should now be visible with "Mock Dev Tools" title
+    const panelTitle = page.locator("text=Mock Dev Tools");
+    await expect(panelTitle).toBeVisible();
+
+    // Should show "BROWSER MODE" badge
+    const badge = page.locator("text=BROWSER MODE");
+    await expect(badge).toBeVisible();
   });
 });
