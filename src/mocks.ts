@@ -1,14 +1,22 @@
 /**
  * Tauri IPC Mock Adapter
  *
- * This module provides mock implementations for all Tauri IPC commands,
+ * This module provides mock implementations for all Tauri IPC commands and events,
  * enabling browser-only development without the Rust backend.
  *
  * Usage: This file is automatically loaded in browser environments
  * (when window.__TAURI_INTERNALS__ is undefined).
+ *
+ * Events can be emitted using the exported helper functions:
+ * - emitTerminalOutput(sessionId, data)
+ * - emitCommandBlock(block)
+ * - emitDirectoryChanged(sessionId, directory)
+ * - emitSessionEnded(sessionId)
+ * - emitAiEvent(event)
  */
 
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC, mockWindows, clearMocks } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
 
 // =============================================================================
 // Mock Data
@@ -164,11 +172,150 @@ let mockIndexerWorkspace: string | null = null;
 let mockIndexedFileCount = 0;
 
 // =============================================================================
+// Event Types (matching backend events)
+// =============================================================================
+
+export interface TerminalOutputEvent {
+  session_id: string;
+  data: string;
+}
+
+export interface CommandBlockEvent {
+  session_id: string;
+  block: {
+    command: string;
+    output: string;
+    exit_code: number | null;
+    working_directory: string;
+    timestamp: string;
+  };
+}
+
+export interface DirectoryChangedEvent {
+  session_id: string;
+  directory: string;
+}
+
+export interface SessionEndedEvent {
+  session_id: string;
+}
+
+export type AiEventType =
+  | { type: "started"; turn_id: string }
+  | { type: "text_delta"; delta: string; accumulated: string }
+  | { type: "tool_request"; tool_name: string; args: unknown; request_id: string }
+  | { type: "tool_result"; tool_name: string; result: unknown; success: boolean; request_id: string }
+  | { type: "completed"; response: string; tokens_used?: number; duration_ms?: number }
+  | { type: "error"; message: string; error_type: string };
+
+// =============================================================================
+// Event Emitter Helpers
+// =============================================================================
+
+/**
+ * Emit a terminal output event.
+ * Use this to simulate terminal output in browser mode.
+ */
+export async function emitTerminalOutput(sessionId: string, data: string): Promise<void> {
+  await emit("terminal_output", { session_id: sessionId, data });
+}
+
+/**
+ * Emit a command block event.
+ * Use this to simulate a completed command in browser mode.
+ */
+export async function emitCommandBlock(
+  sessionId: string,
+  command: string,
+  output: string,
+  exitCode: number | null = 0,
+  workingDirectory: string = "/home/user"
+): Promise<void> {
+  await emit("command_block", {
+    session_id: sessionId,
+    block: {
+      command,
+      output,
+      exit_code: exitCode,
+      working_directory: workingDirectory,
+      timestamp: new Date().toISOString(),
+    },
+  });
+}
+
+/**
+ * Emit a directory changed event.
+ * Use this to simulate directory changes in browser mode.
+ */
+export async function emitDirectoryChanged(sessionId: string, directory: string): Promise<void> {
+  await emit("directory_changed", { session_id: sessionId, directory });
+}
+
+/**
+ * Emit a session ended event.
+ * Use this to simulate session termination in browser mode.
+ */
+export async function emitSessionEnded(sessionId: string): Promise<void> {
+  await emit("session_ended", { session_id: sessionId });
+}
+
+/**
+ * Emit an AI event.
+ * Use this to simulate AI streaming responses in browser mode.
+ */
+export async function emitAiEvent(event: AiEventType): Promise<void> {
+  await emit("ai-event", event);
+}
+
+/**
+ * Simulate a complete AI response with streaming.
+ * This emits started -> text_delta(s) -> completed events.
+ */
+export async function simulateAiResponse(
+  response: string,
+  delayMs: number = 50
+): Promise<void> {
+  const turnId = `mock-turn-${Date.now()}`;
+
+  // Emit started
+  await emitAiEvent({ type: "started", turn_id: turnId });
+
+  // Emit text deltas (word by word)
+  const words = response.split(" ");
+  let accumulated = "";
+  for (const word of words) {
+    const delta = accumulated ? ` ${word}` : word;
+    accumulated += delta;
+    await emitAiEvent({ type: "text_delta", delta, accumulated });
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  // Emit completed
+  await emitAiEvent({
+    type: "completed",
+    response: accumulated,
+    tokens_used: Math.floor(accumulated.length / 4),
+    duration_ms: words.length * delayMs,
+  });
+}
+
+// =============================================================================
 // Setup Mock IPC
 // =============================================================================
 
+/**
+ * Clean up mocks. Call this when unmounting or resetting.
+ */
+export function cleanupMocks(): void {
+  clearMocks();
+  console.log("[Mocks] Tauri mocks cleared");
+}
+
 export function setupMocks(): void {
   console.log("[Mocks] Setting up Tauri IPC mocks for browser development");
+
+  // Setup mock window context (required for events)
+  mockWindows("main");
 
   mockIPC((cmd, args) => {
     console.log(`[Mock IPC] Command: ${cmd}`, args);
