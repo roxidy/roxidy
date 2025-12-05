@@ -1,6 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { RiskLevel } from "./tools";
+
+// In browser mode, use the mock listen function if available
+declare global {
+  interface Window {
+    __MOCK_LISTEN__?: typeof tauriListen;
+    __MOCK_BROWSER_MODE__?: boolean;
+  }
+}
+
+// Use mock listen in browser mode, otherwise use real Tauri listen
+const listen: typeof tauriListen = (...args) => {
+  if (window.__MOCK_BROWSER_MODE__ && window.__MOCK_LISTEN__) {
+    return window.__MOCK_LISTEN__(...args);
+  }
+  return tauriListen(...args);
+};
 
 export type { RiskLevel };
 

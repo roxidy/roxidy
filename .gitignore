@@ -52,6 +52,12 @@ src-tauri/gen/
 coverage/
 *.lcov
 
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
 # OS files
 .DS_Store
 Thumbs.db
