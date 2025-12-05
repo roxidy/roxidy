@@ -122,4 +122,27 @@ test.describe("Tauri IPC Mocks", () => {
     const badge = page.locator("text=BROWSER MODE");
     await expect(badge).toBeVisible();
   });
+
+  test("should display preset scenarios in MockDevTools", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+
+    // Open MockDevTools
+    const toggleButton = page.locator('button[title="Toggle Mock Dev Tools"]');
+    await toggleButton.click();
+
+    // Presets tab should be active by default
+    const presetsTab = page.locator("button:has-text('Presets')");
+    await expect(presetsTab).toBeVisible();
+
+    // Should show preset scenarios
+    await expect(page.locator("text=Fresh Start")).toBeVisible();
+    await expect(page.locator("text=Active Conversation")).toBeVisible();
+    await expect(page.locator("text=Tool Execution")).toBeVisible();
+    await expect(page.locator("text=Error State")).toBeVisible();
+    await expect(page.locator("text=Command History")).toBeVisible();
+    await expect(page.locator("text=Build Failure")).toBeVisible();
+    await expect(page.locator("text=Code Review")).toBeVisible();
+    await expect(page.locator("text=Long Output")).toBeVisible();
+  });
 });
