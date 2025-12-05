@@ -108,7 +108,7 @@ function dispatchMockEvent(eventName: string, payload: unknown): void {
 // Mock Data
 // =============================================================================
 
-// Mock PTY session
+// Mock PTY session - use consistent ID so MockDevTools presets work
 let mockPtySession = {
   id: "mock-session-001",
   working_directory: "/home/user",
@@ -499,8 +499,9 @@ export function setupMocks(): void {
       // =========================================================================
       case "pty_create": {
         const payload = args as { workingDirectory?: string; rows?: number; cols?: number };
+        // Use consistent session ID so MockDevTools presets work correctly
         mockPtySession = {
-          id: `mock-session-${Date.now()}`,
+          id: "mock-session-001",
           working_directory: payload.workingDirectory ?? "/home/user",
           rows: payload.rows ?? 24,
           cols: payload.cols ?? 80,
