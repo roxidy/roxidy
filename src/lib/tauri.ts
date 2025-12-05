@@ -71,3 +71,17 @@ export async function listPrompts(workingDirectory?: string): Promise<PromptInfo
 export async function readPrompt(path: string): Promise<string> {
   return invoke("read_prompt", { path });
 }
+
+// File Commands (for @ file references)
+export interface FileInfo {
+  name: string;
+  relative_path: string;
+}
+
+export async function listWorkspaceFiles(
+  workingDirectory: string,
+  query?: string,
+  limit?: number
+): Promise<FileInfo[]> {
+  return invoke("list_workspace_files", { workingDirectory, query, limit });
+}

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { FileCommandPopup } from "@/components/FileCommandPopup";
 import { filterPrompts, SlashCommandPopup } from "@/components/SlashCommandPopup";
 import { useCommandHistory } from "@/hooks/useCommandHistory";
+import { useFileCommands } from "@/hooks/useFileCommands";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { sendPrompt } from "@/lib/ai";
-import { type PromptInfo, ptyWrite, readPrompt } from "@/lib/tauri";
+import { type FileInfo, type PromptInfo, ptyWrite, readPrompt } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useInputMode, useStore, useStreamingBlocks } from "@/store";
 
@@ -52,6 +54,8 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSlashPopup, setShowSlashPopup] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [showFilePopup, setShowFilePopup] = useState(false);
+  const [fileSelectedIndex, setFileSelectedIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Command history for up/down navigation
@@ -61,6 +65,12 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
   const { prompts } = useSlashCommands(workingDirectory);
   const slashQuery = input.startsWith("/") ? input.slice(1) : "";
   const filteredSlashPrompts = filterPrompts(prompts, slashQuery);
+
+  // File commands (@ trigger)
+  // Detect @ at end of input (e.g., "Look at @But" -> query is "But")
+  const atMatch = input.match(/@([^\s@]*)$/);
+  const fileQuery = atMatch?.[1] ?? "";
+  const { files } = useFileCommands(workingDirectory, fileQuery);
 
   // Use inputMode for unified input toggle (not session mode)
   const inputMode = useInputMode(sessionId);
@@ -212,6 +222,18 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
     [sessionId, inputMode, setInputMode, addAgentMessage, workingDirectory]
   );
 
+  // Handle file selection from @ popup
+  const handleFileSelect = useCallback(
+    (file: FileInfo) => {
+      setShowFilePopup(false);
+      // Replace @query with the selected file's relative path
+      const newInput = input.replace(/@[^\s@]*$/, file.relative_path);
+      setInput(newInput);
+      setFileSelectedIndex(0);
+    },
+    [input]
+  );
+
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Cmd+I to toggle input mode - handle first to ensure it works in all modes
@@ -264,6 +286,49 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
           const selectedPrompt = filteredSlashPrompts[slashSelectedIndex];
           if (selectedPrompt) {
             handleSlashSelect(selectedPrompt);
+          }
+          return;
+        }
+      }
+
+      // When file popup is open, handle navigation
+      if (showFilePopup && files.length > 0) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setShowFilePopup(false);
+          return;
+        }
+
+        // Arrow down - move selection down
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setFileSelectedIndex((prev) => (prev < files.length - 1 ? prev + 1 : prev));
+          return;
+        }
+
+        // Arrow up - move selection up
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setFileSelectedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+          return;
+        }
+
+        // Tab - complete the selected file
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const selectedFile = files[fileSelectedIndex];
+          if (selectedFile) {
+            handleFileSelect(selectedFile);
+          }
+          return;
+        }
+
+        // Enter - insert the selected file
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          const selectedFile = files[fileSelectedIndex];
+          if (selectedFile) {
+            handleFileSelect(selectedFile);
           }
           return;
         }
@@ -342,6 +407,10 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
       filteredSlashPrompts,
       slashSelectedIndex,
       handleSlashSelect,
+      showFilePopup,
+      files,
+      fileSelectedIndex,
+      handleFileSelect,
     ]
   );
 
@@ -361,40 +430,56 @@ export function UnifiedInput({ sessionId, workingDirectory }: UnifiedInputProps)
           selectedIndex={slashSelectedIndex}
           onSelect={handleSlashSelect}
         >
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => {
-              const value = e.target.value;
-              setInput(value);
-              resetHistory();
+          <FileCommandPopup
+            open={showFilePopup}
+            onOpenChange={setShowFilePopup}
+            files={files}
+            selectedIndex={fileSelectedIndex}
+            onSelect={handleFileSelect}
+          >
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => {
+                const value = e.target.value;
+                setInput(value);
+                resetHistory();
 
-              // Show slash popup when "/" is typed at the start
-              if (value.startsWith("/") && value.length >= 1) {
-                setShowSlashPopup(true);
-                // Reset selection when query changes
-                setSlashSelectedIndex(0);
-              } else {
-                setShowSlashPopup(false);
-              }
-            }}
-            onKeyDown={handleKeyDown}
-            disabled={isAgentBusy}
-            placeholder={inputMode === "terminal" ? "Enter command..." : "Ask the AI..."}
-            rows={1}
-            className={cn(
-              "flex-1 min-h-[24px] max-h-[200px] py-1 px-0",
-              "bg-transparent border-none shadow-none resize-none",
-              "font-mono text-sm text-[#c0caf5]",
-              "focus:outline-none focus:ring-0",
-              "disabled:opacity-50",
-              "placeholder:text-[#565f89]"
-            )}
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-          />
+                // Show slash popup when "/" is typed at the start
+                if (value.startsWith("/") && value.length >= 1) {
+                  setShowSlashPopup(true);
+                  setSlashSelectedIndex(0);
+                  setShowFilePopup(false);
+                } else {
+                  setShowSlashPopup(false);
+                }
+
+                // Show file popup when "@" is typed (agent mode only)
+                if (inputMode === "agent" && /@[^\s@]*$/.test(value)) {
+                  setShowFilePopup(true);
+                  setFileSelectedIndex(0);
+                } else {
+                  setShowFilePopup(false);
+                }
+              }}
+              onKeyDown={handleKeyDown}
+              disabled={isAgentBusy}
+              placeholder={inputMode === "terminal" ? "Enter command..." : "Ask the AI..."}
+              rows={1}
+              className={cn(
+                "flex-1 min-h-[24px] max-h-[200px] py-1 px-0",
+                "bg-transparent border-none shadow-none resize-none",
+                "font-mono text-sm text-[#c0caf5]",
+                "focus:outline-none focus:ring-0",
+                "disabled:opacity-50",
+                "placeholder:text-[#565f89]"
+              )}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+          </FileCommandPopup>
         </SlashCommandPopup>
       </div>
     </div>
