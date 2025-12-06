@@ -96,4 +96,5 @@ pub fn configure_bridge(bridge: &mut AgentBridge, state: &AppState) {
     bridge.set_indexer_state(state.indexer_state.clone());
     bridge.set_tavily_state(state.tavily_state.clone());
     bridge.set_workflow_state(state.workflow_state.clone());
+    bridge.set_sidecar_state(state.sidecar_state.clone());
 }

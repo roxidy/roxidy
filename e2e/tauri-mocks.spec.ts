@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 test.describe("Tauri IPC Mocks", () => {
   test("should load mocks in browser mode and log initialization", async ({ page }) => {
@@ -30,7 +30,8 @@ test.describe("Tauri IPC Mocks", () => {
     // Check that the mock browser mode flag is set
     const mockModeFlag = await page.evaluate(() => {
       return {
-        isBrowserMode: (window as unknown as { __MOCK_BROWSER_MODE__?: boolean }).__MOCK_BROWSER_MODE__ === true,
+        isBrowserMode:
+          (window as unknown as { __MOCK_BROWSER_MODE__?: boolean }).__MOCK_BROWSER_MODE__ === true,
       };
     });
 
@@ -165,7 +166,9 @@ test.describe("Tauri IPC Mocks", () => {
     // Check that event listeners were registered
     // The app's hooks (useTauriEvents, useAiEvents) should register listeners
     const hasTerminalListener = eventLogs.some((log) => log.includes('listen("terminal_output")'));
-    const hasCommandBlockListener = eventLogs.some((log) => log.includes('listen("command_block")'));
+    const hasCommandBlockListener = eventLogs.some((log) =>
+      log.includes('listen("command_block")')
+    );
     const hasAiEventListener = eventLogs.some((log) => log.includes('listen("ai-event")'));
 
     expect(hasTerminalListener).toBe(true);

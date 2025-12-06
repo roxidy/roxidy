@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * MockDevTools E2E Tests
@@ -182,7 +182,9 @@ test.describe("MockDevTools - Terminal Tab UI Verification", () => {
     await page.waitForTimeout(1000);
 
     // Verify the output appears in the UI
-    await expect(page.locator("text=Custom terminal output for testing")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Custom terminal output for testing")).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test("Emit Command Block displays command with output in timeline", async ({ page }) => {
@@ -234,7 +236,9 @@ test.describe("MockDevTools - AI Tab UI Verification", () => {
     await page.waitForTimeout(3000);
 
     // Verify the AI response text appears in the UI
-    await expect(page.locator("text=custom AI response for testing")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=custom AI response for testing")).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test("Emit Tool Request displays tool card in timeline", async ({ page }) => {

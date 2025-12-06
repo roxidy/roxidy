@@ -1,5 +1,6 @@
 import { Bot, ChevronDown, Cloud, Cpu, Terminal } from "lucide-react";
 import { toast } from "sonner";
+import { SidecarStatus } from "@/components/Sidecar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -184,11 +185,14 @@ export function StatusBar({ sessionId }: StatusBarProps) {
         )}
       </div>
 
-      {/* Right side - Provider */}
+      {/* Right side - Sidecar + Provider */}
       <div className="flex items-center gap-2">
         {status === "error" && errorMessage && (
           <span className="text-[#f7768e] truncate max-w-[200px]">({errorMessage})</span>
         )}
+
+        {/* Sidecar status indicator */}
+        <SidecarStatus />
 
         <div
           className={cn(

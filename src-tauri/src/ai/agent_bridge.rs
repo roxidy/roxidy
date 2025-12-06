@@ -46,6 +46,7 @@ use super::tool_definitions::ToolConfig;
 use super::tool_policy::ToolPolicyManager;
 use crate::indexer::IndexerState;
 use crate::pty::PtyManager;
+use crate::sidecar::SidecarState;
 use crate::tavily::TavilyState;
 
 /// Bridge between Qbit and LLM providers.
@@ -93,6 +94,9 @@ pub struct AgentBridge {
 
     // Tool configuration
     pub(crate) tool_config: ToolConfig,
+
+    // Sidecar context capture
+    pub(crate) sidecar_state: Option<Arc<SidecarState>>,
 }
 
 impl AgentBridge {
@@ -182,6 +186,7 @@ impl AgentBridge {
             context_manager,
             loop_detector,
             tool_config: ToolConfig::main_agent(),
+            sidecar_state: None,
         }
     }
 
@@ -210,6 +215,11 @@ impl AgentBridge {
         workflow_state: Arc<super::commands::workflow::WorkflowState>,
     ) {
         self.workflow_state = Some(workflow_state);
+    }
+
+    /// Set the SidecarState for context capture
+    pub fn set_sidecar_state(&mut self, sidecar_state: Arc<SidecarState>) {
+        self.sidecar_state = Some(sidecar_state);
     }
 
     /// Set the current session ID for terminal execution
@@ -331,6 +341,21 @@ impl AgentBridge {
         self.start_session().await;
         self.record_user_message(initial_prompt).await;
 
+        // Start sidecar capture session if available
+        if let Some(ref sidecar) = self.sidecar_state {
+            match sidecar.start_session(initial_prompt) {
+                Ok(session_id) => {
+                    // Also capture the prompt as a searchable event
+                    use crate::sidecar::events::SessionEvent;
+                    let prompt_event = SessionEvent::user_prompt(session_id, initial_prompt);
+                    sidecar.capture(prompt_event);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to start sidecar session: {}", e);
+                }
+            }
+        }
+
         // Prepare initial history with user message
         let mut history_guard = self.conversation_history.write().await;
         history_guard.push(Message::User {
@@ -357,6 +382,7 @@ impl AgentBridge {
             context_manager: &self.context_manager,
             loop_detector: &self.loop_detector,
             tool_config: &self.tool_config,
+            sidecar_state: self.sidecar_state.as_ref(),
         };
 
         // Run the agentic loop
@@ -380,6 +406,13 @@ impl AgentBridge {
         if !accumulated_response.is_empty() {
             self.record_assistant_message(&accumulated_response).await;
             self.save_session().await;
+        }
+
+        // End sidecar capture session if available
+        if let Some(ref sidecar) = self.sidecar_state {
+            if let Err(e) = sidecar.end_session() {
+                tracing::warn!("Failed to end sidecar session: {}", e);
+            }
         }
 
         // Emit completion event

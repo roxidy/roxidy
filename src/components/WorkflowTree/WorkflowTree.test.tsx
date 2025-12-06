@@ -1,7 +1,13 @@
-import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type ActiveToolCall,
+  type ActiveWorkflow,
+  type ToolCallSource,
+  useStore,
+  type WorkflowStep,
+} from "@/store";
 import { WorkflowTree } from "./WorkflowTree";
-import { useStore, type ActiveWorkflow, type WorkflowStep, type ActiveToolCall, type ToolCallSource } from "@/store";
 
 // Helper to create test workflow data
 function createTestWorkflow(overrides: Partial<ActiveWorkflow> = {}): ActiveWorkflow {
@@ -41,7 +47,11 @@ function createTestToolCall(overrides: Partial<ActiveToolCall> = {}): ActiveTool
 }
 
 // Helper to setup store with session and workflow state
-function setupStoreWithSession(sessionId: string, workflow?: ActiveWorkflow, toolCalls?: ActiveToolCall[]) {
+function setupStoreWithSession(
+  sessionId: string,
+  workflow?: ActiveWorkflow,
+  toolCalls?: ActiveToolCall[]
+) {
   // First add the session to initialize all the state properly
   useStore.getState().addSession({
     id: sessionId,
@@ -96,10 +106,7 @@ describe("WorkflowTree", () => {
     });
 
     it("renders workflow header with name", () => {
-      setupStoreWithSession(
-        testSessionId,
-        createTestWorkflow({ workflowName: "git_commit" })
-      );
+      setupStoreWithSession(testSessionId, createTestWorkflow({ workflowName: "git_commit" }));
 
       render(<WorkflowTree sessionId={testSessionId} />);
 
@@ -108,10 +115,7 @@ describe("WorkflowTree", () => {
     });
 
     it("renders status badge", () => {
-      setupStoreWithSession(
-        testSessionId,
-        createTestWorkflow({ status: "running" })
-      );
+      setupStoreWithSession(testSessionId, createTestWorkflow({ status: "running" }));
 
       render(<WorkflowTree sessionId={testSessionId} />);
 
@@ -119,10 +123,7 @@ describe("WorkflowTree", () => {
     });
 
     it("renders completed status badge", () => {
-      setupStoreWithSession(
-        testSessionId,
-        createTestWorkflow({ status: "completed" })
-      );
+      setupStoreWithSession(testSessionId, createTestWorkflow({ status: "completed" }));
 
       render(<WorkflowTree sessionId={testSessionId} />);
 
@@ -209,9 +210,7 @@ describe("WorkflowTree", () => {
         testSessionId,
         createTestWorkflow({
           workflowId,
-          steps: [
-            createTestStep({ name: "gatherer", index: 0, status: "completed" }),
-          ],
+          steps: [createTestStep({ name: "gatherer", index: 0, status: "completed" })],
         }),
         toolCalls
       );
@@ -264,9 +263,7 @@ describe("WorkflowTree", () => {
         testSessionId,
         createTestWorkflow({
           workflowId,
-          steps: [
-            createTestStep({ name: "gatherer", index: 0, status: "running" }),
-          ],
+          steps: [createTestStep({ name: "gatherer", index: 0, status: "running" })],
         }),
         toolCalls
       );
@@ -311,9 +308,7 @@ describe("WorkflowTree", () => {
         testSessionId,
         createTestWorkflow({
           workflowId,
-          steps: [
-            createTestStep({ name: "gatherer", index: 0, status: "running" }),
-          ],
+          steps: [createTestStep({ name: "gatherer", index: 0, status: "running" })],
         }),
         toolCalls
       );
@@ -350,9 +345,7 @@ describe("WorkflowTree", () => {
       const workflow = createTestWorkflow({
         workflowId,
         status: "completed",
-        steps: [
-          createTestStep({ name: "gatherer", index: 0, status: "completed" }),
-        ],
+        steps: [createTestStep({ name: "gatherer", index: 0, status: "completed" })],
         toolCalls: [
           createTestToolCall({
             id: "preserved-tool",
@@ -413,9 +406,7 @@ describe("WorkflowTree", () => {
       setupStoreWithSession(
         testSessionId,
         createTestWorkflow({
-          steps: [
-            createTestStep({ name: "gatherer", index: 0, status: "completed" }),
-          ],
+          steps: [createTestStep({ name: "gatherer", index: 0, status: "completed" })],
         })
       );
 
