@@ -5,15 +5,15 @@
  * It provides a UI for simulating backend events to test frontend behavior.
  */
 
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
-  emitTerminalOutput,
-  simulateCommand,
+  type AiEventType,
+  emitAiEvent,
   emitDirectoryChanged,
   emitSessionEnded,
-  emitAiEvent,
+  emitTerminalOutput,
   simulateAiResponse,
-  type AiEventType,
+  simulateCommand,
 } from "@/mocks";
 
 // =============================================================================
@@ -85,12 +85,13 @@ const PRESETS: Preset[] = [
       await emitAiEvent({ type: "started", turn_id: "turn-1" });
       await delay(100);
 
-      const response = "I can see you have a basic Rust project. Let me help you add error handling and improve the structure. I'll read the Cargo.toml first to understand your dependencies.";
+      const response =
+        "I can see you have a basic Rust project. Let me help you add error handling and improve the structure. I'll read the Cargo.toml first to understand your dependencies.";
       const words = response.split(" ");
       let accumulated = "";
       for (const word of words) {
         accumulated += (accumulated ? " " : "") + word;
-        await emitAiEvent({ type: "text_delta", delta: word + " ", accumulated });
+        await emitAiEvent({ type: "text_delta", delta: `${word} `, accumulated });
         await delay(30);
       }
 
@@ -142,7 +143,8 @@ const PRESETS: Preset[] = [
       await delay(200);
 
       // Continue with analysis
-      const postText = " I see you're using Rust 2021 edition. Let me also check your source files.";
+      const postText =
+        " I see you're using Rust 2021 edition. Let me also check your source files.";
       await emitAiEvent({
         type: "text_delta",
         delta: postText,
@@ -218,22 +220,26 @@ const PRESETS: Preset[] = [
       const commands = [
         {
           cmd: "git status",
-          output: "On branch main\nYour branch is up to date with 'origin/main'.\n\nChanges not staged for commit:\n  modified:   src/main.rs\n  modified:   Cargo.toml",
+          output:
+            "On branch main\nYour branch is up to date with 'origin/main'.\n\nChanges not staged for commit:\n  modified:   src/main.rs\n  modified:   Cargo.toml",
           exitCode: 0,
         },
         {
           cmd: "cargo build",
-          output: "   Compiling my-app v0.1.0 (/home/user/project)\n    Finished dev [unoptimized + debuginfo] target(s) in 2.34s",
+          output:
+            "   Compiling my-app v0.1.0 (/home/user/project)\n    Finished dev [unoptimized + debuginfo] target(s) in 2.34s",
           exitCode: 0,
         },
         {
           cmd: "cargo test",
-          output: "running 3 tests\ntest tests::test_add ... ok\ntest tests::test_subtract ... ok\ntest tests::test_multiply ... ok\n\ntest result: ok. 3 passed; 0 failed",
+          output:
+            "running 3 tests\ntest tests::test_add ... ok\ntest tests::test_subtract ... ok\ntest tests::test_multiply ... ok\n\ntest result: ok. 3 passed; 0 failed",
           exitCode: 0,
         },
         {
           cmd: "ls -la",
-          output: "total 24\ndrwxr-xr-x  5 user user  160 Jan 15 10:00 .\ndrwxr-xr-x 10 user user  320 Jan 15 09:00 ..\n-rw-r--r--  1 user user  234 Jan 15 10:00 Cargo.toml\ndrwxr-xr-x  2 user user   64 Jan 15 09:30 src\ndrwxr-xr-x  3 user user   96 Jan 15 10:00 target",
+          output:
+            "total 24\ndrwxr-xr-x  5 user user  160 Jan 15 10:00 .\ndrwxr-xr-x 10 user user  320 Jan 15 09:00 ..\n-rw-r--r--  1 user user  234 Jan 15 10:00 Cargo.toml\ndrwxr-xr-x  2 user user   64 Jan 15 09:30 src\ndrwxr-xr-x  3 user user   96 Jan 15 10:00 target",
           exitCode: 0,
         },
       ];
@@ -280,7 +286,7 @@ error: aborting due to previous error
 
 For more information about this error, try \`rustc --explain E0382\`.
 error: could not compile \`my-app\` due to previous error`,
-        1  // exit code 1 for failure
+        1 // exit code 1 for failure
       );
 
       await delay(500);
@@ -289,12 +295,13 @@ error: could not compile \`my-app\` due to previous error`,
       await emitAiEvent({ type: "started", turn_id: "turn-help" });
       await delay(100);
 
-      const response = "I see a borrow checker error. The issue is that `data` was moved into `process()` and then you tried to use it again. You have two options:\n\n1. Clone the data before passing it\n2. Pass a reference instead of moving ownership\n\nWould you like me to fix this for you?";
+      const response =
+        "I see a borrow checker error. The issue is that `data` was moved into `process()` and then you tried to use it again. You have two options:\n\n1. Clone the data before passing it\n2. Pass a reference instead of moving ownership\n\nWould you like me to fix this for you?";
       const words = response.split(" ");
       let accumulated = "";
       for (const word of words) {
         accumulated += (accumulated ? " " : "") + word;
-        await emitAiEvent({ type: "text_delta", delta: word + " ", accumulated });
+        await emitAiEvent({ type: "text_delta", delta: `${word} `, accumulated });
         await delay(25);
       }
 
@@ -362,7 +369,7 @@ Would you like me to apply these changes?`;
       let accumulated = "";
       for (const word of words) {
         accumulated += (accumulated ? " " : "") + word;
-        await emitAiEvent({ type: "text_delta", delta: word + " ", accumulated });
+        await emitAiEvent({ type: "text_delta", delta: `${word} `, accumulated });
         await delay(20);
       }
 
@@ -629,12 +636,16 @@ export function MockDevTools() {
   const [sessionId, setSessionId] = useState("mock-session-001");
   const [terminalOutput, setTerminalOutput] = useState("Hello from mock terminal!\n");
   const [command, setCommand] = useState("ls -la");
-  const [commandOutput, setCommandOutput] = useState("total 0\ndrwxr-xr-x  2 user user  40 Jan 15 10:00 .\ndrwxr-xr-x 10 user user 200 Jan 15 09:00 ..");
+  const [commandOutput, setCommandOutput] = useState(
+    "total 0\ndrwxr-xr-x  2 user user  40 Jan 15 10:00 .\ndrwxr-xr-x 10 user user 200 Jan 15 09:00 .."
+  );
   const [exitCode, setExitCode] = useState(0);
   const [workingDir, setWorkingDir] = useState("/home/user/project");
 
   // AI state
-  const [aiResponse, setAiResponse] = useState("I'll help you with that task. Let me analyze the code and provide suggestions.");
+  const [aiResponse, setAiResponse] = useState(
+    "I'll help you with that task. Let me analyze the code and provide suggestions."
+  );
   const [streamDelay, setStreamDelay] = useState(30);
   const [toolName, setToolName] = useState("read_file");
   const [toolArgs, setToolArgs] = useState('{"path": "/home/user/file.txt"}');
