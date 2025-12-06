@@ -53,7 +53,10 @@ pub async fn sidecar_start_session(
 pub async fn sidecar_end_session(
     state: State<'_, AppState>,
 ) -> Result<Option<SidecarSession>, String> {
-    let session = state.sidecar_state.end_session().map_err(|e| e.to_string())?;
+    let session = state
+        .sidecar_state
+        .end_session()
+        .map_err(|e| e.to_string())?;
 
     // Save the session to storage if we have one
     if let Some(ref session) = session {
@@ -72,7 +75,10 @@ pub async fn sidecar_end_session(
 /// Get the current session ID
 #[tauri::command]
 pub async fn sidecar_current_session(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    Ok(state.sidecar_state.current_session_id().map(|id| id.to_string()))
+    Ok(state
+        .sidecar_state
+        .current_session_id()
+        .map(|id| id.to_string()))
 }
 
 /// Generate a commit message for the current or specified session
@@ -276,8 +282,12 @@ pub async fn sidecar_download_models(
         .map_err(|e| e.to_string())?;
 
     // Update ready status
-    state.sidecar_state.set_embeddings_ready(model_manager.embedding_available());
-    state.sidecar_state.set_llm_ready(model_manager.llm_available());
+    state
+        .sidecar_state
+        .set_embeddings_ready(model_manager.embedding_available());
+    state
+        .sidecar_state
+        .set_llm_ready(model_manager.llm_available());
 
     Ok(())
 }
@@ -365,8 +375,7 @@ pub async fn sidecar_import_session(
     state: State<'_, AppState>,
     json: String,
 ) -> Result<String, String> {
-    let export =
-        super::events::SessionExport::from_json(&json).map_err(|e| e.to_string())?;
+    let export = super::events::SessionExport::from_json(&json).map_err(|e| e.to_string())?;
 
     let storage = state
         .sidecar_state
@@ -411,17 +420,13 @@ pub async fn sidecar_import_session_from_file(
 
 /// Get pending files for commit boundary detection
 #[tauri::command]
-pub async fn sidecar_pending_files(
-    state: State<'_, AppState>,
-) -> Result<Vec<PathBuf>, String> {
+pub async fn sidecar_pending_files(state: State<'_, AppState>) -> Result<Vec<PathBuf>, String> {
     Ok(state.sidecar_state.pending_commit_files())
 }
 
 /// Clear commit boundary tracking (after manual commit)
 #[tauri::command]
-pub async fn sidecar_clear_commit_boundary(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn sidecar_clear_commit_boundary(state: State<'_, AppState>) -> Result<(), String> {
     state.sidecar_state.clear_commit_boundary();
     Ok(())
 }

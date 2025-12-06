@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { type ActiveWorkflow, useStore, type WorkflowStep } from "@/store";
 import { WorkflowProgress } from "./WorkflowProgress";
-import { useStore, type ActiveWorkflow, type WorkflowStep } from "@/store";
 
 // Helper to create test workflow data
 function createTestWorkflow(overrides: Partial<ActiveWorkflow> = {}): ActiveWorkflow {

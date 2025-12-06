@@ -35,6 +35,7 @@ pub struct CommitDraft {
 
 impl CommitDraft {
     /// Get the full commit message
+    #[allow(dead_code)]
     pub fn full_message(&self) -> String {
         match &self.body {
             Some(body) => format!("{}\n\n{}", self.subject, body),
@@ -162,10 +163,10 @@ impl Synthesizer {
                 initial_request: initial_request.clone(),
             };
 
-            if let Ok(response) = self.model_manager.generate(
-                &prompts::commit_message(&context),
-                256,
-            ) {
+            if let Ok(response) = self
+                .model_manager
+                .generate(&prompts::commit_message(&context), 256)
+            {
                 if let Some(draft) = self.parse_commit_response(&response, &files) {
                     return Ok(draft);
                 }
@@ -175,11 +176,8 @@ impl Synthesizer {
         // Fallback to template-based generation
         let file_strings: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
 
-        let message = prompts::template_commit_message(
-            &file_strings,
-            events.len(),
-            Some(&initial_request),
-        );
+        let message =
+            prompts::template_commit_message(&file_strings, events.len(), Some(&initial_request));
 
         // Parse template message
         let lines: Vec<&str> = message.lines().collect();
@@ -321,10 +319,10 @@ impl Synthesizer {
         if self.llm_enabled && self.model_manager.llm_available() {
             let context = self.format_events_for_query(&events);
 
-            if let Ok(response) = self.model_manager.generate(
-                &prompts::history_query(question, &context),
-                256,
-            ) {
+            if let Ok(response) = self
+                .model_manager
+                .generate(&prompts::history_query(question, &context), 256)
+            {
                 return Ok(HistoryResponse {
                     answer: response,
                     source_events,
@@ -468,12 +466,28 @@ impl Synthesizer {
         // Count file operations
         let file_creates = events
             .iter()
-            .filter(|e| matches!(e.event_type, EventType::FileEdit { operation: super::events::FileOperation::Create, .. }))
+            .filter(|e| {
+                matches!(
+                    e.event_type,
+                    EventType::FileEdit {
+                        operation: super::events::FileOperation::Create,
+                        ..
+                    }
+                )
+            })
             .count();
 
         let file_modifies = events
             .iter()
-            .filter(|e| matches!(e.event_type, EventType::FileEdit { operation: super::events::FileOperation::Modify, .. }))
+            .filter(|e| {
+                matches!(
+                    e.event_type,
+                    EventType::FileEdit {
+                        operation: super::events::FileOperation::Modify,
+                        ..
+                    }
+                )
+            })
             .count();
 
         if file_creates > 0 {
@@ -486,7 +500,11 @@ impl Synthesizer {
 
         // Extract key decisions
         for event in events.iter().take(3) {
-            if let EventType::AgentReasoning { decision_type: Some(dt), content } = &event.event_type {
+            if let EventType::AgentReasoning {
+                decision_type: Some(dt),
+                content,
+            } = &event.event_type
+            {
                 let prefix = match dt {
                     DecisionType::ApproachChoice => "Chose approach:",
                     DecisionType::Tradeoff => "Made tradeoff:",

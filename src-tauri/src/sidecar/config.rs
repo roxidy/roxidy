@@ -61,6 +61,7 @@ impl Default for SidecarConfig {
     }
 }
 
+#[allow(dead_code)]
 impl SidecarConfig {
     /// Create a new config with default values
     pub fn new() -> Self {

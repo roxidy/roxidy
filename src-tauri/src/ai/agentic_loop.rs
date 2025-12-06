@@ -161,13 +161,16 @@ pub async fn execute_with_hitl(
     {
         PolicyConstraintResult::Allowed => (tool_args.clone(), None),
         PolicyConstraintResult::Violated(reason) => {
-            emit_event(ctx, AiEvent::ToolDenied {
-                request_id: tool_id.to_string(),
-                tool_name: tool_name.to_string(),
-                args: tool_args.clone(),
-                reason: reason.clone(),
-                source: crate::ai::events::ToolSource::Main,
-            });
+            emit_event(
+                ctx,
+                AiEvent::ToolDenied {
+                    request_id: tool_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args: tool_args.clone(),
+                    reason: reason.clone(),
+                    source: crate::ai::events::ToolSource::Main,
+                },
+            );
             return Ok(ToolExecutionResult {
                 value: json!({
                     "error": format!("Tool constraint violated: {}", reason),
@@ -190,26 +193,32 @@ pub async fn execute_with_hitl(
         } else {
             "Allowed by tool policy".to_string()
         };
-        emit_event(ctx, AiEvent::ToolAutoApproved {
-            request_id: tool_id.to_string(),
-            tool_name: tool_name.to_string(),
-            args: effective_args.clone(),
-            reason,
-            source: crate::ai::events::ToolSource::Main,
-        });
+        emit_event(
+            ctx,
+            AiEvent::ToolAutoApproved {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: effective_args.clone(),
+                reason,
+                source: crate::ai::events::ToolSource::Main,
+            },
+        );
 
         return execute_tool_direct(tool_name, &effective_args, context, model, ctx).await;
     }
 
     // Step 4: Check if tool should be auto-approved based on learned patterns
     if ctx.approval_recorder.should_auto_approve(tool_name).await {
-        emit_event(ctx, AiEvent::ToolAutoApproved {
-            request_id: tool_id.to_string(),
-            tool_name: tool_name.to_string(),
-            args: effective_args.clone(),
-            reason: "Auto-approved based on learned patterns or always-allow list".to_string(),
-            source: crate::ai::events::ToolSource::Main,
-        });
+        emit_event(
+            ctx,
+            AiEvent::ToolAutoApproved {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: effective_args.clone(),
+                reason: "Auto-approved based on learned patterns or always-allow list".to_string(),
+                source: crate::ai::events::ToolSource::Main,
+            },
+        );
 
         return execute_tool_direct(tool_name, &effective_args, context, model, ctx).await;
     }
@@ -618,9 +627,12 @@ pub async fn run_agentic_loop(
                                 thinking_content.push_str(thinking);
                                 accumulated_thinking.push_str(thinking);
                                 // Emit reasoning event (to frontend and sidecar)
-                                emit_event(ctx, AiEvent::Reasoning {
-                                    content: thinking.to_string(),
-                                });
+                                emit_event(
+                                    ctx,
+                                    AiEvent::Reasoning {
+                                        content: thinking.to_string(),
+                                    },
+                                );
                             } else {
                                 // Regular text content
                                 text_content.push_str(&text_msg.text);
@@ -646,9 +658,12 @@ pub async fn run_agentic_loop(
                                 thinking_signature = reasoning.signature.clone();
                             }
                             // Emit reasoning event (to frontend and sidecar)
-                            emit_event(ctx, AiEvent::Reasoning {
-                                content: reasoning_text,
-                            });
+                            emit_event(
+                                ctx,
+                                AiEvent::Reasoning {
+                                    content: reasoning_text,
+                                },
+                            );
                         }
                         StreamedAssistantContent::ToolCall(tool_call) => {
                             tracing::info!(
@@ -842,12 +857,20 @@ pub async fn run_agentic_loop(
             }
 
             // Execute tool with HITL approval check
-            let result = execute_with_hitl(tool_name, &tool_args, &tool_id, &context, model, ctx, &mut capture_ctx)
-                .await
-                .unwrap_or_else(|e| ToolExecutionResult {
-                    value: json!({ "error": e.to_string() }),
-                    success: false,
-                });
+            let result = execute_with_hitl(
+                tool_name,
+                &tool_args,
+                &tool_id,
+                &context,
+                model,
+                ctx,
+                &mut capture_ctx,
+            )
+            .await
+            .unwrap_or_else(|e| ToolExecutionResult {
+                value: json!({ "error": e.to_string() }),
+                success: false,
+            });
 
             // Emit tool result event (to frontend and capture to sidecar with state)
             let result_event = AiEvent::ToolResult {

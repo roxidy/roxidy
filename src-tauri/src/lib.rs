@@ -33,8 +33,8 @@ use indexer::{
     search_code, search_files, shutdown_indexer,
 };
 use sidecar::{
-    sidecar_cleanup, sidecar_clear_commit_boundary, sidecar_create_indexes, sidecar_current_session,
-    sidecar_download_models, sidecar_end_session, sidecar_export_session,
+    sidecar_cleanup, sidecar_clear_commit_boundary, sidecar_create_indexes,
+    sidecar_current_session, sidecar_download_models, sidecar_end_session, sidecar_export_session,
     sidecar_export_session_to_file, sidecar_generate_commit, sidecar_generate_summary,
     sidecar_get_config, sidecar_get_session_checkpoints, sidecar_get_session_events,
     sidecar_import_session, sidecar_import_session_from_file, sidecar_index_status,

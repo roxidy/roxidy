@@ -43,7 +43,10 @@ async fn test_session_lifecycle_full() {
     // Initialize
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace.clone()).await.expect("Failed to initialize");
+    state
+        .initialize(workspace.clone())
+        .await
+        .expect("Failed to initialize");
 
     // Verify status before session
     let status = state.status();
@@ -85,7 +88,10 @@ async fn test_multiple_sessions() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     // Create first session
     let session1_id = state.start_session("First task").unwrap();
@@ -96,7 +102,10 @@ async fn test_multiple_sessions() {
     let session2 = state.end_session().unwrap().expect("Should return session");
 
     // Verify different session IDs
-    assert_ne!(session1_id, session2_id, "Sessions should have different IDs");
+    assert_ne!(
+        session1_id, session2_id,
+        "Sessions should have different IDs"
+    );
     assert_eq!(session1.id, session1_id);
     assert_eq!(session2.id, session2_id);
 
@@ -120,7 +129,10 @@ async fn test_event_capture_all_types() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     let session_id = state.start_session("Test all event types").unwrap();
 
@@ -188,7 +200,10 @@ async fn test_event_capture_all_types() {
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     // Retrieve events
-    let events = state.get_session_events(session_id).await.expect("Failed to get events");
+    let events = state
+        .get_session_events(session_id)
+        .await
+        .expect("Failed to get events");
 
     // Verify events were captured (may not get all due to async timing)
     println!("Retrieved {} events from storage", events.len());
@@ -198,8 +213,14 @@ async fn test_event_capture_all_types() {
     println!("Captured event types: {:?}", event_types);
 
     // Core events should be present
-    assert!(event_types.contains(&"session_start"), "Should have session_start");
-    assert!(event_types.contains(&"user_prompt"), "Should have user_prompt");
+    assert!(
+        event_types.contains(&"session_start"),
+        "Should have session_start"
+    );
+    assert!(
+        event_types.contains(&"user_prompt"),
+        "Should have user_prompt"
+    );
     assert!(event_types.contains(&"file_edit"), "Should have file_edit");
     assert!(event_types.contains(&"tool_call"), "Should have tool_call");
     assert!(event_types.contains(&"reasoning"), "Should have reasoning");
@@ -215,7 +236,10 @@ async fn test_event_capture_all_types() {
         }
     }
 
-    println!("✓ Event capture all types test passed ({} events)", events.len());
+    println!(
+        "✓ Event capture all types test passed ({} events)",
+        events.len()
+    );
 }
 
 #[tokio::test]
@@ -227,7 +251,10 @@ async fn test_event_content_preserved() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     let session_id = state.start_session("Content preservation test").unwrap();
 
@@ -241,7 +268,9 @@ async fn test_event_content_preserved() {
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     let events = state.get_session_events(session_id).await.unwrap();
-    let prompt_event = events.iter().find(|e| matches!(e.event_type, EventType::UserPrompt { .. }));
+    let prompt_event = events
+        .iter()
+        .find(|e| matches!(e.event_type, EventType::UserPrompt { .. }));
 
     assert!(prompt_event.is_some(), "Should find user prompt event");
     let prompt_event = prompt_event.unwrap();
@@ -267,15 +296,18 @@ async fn test_storage_persistence() {
 
     // Create and populate storage
     let session_id = {
-        let storage = SidecarStorage::new(&data_dir).await.expect("Failed to create storage");
+        let storage = SidecarStorage::new(&data_dir)
+            .await
+            .expect("Failed to create storage");
 
         // Create a session
-        let session = SidecarSession::new(
-            PathBuf::from("/workspace"),
-            "Persistence test".to_string(),
-        );
+        let session =
+            SidecarSession::new(PathBuf::from("/workspace"), "Persistence test".to_string());
         let session_id = session.id;
-        storage.save_session(&session).await.expect("Failed to save session");
+        storage
+            .save_session(&session)
+            .await
+            .expect("Failed to save session");
 
         // Create some events
         let events = vec![
@@ -287,20 +319,31 @@ async fn test_storage_persistence() {
                 None,
             ),
         ];
-        storage.save_events(&events).await.expect("Failed to save events");
+        storage
+            .save_events(&events)
+            .await
+            .expect("Failed to save events");
 
         session_id
     };
 
     // Reopen storage and verify data persisted
     {
-        let storage = SidecarStorage::new(&data_dir).await.expect("Failed to reopen storage");
+        let storage = SidecarStorage::new(&data_dir)
+            .await
+            .expect("Failed to reopen storage");
 
-        let sessions = storage.list_sessions().await.expect("Failed to list sessions");
+        let sessions = storage
+            .list_sessions()
+            .await
+            .expect("Failed to list sessions");
         assert_eq!(sessions.len(), 1, "Should have 1 session");
         assert_eq!(sessions[0].id, session_id);
 
-        let events = storage.get_session_events(session_id).await.expect("Failed to get events");
+        let events = storage
+            .get_session_events(session_id)
+            .await
+            .expect("Failed to get events");
         assert_eq!(events.len(), 2, "Should have 2 events");
     }
 
@@ -316,7 +359,10 @@ async fn test_storage_stats() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     // Create session with events
     let session_id = state.start_session("Stats test").unwrap();
@@ -333,9 +379,16 @@ async fn test_storage_stats() {
     let stats = storage.stats().await.expect("Failed to get stats");
 
     // Note: Sessions are not persisted by SidecarState, only events
-    assert!(stats.event_count >= 6, "Should have at least 6 events, got {}", stats.event_count); // 5 + start + end
+    assert!(
+        stats.event_count >= 6,
+        "Should have at least 6 events, got {}",
+        stats.event_count
+    ); // 5 + start + end
 
-    println!("✓ Storage stats test passed (events: {})", stats.event_count);
+    println!(
+        "✓ Storage stats test passed (events: {})",
+        stats.event_count
+    );
 }
 
 // ============================================================================
@@ -351,14 +404,26 @@ async fn test_keyword_search() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     let session_id = state.start_session("Search test session").unwrap();
 
     // Create events with different content
-    state.capture(SessionEvent::user_prompt(session_id, "Implement authentication with JWT"));
-    state.capture(SessionEvent::user_prompt(session_id, "Add database connection pooling"));
-    state.capture(SessionEvent::user_prompt(session_id, "Create REST API endpoints"));
+    state.capture(SessionEvent::user_prompt(
+        session_id,
+        "Implement authentication with JWT",
+    ));
+    state.capture(SessionEvent::user_prompt(
+        session_id,
+        "Add database connection pooling",
+    ));
+    state.capture(SessionEvent::user_prompt(
+        session_id,
+        "Create REST API endpoints",
+    ));
     state.capture(SessionEvent::reasoning(
         session_id,
         "Using JWT for authentication because it's stateless",
@@ -379,11 +444,17 @@ async fn test_keyword_search() {
     );
 
     // Search for database events
-    let results = state.search_events("database", 10).await.expect("Search failed");
+    let results = state
+        .search_events("database", 10)
+        .await
+        .expect("Search failed");
     assert!(!results.is_empty(), "Should find database-related events");
 
     // Search for non-existent term
-    let results = state.search_events("xyznonexistent", 10).await.expect("Search failed");
+    let results = state
+        .search_events("xyznonexistent", 10)
+        .await
+        .expect("Search failed");
     assert!(results.is_empty(), "Should not find non-existent term");
 
     println!("✓ Keyword search test passed");
@@ -422,13 +493,22 @@ async fn test_commit_boundary_detection() {
         None,
     ));
 
-    assert!(boundary.is_some(), "Should detect boundary on completion signal");
+    assert!(
+        boundary.is_some(),
+        "Should detect boundary on completion signal"
+    );
     let boundary = boundary.unwrap();
     assert_eq!(boundary.files_in_scope.len(), 2, "Should include 2 files");
-    assert!(boundary.reason.contains("Completion"), "Should mention completion");
+    assert!(
+        boundary.reason.contains("Completion"),
+        "Should mention completion"
+    );
 
     // Pending files should be cleared
-    assert!(detector.pending_files().is_empty(), "Pending files should be cleared");
+    assert!(
+        detector.pending_files().is_empty(),
+        "Pending files should be cleared"
+    );
 
     println!("✓ Commit boundary detection test passed");
 }
@@ -471,15 +551,17 @@ async fn test_session_export_import() {
     let data_dir = temp_dir.path().join("sidecar");
 
     // Create storage directly for export/import test
-    let storage = SidecarStorage::new(&data_dir).await.expect("Failed to create storage");
+    let storage = SidecarStorage::new(&data_dir)
+        .await
+        .expect("Failed to create storage");
 
     // Create a session and events directly
-    let session = SidecarSession::new(
-        PathBuf::from("/workspace"),
-        "Export test".to_string(),
-    );
+    let session = SidecarSession::new(PathBuf::from("/workspace"), "Export test".to_string());
     let session_id = session.id;
-    storage.save_session(&session).await.expect("Failed to save session");
+    storage
+        .save_session(&session)
+        .await
+        .expect("Failed to save session");
 
     let events = vec![
         SessionEvent::user_prompt(session_id, "Test export functionality"),
@@ -490,7 +572,10 @@ async fn test_session_export_import() {
             Some("Updated library".to_string()),
         ),
     ];
-    storage.save_events(&events).await.expect("Failed to save events");
+    storage
+        .save_events(&events)
+        .await
+        .expect("Failed to save events");
 
     // Get data for export
     let session = storage.get_session(session_id).await.unwrap().unwrap();
@@ -501,7 +586,10 @@ async fn test_session_export_import() {
     let export = SessionExport::new(session.clone(), events.clone(), checkpoints);
     let json = export.to_json().expect("Failed to serialize");
 
-    assert!(json.contains("Export test"), "JSON should contain session data");
+    assert!(
+        json.contains("Export test"),
+        "JSON should contain session data"
+    );
     assert!(json.contains("export"), "JSON should contain version info");
 
     // Import to new storage
@@ -519,7 +607,11 @@ async fn test_session_export_import() {
     assert!(imported_session.is_some(), "Should find imported session");
 
     let imported_events = storage2.get_session_events(session_id).await.unwrap();
-    assert_eq!(imported_events.len(), events.len(), "Should have same number of events");
+    assert_eq!(
+        imported_events.len(),
+        events.len(),
+        "Should have same number of events"
+    );
 
     println!("✓ Session export/import test passed");
 }
@@ -533,7 +625,9 @@ async fn test_session_export_import() {
 async fn test_checkpoint_generation() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let data_dir = temp_dir.path().join("sidecar");
-    let storage = SidecarStorage::new(&data_dir).await.expect("Failed to create storage");
+    let storage = SidecarStorage::new(&data_dir)
+        .await
+        .expect("Failed to create storage");
 
     let session_id = Uuid::new_v4();
 
@@ -552,12 +646,18 @@ async fn test_checkpoint_generation() {
         vec![],
     );
 
-    storage.save_checkpoint(&checkpoint).await.expect("Failed to save checkpoint");
+    storage
+        .save_checkpoint(&checkpoint)
+        .await
+        .expect("Failed to save checkpoint");
 
     // Retrieve checkpoint
     let checkpoints = storage.get_session_checkpoints(session_id).await.unwrap();
     assert_eq!(checkpoints.len(), 1, "Should have 1 checkpoint");
-    assert!(checkpoints[0].summary.contains("5 actions"), "Summary should be preserved");
+    assert!(
+        checkpoints[0].summary.contains("5 actions"),
+        "Summary should be preserved"
+    );
 
     println!("✓ Checkpoint generation test passed");
 }
@@ -575,7 +675,10 @@ async fn test_concurrent_event_capture() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     let session_id = state.start_session("Concurrent test").unwrap();
 
@@ -611,16 +714,27 @@ async fn test_concurrent_event_capture() {
 
     // The session's event_count is the ground truth (synchronous tracking)
     // 10 tasks * 5 events + session_start + session_end = 52 events
-    println!("Session event count: {} (ground truth)", ended_session.event_count);
-    println!("Storage event count: {} (may be partial due to async)", events.len());
+    println!(
+        "Session event count: {} (ground truth)",
+        ended_session.event_count
+    );
+    println!(
+        "Storage event count: {} (may be partial due to async)",
+        events.len()
+    );
 
     // Session should have captured all events (synchronous)
-    assert!(ended_session.event_count >= 50,
-            "Session should track at least 50 events, got {}",
-            ended_session.event_count);
+    assert!(
+        ended_session.event_count >= 50,
+        "Session should track at least 50 events, got {}",
+        ended_session.event_count
+    );
 
     // Some events should be in storage (may not be all due to async flush timing)
-    assert!(!events.is_empty(), "Should have captured some events in storage");
+    assert!(
+        !events.is_empty(),
+        "Should have captured some events in storage"
+    );
 
     println!("✓ Concurrent event capture test passed");
     println!("  - Session tracked: {} events", ended_session.event_count);
@@ -640,7 +754,10 @@ async fn test_empty_session() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     // Start and immediately end session
     let session_id = state.start_session("Empty session").unwrap();
@@ -651,7 +768,10 @@ async fn test_empty_session() {
 
     // Should still have session_start and session_end events
     let events = state.get_session_events(session_id).await.unwrap();
-    assert!(events.len() >= 2, "Should have at least start and end events");
+    assert!(
+        events.len() >= 2,
+        "Should have at least start and end events"
+    );
 
     println!("✓ Empty session test passed");
 }
@@ -665,7 +785,10 @@ async fn test_large_content_truncation() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     let session_id = state.start_session("Truncation test").unwrap();
 
@@ -680,7 +803,9 @@ async fn test_large_content_truncation() {
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     let events = state.get_session_events(session_id).await.unwrap();
-    let response_event = events.iter().find(|e| matches!(e.event_type, EventType::AiResponse { .. }));
+    let response_event = events
+        .iter()
+        .find(|e| matches!(e.event_type, EventType::AiResponse { .. }));
 
     assert!(response_event.is_some(), "Should find AI response event");
     if let EventType::AiResponse { truncated, .. } = &response_event.unwrap().event_type {
@@ -699,7 +824,10 @@ async fn test_special_characters_in_content() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     let session_id = state.start_session("Special chars test").unwrap();
 
@@ -717,7 +845,9 @@ async fn test_special_characters_in_content() {
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     let events = state.get_session_events(session_id).await.unwrap();
-    let prompt_event = events.iter().find(|e| matches!(e.event_type, EventType::UserPrompt { .. }));
+    let prompt_event = events
+        .iter()
+        .find(|e| matches!(e.event_type, EventType::UserPrompt { .. }));
 
     assert!(prompt_event.is_some(), "Should find prompt event");
     if let EventType::UserPrompt { intent } = &prompt_event.unwrap().event_type {
@@ -741,10 +871,15 @@ async fn test_full_agent_session_simulation() {
 
     let workspace = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    state.initialize(workspace).await.expect("Failed to initialize");
+    state
+        .initialize(workspace)
+        .await
+        .expect("Failed to initialize");
 
     // Simulate a realistic agent session
-    let session_id = state.start_session("Add user authentication to the app").unwrap();
+    let session_id = state
+        .start_session("Add user authentication to the app")
+        .unwrap();
 
     // Agent reasoning
     state.capture(SessionEvent::reasoning(
@@ -814,9 +949,15 @@ async fn test_full_agent_session_simulation() {
 
     // The session is returned directly from end_session
     let session = ended_session.expect("Should have ended session");
-    assert!(!session.files_touched.is_empty(), "Should have touched files");
+    assert!(
+        !session.files_touched.is_empty(),
+        "Should have touched files"
+    );
     assert!(session.ended_at.is_some(), "Session should be ended");
-    assert!(session.event_count >= 5, "Should have captured at least 5 events");
+    assert!(
+        session.event_count >= 5,
+        "Should have captured at least 5 events"
+    );
 
     // Give the background processor time to flush events
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
@@ -846,7 +987,9 @@ async fn test_lancedb_table_creation() {
     let data_dir = temp_dir.path().join("sidecar");
 
     // Create storage - this should create LanceDB tables
-    let storage = SidecarStorage::new(&data_dir).await.expect("Failed to create storage");
+    let storage = SidecarStorage::new(&data_dir)
+        .await
+        .expect("Failed to create storage");
 
     // Verify tables exist by doing operations
     let stats = storage.stats().await.expect("Failed to get stats");
@@ -889,15 +1032,23 @@ async fn test_lancedb_event_storage_and_retrieval() {
     }
 
     // Save events
-    storage.save_events(&events).await.expect("Failed to save events");
+    storage
+        .save_events(&events)
+        .await
+        .expect("Failed to save events");
 
     // Retrieve events
-    let retrieved = storage.get_session_events(session_id).await.expect("Failed to get events");
+    let retrieved = storage
+        .get_session_events(session_id)
+        .await
+        .expect("Failed to get events");
     assert_eq!(retrieved.len(), 3, "Should retrieve 3 events");
 
     // Verify content preserved
     assert!(
-        retrieved.iter().any(|e| e.content.contains("authentication")),
+        retrieved
+            .iter()
+            .any(|e| e.content.contains("authentication")),
         "Should find authentication event"
     );
 
@@ -931,7 +1082,10 @@ async fn test_lancedb_vector_search() {
     events[1].embedding = Some(vec![0.0f32; 384]); // DB vector - different
     events[2].embedding = Some(vec![0.9f32; 384]); // JWT - similar to auth
 
-    storage.save_events(&events).await.expect("Failed to save events");
+    storage
+        .save_events(&events)
+        .await
+        .expect("Failed to save events");
 
     // Test keyword search (vector search requires index)
     let results = storage
@@ -970,13 +1124,22 @@ async fn test_lancedb_checkpoint_storage() {
     );
     checkpoint.embedding = Some(vec![0.5f32; 384]);
 
-    storage.save_checkpoint(&checkpoint).await.expect("Failed to save checkpoint");
+    storage
+        .save_checkpoint(&checkpoint)
+        .await
+        .expect("Failed to save checkpoint");
 
     // Retrieve checkpoint
     let checkpoints = storage.get_session_checkpoints(session_id).await.unwrap();
     assert_eq!(checkpoints.len(), 1, "Should have 1 checkpoint");
-    assert!(checkpoints[0].summary.contains("5 actions"), "Summary should be preserved");
-    assert!(checkpoints[0].embedding.is_some(), "Embedding should be preserved");
+    assert!(
+        checkpoints[0].summary.contains("5 actions"),
+        "Summary should be preserved"
+    );
+    assert!(
+        checkpoints[0].embedding.is_some(),
+        "Embedding should be preserved"
+    );
 
     println!("✓ LanceDB checkpoint storage test passed");
 }
@@ -1000,7 +1163,10 @@ async fn test_embedding_model_initialization() {
     match manager.init_embedding_model() {
         Ok(()) => {
             println!("✓ Embedding model initialized successfully");
-            assert!(manager.embedding_available(), "Embedding should be available");
+            assert!(
+                manager.embedding_available(),
+                "Embedding should be available"
+            );
         }
         Err(e) => {
             // This is expected if running in CI without network
@@ -1031,7 +1197,9 @@ async fn test_embedding_generation() {
         "Create REST API endpoints",
     ];
 
-    let embeddings = manager.embed(&texts).expect("Failed to generate embeddings");
+    let embeddings = manager
+        .embed(&texts)
+        .expect("Failed to generate embeddings");
 
     assert_eq!(embeddings.len(), 3, "Should generate 3 embeddings");
 
@@ -1054,7 +1222,11 @@ async fn test_embedding_generation() {
     }
 
     println!("✓ Embedding generation test passed");
-    println!("  - Generated {} embeddings of {} dimensions each", embeddings.len(), EMBEDDING_DIM);
+    println!(
+        "  - Generated {} embeddings of {} dimensions each",
+        embeddings.len(),
+        EMBEDDING_DIM
+    );
 }
 
 #[tokio::test]
@@ -1128,11 +1300,14 @@ async fn test_download_models() {
 
     // Download embedding model
     println!("1. Downloading embedding model (all-MiniLM-L6-v2, ~30MB)...");
-    match manager.download_embedding_model(|progress| {
-        if progress.percent as u32 % 20 == 0 {
-            println!("   Progress: {:.1}%", progress.percent);
-        }
-    }).await {
+    match manager
+        .download_embedding_model(|progress| {
+            if progress.percent as u32 % 20 == 0 {
+                println!("   Progress: {:.1}%", progress.percent);
+            }
+        })
+        .await
+    {
         Ok(()) => println!("   ✓ Embedding model ready"),
         Err(e) => println!("   ⚠ Embedding model failed: {}", e),
     }
@@ -1140,11 +1315,14 @@ async fn test_download_models() {
     // Download LLM model
     println!("2. Downloading LLM model (Qwen 2.5 0.5B, ~400MB)...");
     println!("   This may take several minutes on first run.");
-    match manager.download_llm_model(|progress| {
-        if progress.percent as u32 % 10 == 0 {
-            println!("   Progress: {:.1}%", progress.percent);
-        }
-    }).await {
+    match manager
+        .download_llm_model(|progress| {
+            if progress.percent as u32 % 10 == 0 {
+                println!("   Progress: {:.1}%", progress.percent);
+            }
+        })
+        .await
+    {
         Ok(()) => println!("   ✓ LLM model ready"),
         Err(e) => println!("   ⚠ LLM model failed: {}", e),
     }
@@ -1212,7 +1390,9 @@ async fn test_llm_chat_format() {
     println!("System: {}", system);
     println!("User: {}", user);
 
-    let response = manager.generate_chat(system, user, 100).expect("Failed to generate");
+    let response = manager
+        .generate_chat(system, user, 100)
+        .expect("Failed to generate");
     println!("Response: {}", response);
 
     assert!(!response.is_empty(), "Response should not be empty");
@@ -1250,7 +1430,9 @@ Types: feat, fix, docs, refactor, test, chore"#;
 
 Generate a commit message:"#;
 
-    let response = manager.generate_chat(system, user, 100).expect("Failed to generate");
+    let response = manager
+        .generate_chat(system, user, 100)
+        .expect("Failed to generate");
 
     println!("Generated commit message:");
     println!("  {}", response);
@@ -1297,7 +1479,9 @@ async fn test_full_semantic_search_with_embeddings() {
         "Refactor authentication middleware",
     ];
 
-    let embeddings = manager.embed(&event_texts).expect("Failed to generate embeddings");
+    let embeddings = manager
+        .embed(&event_texts)
+        .expect("Failed to generate embeddings");
 
     let mut events: Vec<SessionEvent> = event_texts
         .iter()
@@ -1309,7 +1493,10 @@ async fn test_full_semantic_search_with_embeddings() {
         })
         .collect();
 
-    storage.save_events(&events).await.expect("Failed to save events");
+    storage
+        .save_events(&events)
+        .await
+        .expect("Failed to save events");
 
     // Search for auth-related events using keyword search
     let results = storage
@@ -1317,7 +1504,10 @@ async fn test_full_semantic_search_with_embeddings() {
         .await
         .expect("Search failed");
 
-    assert!(results.len() >= 2, "Should find at least 2 auth-related events");
+    assert!(
+        results.len() >= 2,
+        "Should find at least 2 auth-related events"
+    );
 
     println!("✓ Full semantic search with embeddings test passed");
     println!("  - Stored {} events with embeddings", events.len());

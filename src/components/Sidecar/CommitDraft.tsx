@@ -1,22 +1,15 @@
+import { Check, Copy, GitCommit, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { useState } from "react";
-import {
-  Check,
-  Copy,
-  GitCommit,
-  Loader2,
-  RefreshCw,
-  Sparkles,
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
+import { Textarea } from "@/components/ui/textarea";
 import {
+  type CommitDraft as CommitDraftType,
+  clearCommitBoundary,
   generateCommit,
   getPendingFiles,
-  clearCommitBoundary,
-  type CommitDraft as CommitDraftType,
 } from "@/lib/sidecar";
+import { cn } from "@/lib/utils";
 
 interface CommitDraftProps {
   sessionId?: string;
@@ -79,9 +72,8 @@ export function CommitDraft({ sessionId, className, onCommit }: CommitDraftProps
         </div>
 
         <p className="text-sm text-[#565f89]">
-          Generate a commit message based on your session activity. The AI will
-          analyze your file changes and reasoning to create a meaningful commit
-          message.
+          Generate a commit message based on your session activity. The AI will analyze your file
+          changes and reasoning to create a meaningful commit message.
         </p>
 
         <Button
@@ -92,11 +84,7 @@ export function CommitDraft({ sessionId, className, onCommit }: CommitDraftProps
           Generate from Session
         </Button>
 
-        {error && (
-          <div className="text-xs text-[#f7768e] bg-[#f7768e]/10 rounded p-2">
-            {error}
-          </div>
-        )}
+        {error && <div className="text-xs text-[#f7768e] bg-[#f7768e]/10 rounded p-2">{error}</div>}
       </div>
     );
   }
@@ -120,9 +108,7 @@ export function CommitDraft({ sessionId, className, onCommit }: CommitDraftProps
       <div className="p-3 border-b border-[#3b4261] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <GitCommit className="w-4 h-4 text-[#bb9af7]" />
-          <span className="text-sm font-medium text-[#c0caf5]">
-            Commit Draft
-          </span>
+          <span className="text-sm font-medium text-[#c0caf5]">Commit Draft</span>
         </div>
         <Button
           variant="ghost"
@@ -148,7 +134,7 @@ export function CommitDraft({ sessionId, className, onCommit }: CommitDraftProps
           {/* Editable message */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs text-[#565f89]">Commit Message</label>
+              <span className="text-xs text-[#565f89]">Commit Message</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -173,15 +159,12 @@ export function CommitDraft({ sessionId, className, onCommit }: CommitDraftProps
           {/* Files to commit */}
           {(draft?.files.length || pendingFiles.length) > 0 && (
             <div className="space-y-1.5">
-              <label className="text-xs text-[#565f89]">
+              <span className="text-xs text-[#565f89]">
                 Files ({(draft?.files || pendingFiles).length})
-              </label>
+              </span>
               <div className="bg-[#1f2335] rounded-md p-2 space-y-1 max-h-32 overflow-y-auto">
-                {(draft?.files || pendingFiles).map((file, i) => (
-                  <div
-                    key={i}
-                    className="text-xs text-[#c0caf5] font-mono truncate"
-                  >
+                {(draft?.files || pendingFiles).map((file) => (
+                  <div key={file} className="text-xs text-[#c0caf5] font-mono truncate">
                     {file}
                   </div>
                 ))}
@@ -192,11 +175,9 @@ export function CommitDraft({ sessionId, className, onCommit }: CommitDraftProps
           {/* AI reasoning */}
           {draft?.reasoning && (
             <div className="space-y-1.5">
-              <label className="text-xs text-[#565f89]">AI Reasoning</label>
+              <span className="text-xs text-[#565f89]">AI Reasoning</span>
               <div className="bg-[#1f2335] rounded-md p-2">
-                <p className="text-xs text-[#565f89] italic">
-                  {draft.reasoning}
-                </p>
+                <p className="text-xs text-[#565f89] italic">{draft.reasoning}</p>
               </div>
             </div>
           )}

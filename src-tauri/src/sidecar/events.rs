@@ -241,23 +241,35 @@ impl SessionEvent {
             FileOperation::Create => format!(
                 "File created: {}{}",
                 path.display(),
-                summary.as_ref().map(|s| format!(" - {}", s)).unwrap_or_default()
+                summary
+                    .as_ref()
+                    .map(|s| format!(" - {}", s))
+                    .unwrap_or_default()
             ),
             FileOperation::Modify => format!(
                 "File modified: {}{}",
                 path.display(),
-                summary.as_ref().map(|s| format!(" - {}", s)).unwrap_or_default()
+                summary
+                    .as_ref()
+                    .map(|s| format!(" - {}", s))
+                    .unwrap_or_default()
             ),
             FileOperation::Delete => format!(
                 "File deleted: {}{}",
                 path.display(),
-                summary.as_ref().map(|s| format!(" - {}", s)).unwrap_or_default()
+                summary
+                    .as_ref()
+                    .map(|s| format!(" - {}", s))
+                    .unwrap_or_default()
             ),
             FileOperation::Rename { from } => format!(
                 "Renamed {} to {}{}",
                 from.display(),
                 path.display(),
-                summary.as_ref().map(|s| format!(": {}", s)).unwrap_or_default()
+                summary
+                    .as_ref()
+                    .map(|s| format!(": {}", s))
+                    .unwrap_or_default()
             ),
         };
 
@@ -302,11 +314,7 @@ impl SessionEvent {
     }
 
     /// Create an agent reasoning event
-    pub fn reasoning(
-        session_id: Uuid,
-        content: &str,
-        decision_type: Option<DecisionType>,
-    ) -> Self {
+    pub fn reasoning(session_id: Uuid, content: &str, decision_type: Option<DecisionType>) -> Self {
         Self::new(
             session_id,
             EventType::AgentReasoning {
@@ -396,11 +404,7 @@ impl SessionEvent {
     }
 
     /// Create an AI response event
-    pub fn ai_response(
-        session_id: Uuid,
-        response: &str,
-        duration_ms: Option<u64>,
-    ) -> Self {
+    pub fn ai_response(session_id: Uuid, response: &str, duration_ms: Option<u64>) -> Self {
         // Truncate for storage but mark if truncated
         const MAX_RESPONSE_LEN: usize = 2000;
         let truncated = response.chars().count() > MAX_RESPONSE_LEN;
@@ -427,6 +431,7 @@ impl SessionEvent {
     }
 
     /// Set the embedding for this event
+    #[allow(dead_code)]
     pub fn with_embedding(mut self, embedding: Vec<f32>) -> Self {
         self.embedding = Some(embedding);
         self
@@ -473,6 +478,7 @@ impl Checkpoint {
     }
 
     /// Create an empty checkpoint (no events to summarize)
+    #[allow(dead_code)]
     pub fn empty(session_id: Uuid) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -486,6 +492,7 @@ impl Checkpoint {
     }
 
     /// Set the embedding for this checkpoint
+    #[allow(dead_code)]
     pub fn with_embedding(mut self, embedding: Vec<f32>) -> Self {
         self.embedding = Some(embedding);
         self
@@ -534,6 +541,7 @@ impl SidecarSession {
     }
 
     /// Check if the session is still active
+    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
         self.ended_at.is_none()
     }
@@ -597,6 +605,7 @@ impl CommitBoundaryDetector {
     }
 
     /// Create with custom thresholds
+    #[allow(dead_code)]
     pub fn with_thresholds(min_events: usize, pause_threshold_secs: u64) -> Self {
         Self {
             recent_edits: Vec::new(),
@@ -732,7 +741,11 @@ impl SessionExport {
     pub const VERSION: u32 = 1;
 
     /// Create a new export
-    pub fn new(session: SidecarSession, events: Vec<SessionEvent>, checkpoints: Vec<Checkpoint>) -> Self {
+    pub fn new(
+        session: SidecarSession,
+        events: Vec<SessionEvent>,
+        checkpoints: Vec<Checkpoint>,
+    ) -> Self {
         Self {
             version: Self::VERSION,
             exported_at: Utc::now(),
@@ -748,6 +761,7 @@ impl SessionExport {
     }
 
     /// Export to JSON bytes
+    #[allow(dead_code)]
     pub fn to_json_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec_pretty(self)
     }
@@ -828,8 +842,7 @@ mod tests {
         let session_id = Uuid::new_v4();
         let path = PathBuf::from("/src/lib.rs");
 
-        let event =
-            SessionEvent::file_edit(session_id, path.clone(), FileOperation::Modify, None);
+        let event = SessionEvent::file_edit(session_id, path.clone(), FileOperation::Modify, None);
 
         assert_eq!(event.files, vec![path]);
         assert!(event.content.contains("modified"));
@@ -877,7 +890,11 @@ mod tests {
     #[test]
     fn test_event_serialization() {
         let session_id = Uuid::new_v4();
-        let event = SessionEvent::reasoning(session_id, "Choosing approach A", Some(DecisionType::ApproachChoice));
+        let event = SessionEvent::reasoning(
+            session_id,
+            "Choosing approach A",
+            Some(DecisionType::ApproachChoice),
+        );
 
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: SessionEvent = serde_json::from_str(&json).unwrap();

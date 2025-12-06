@@ -1,3 +1,3 @@
-export { SidecarStatus } from "./SidecarStatus";
-export { SessionHistory } from "./SessionHistory";
 export { CommitDraft } from "./CommitDraft";
+export { SessionHistory } from "./SessionHistory";
+export { SidecarStatus } from "./SidecarStatus";

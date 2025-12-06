@@ -1,6 +1,6 @@
 import { Bot, ChevronDown, Cloud, Cpu, Terminal } from "lucide-react";
-import { SidecarStatus } from "@/components/Sidecar";
 import { toast } from "sonner";
+import { SidecarStatus } from "@/components/Sidecar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

@@ -18,6 +18,7 @@ use super::prompts;
 use super::storage::SidecarStorage;
 
 /// Tasks that the processor can handle
+#[allow(dead_code)]
 pub enum ProcessorTask {
     /// Flush events to storage
     FlushEvents(Vec<SessionEvent>),
@@ -160,7 +161,8 @@ impl SidecarProcessor {
         }
 
         // Generate checkpoint summary
-        let summary = if self.config.synthesis_enabled && self.model_manager.read().llm_available() {
+        let summary = if self.config.synthesis_enabled && self.model_manager.read().llm_available()
+        {
             // Try LLM-based summary
             match self.generate_llm_summary(&events) {
                 Ok(summary) => {
@@ -407,10 +409,7 @@ mod tests {
         for batch in 0..5 {
             let events: Vec<SessionEvent> = (0..10)
                 .map(|i| {
-                    SessionEvent::user_prompt(
-                        session_id,
-                        &format!("Batch {} Event {}", batch, i),
-                    )
+                    SessionEvent::user_prompt(session_id, &format!("Batch {} Event {}", batch, i))
                 })
                 .collect();
             tx.send(ProcessorTask::FlushEvents(events)).unwrap();
@@ -441,10 +440,7 @@ mod tests {
         for batch in 0..5 {
             let events: Vec<SessionEvent> = (0..10)
                 .map(|i| {
-                    SessionEvent::user_prompt(
-                        session_id,
-                        &format!("Batch {} Event {}", batch, i),
-                    )
+                    SessionEvent::user_prompt(session_id, &format!("Batch {} Event {}", batch, i))
                 })
                 .collect();
             storage.save_events(&events).await.unwrap();

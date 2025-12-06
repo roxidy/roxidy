@@ -1,20 +1,15 @@
-import { useEffect, useState } from "react";
 import { Database, Download, HardDrive, Loader2, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-import {
-  getSidecarStatus,
-  getModelsStatus,
   downloadModels,
-  type SidecarStatus as SidecarStatusType,
+  getModelsStatus,
+  getSidecarStatus,
   type ModelsStatus,
+  type SidecarStatus as SidecarStatusType,
 } from "@/lib/sidecar";
+import { cn } from "@/lib/utils";
 
 interface SidecarStatusProps {
   className?: string;
@@ -33,10 +28,7 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
 
     const fetchStatus = async () => {
       try {
-        const [sidecar, models] = await Promise.all([
-          getSidecarStatus(),
-          getModelsStatus(),
-        ]);
+        const [sidecar, models] = await Promise.all([getSidecarStatus(), getModelsStatus()]);
         if (mounted) {
           setStatus(sidecar);
           setModelsStatus(models);
@@ -63,10 +55,7 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
     try {
       await downloadModels();
       // Refresh status after download
-      const [sidecar, models] = await Promise.all([
-        getSidecarStatus(),
-        getModelsStatus(),
-      ]);
+      const [sidecar, models] = await Promise.all([getSidecarStatus(), getModelsStatus()]);
       setStatus(sidecar);
       setModelsStatus(models);
     } catch (e) {
@@ -77,19 +66,11 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
   };
 
   if (error && !status) {
-    return (
-      <div className={cn("text-[#565f89] text-xs", className)}>
-        Sidecar unavailable
-      </div>
-    );
+    return <div className={cn("text-[#565f89] text-xs", className)}>Sidecar unavailable</div>;
   }
 
   if (!status) {
-    return (
-      <div className={cn("text-[#565f89] text-xs animate-pulse", className)}>
-        Loading...
-      </div>
-    );
+    return <div className={cn("text-[#565f89] text-xs animate-pulse", className)}>Loading...</div>;
   }
 
   const isReady = status.storage_ready;
@@ -104,9 +85,7 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
             <div
               className={cn(
                 "flex items-center gap-1.5 h-7 px-2 rounded-md cursor-default",
-                isReady
-                  ? "bg-[#9ece6a]/10 text-[#9ece6a]"
-                  : "bg-[#565f89]/10 text-[#565f89]",
+                isReady ? "bg-[#9ece6a]/10 text-[#9ece6a]" : "bg-[#565f89]/10 text-[#565f89]",
                 className
               )}
             >
@@ -116,15 +95,10 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
               )}
             </div>
           </TooltipTrigger>
-          <TooltipContent
-            side="top"
-            className="bg-[#1f2335] border-[#3b4261] text-[#c0caf5]"
-          >
+          <TooltipContent side="top" className="bg-[#1f2335] border-[#3b4261] text-[#c0caf5]">
             <div className="text-xs space-y-1">
               <div>Sidecar: {isReady ? "Ready" : "Not initialized"}</div>
-              {status.active_session && (
-                <div>Session: {status.event_count} events captured</div>
-              )}
+              {status.active_session && <div>Session: {status.event_count} events captured</div>}
               {modelsStatus && (
                 <div>
                   Models: {modelsStatus.embedding_available ? "Embeddings" : ""}{" "}
@@ -145,20 +119,13 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
       {/* Status header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Database
-            className={cn(
-              "w-4 h-4",
-              isReady ? "text-[#9ece6a]" : "text-[#565f89]"
-            )}
-          />
+          <Database className={cn("w-4 h-4", isReady ? "text-[#9ece6a]" : "text-[#565f89]")} />
           <span className="text-[#c0caf5] font-medium">Context Capture</span>
         </div>
         <span
           className={cn(
             "text-xs px-2 py-0.5 rounded",
-            isReady
-              ? "bg-[#9ece6a]/10 text-[#9ece6a]"
-              : "bg-[#565f89]/10 text-[#565f89]"
+            isReady ? "bg-[#9ece6a]/10 text-[#9ece6a]" : "bg-[#565f89]/10 text-[#565f89]"
           )}
         >
           {isReady ? "Active" : "Inactive"}
@@ -183,9 +150,7 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
       {isReady && (
         <div className="flex items-center gap-2 text-xs text-[#565f89]">
           <HardDrive className="w-3.5 h-3.5" />
-          <span>
-            Storage: {status.workspace_path ? "Initialized" : "Pending"}
-          </span>
+          <span>Storage: {status.workspace_path ? "Initialized" : "Pending"}</span>
         </div>
       )}
 
@@ -196,9 +161,7 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
           <div
             className={cn(
               "text-xs px-2 py-1.5 rounded bg-[#1f2335] flex items-center gap-1.5",
-              modelsStatus?.embedding_available
-                ? "text-[#9ece6a]"
-                : "text-[#565f89]"
+              modelsStatus?.embedding_available ? "text-[#9ece6a]" : "text-[#565f89]"
             )}
           >
             <span
@@ -250,11 +213,7 @@ export function SidecarStatus({ className, showDetails = false }: SidecarStatusP
       </div>
 
       {/* Error display */}
-      {error && (
-        <div className="text-xs text-[#f7768e] bg-[#f7768e]/10 rounded p-2">
-          {error}
-        </div>
-      )}
+      {error && <div className="text-xs text-[#f7768e] bg-[#f7768e]/10 rounded p-2">{error}</div>}
     </div>
   );
 }

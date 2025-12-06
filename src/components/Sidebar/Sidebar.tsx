@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { CommitDraft, SessionHistory, SidecarStatus } from "@/components/Sidecar";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -24,7 +25,6 @@ import {
   type SymbolResult,
   searchFiles,
 } from "@/lib/indexer";
-import { SessionHistory, CommitDraft, SidecarStatus } from "@/components/Sidecar";
 
 interface SidebarProps {
   workingDirectory?: string;
@@ -202,7 +202,13 @@ function buildFileTree(files: string[], workingDir: string): FileNode[] {
   return sortNodes(rootChildren);
 }
 
-export function Sidebar({ workingDirectory, sessionId, onFileSelect, isOpen, onToggle }: SidebarProps) {
+export function Sidebar({
+  workingDirectory,
+  sessionId,
+  onFileSelect,
+  isOpen,
+  onToggle,
+}: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [symbols, setSymbols] = useState<SymbolGroup[]>([]);

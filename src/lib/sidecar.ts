@@ -38,7 +38,13 @@ export interface SessionEvent {
 export type EventType =
   | { type: "user_prompt"; intent: string }
   | { type: "file_edit"; path: string; operation: FileOperation; summary?: string }
-  | { type: "tool_call"; tool_name: string; args_summary: string; reasoning?: string; success: boolean }
+  | {
+      type: "tool_call";
+      tool_name: string;
+      args_summary: string;
+      reasoning?: string;
+      success: boolean;
+    }
   | { type: "agent_reasoning"; content: string; decision_type?: DecisionType }
   | { type: "user_feedback"; feedback_type: FeedbackType; target_tool?: string; comment?: string }
   | { type: "error_recovery"; error_message: string; recovery_action?: string; resolved: boolean }
@@ -47,11 +53,7 @@ export type EventType =
   | { type: "session_end"; summary?: string }
   | { type: "ai_response"; content: string; truncated: boolean; duration_ms?: number };
 
-export type FileOperation =
-  | "create"
-  | "modify"
-  | "delete"
-  | { rename: { from: string } };
+export type FileOperation = "create" | "modify" | "delete" | { rename: { from: string } };
 
 export type DecisionType = "approach_choice" | "tradeoff" | "fallback" | "assumption";
 

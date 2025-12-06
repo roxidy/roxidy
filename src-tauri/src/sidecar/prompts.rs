@@ -192,10 +192,7 @@ pub fn template_commit_message(
     } else if file_count == 1 {
         format!("{}({}): update {}", commit_type, scope, files_changed[0])
     } else {
-        format!(
-            "{}({}): update {} files",
-            commit_type, scope, file_count
-        )
+        format!("{}({}): update {} files", commit_type, scope, file_count)
     };
 
     // Build body

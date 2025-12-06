@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use arrow_array::{
-    types::Float32Type, Array, ArrayRef, FixedSizeListArray, Float32Array, Int64Array,
-    RecordBatch, RecordBatchIterator, StringArray, UInt64Array,
+    types::Float32Type, Array, ArrayRef, FixedSizeListArray, Float32Array, Int64Array, RecordBatch,
+    RecordBatchIterator, StringArray, UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use chrono::{TimeZone, Utc};
@@ -208,8 +208,14 @@ impl SidecarStorage {
 
         let ids: Vec<String> = events.iter().map(|e| e.id.to_string()).collect();
         let session_ids: Vec<String> = events.iter().map(|e| e.session_id.to_string()).collect();
-        let timestamps: Vec<i64> = events.iter().map(|e| e.timestamp.timestamp_millis()).collect();
-        let event_types: Vec<String> = events.iter().map(|e| e.event_type.name().to_string()).collect();
+        let timestamps: Vec<i64> = events
+            .iter()
+            .map(|e| e.timestamp.timestamp_millis())
+            .collect();
+        let event_types: Vec<String> = events
+            .iter()
+            .map(|e| e.event_type.name().to_string())
+            .collect();
         let contents: Vec<String> = events.iter().map(|e| e.content.clone()).collect();
         let files_json: Vec<Option<String>> = events
             .iter()
@@ -221,7 +227,8 @@ impl SidecarStorage {
             .collect();
 
         // Build embeddings array
-        let embeddings = self.build_embeddings_array(events.iter().map(|e| e.embedding.as_ref()).collect());
+        let embeddings =
+            self.build_embeddings_array(events.iter().map(|e| e.embedding.as_ref()).collect());
 
         let batch = RecordBatch::try_new(
             schema.clone(),
@@ -247,14 +254,9 @@ impl SidecarStorage {
     /// Build a FixedSizeListArray from optional embeddings
     fn build_embeddings_array(&self, embeddings: Vec<Option<&Vec<f32>>>) -> ArrayRef {
         // For events without embeddings, we use zeros as placeholder
-        let iter = embeddings.iter().map(|opt_emb| {
-            if let Some(emb) = opt_emb {
-                Some(emb.iter().copied().map(Some).collect::<Vec<_>>())
-            } else {
-                // Return None for null entries
-                None
-            }
-        });
+        let iter = embeddings
+            .iter()
+            .map(|opt_emb| opt_emb.map(|emb| emb.iter().copied().map(Some).collect::<Vec<_>>()));
 
         let list_array =
             FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(iter, EMBEDDING_DIM);
@@ -293,10 +295,16 @@ impl SidecarStorage {
             vec![
                 Arc::new(StringArray::from(vec![checkpoint.id.to_string()])) as ArrayRef,
                 Arc::new(StringArray::from(vec![checkpoint.session_id.to_string()])) as ArrayRef,
-                Arc::new(Int64Array::from(vec![checkpoint.timestamp.timestamp_millis()])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![checkpoint
+                    .timestamp
+                    .timestamp_millis()])) as ArrayRef,
                 Arc::new(StringArray::from(vec![checkpoint.summary.clone()])) as ArrayRef,
-                Arc::new(StringArray::from(vec![serde_json::to_string(&checkpoint.event_ids)?])) as ArrayRef,
-                Arc::new(StringArray::from(vec![Some(serde_json::to_string(&checkpoint.files_touched)?)])) as ArrayRef,
+                Arc::new(StringArray::from(vec![serde_json::to_string(
+                    &checkpoint.event_ids,
+                )?])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some(serde_json::to_string(
+                    &checkpoint.files_touched,
+                )?)])) as ArrayRef,
                 embeddings,
             ],
         )?;
@@ -333,13 +341,20 @@ impl SidecarStorage {
             schema.clone(),
             vec![
                 Arc::new(StringArray::from(vec![session.id.to_string()])) as ArrayRef,
-                Arc::new(Int64Array::from(vec![session.started_at.timestamp_millis()])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![session
+                    .started_at
+                    .timestamp_millis()])) as ArrayRef,
                 Arc::new(Int64Array::from(ended_at)) as ArrayRef,
                 Arc::new(StringArray::from(vec![session.initial_request.clone()])) as ArrayRef,
-                Arc::new(StringArray::from(vec![session.workspace_path.to_string_lossy().to_string()])) as ArrayRef,
+                Arc::new(StringArray::from(vec![session
+                    .workspace_path
+                    .to_string_lossy()
+                    .to_string()])) as ArrayRef,
                 Arc::new(UInt64Array::from(vec![session.event_count as u64])) as ArrayRef,
                 Arc::new(UInt64Array::from(vec![session.checkpoint_count as u64])) as ArrayRef,
-                Arc::new(StringArray::from(vec![Some(serde_json::to_string(&session.files_touched)?)])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some(serde_json::to_string(
+                    &session.files_touched,
+                )?)])) as ArrayRef,
                 Arc::new(StringArray::from(vec![session.final_summary.clone()])) as ArrayRef,
             ],
         )?;
@@ -468,6 +483,7 @@ impl SidecarStorage {
     }
 
     /// Vector similarity search across events
+    #[allow(dead_code)]
     pub async fn search_events_vector(
         &self,
         query_embedding: &[f32],
@@ -571,6 +587,7 @@ impl SidecarStorage {
     }
 
     /// Search events by file path
+    #[allow(dead_code)]
     pub async fn search_events_by_file(
         &self,
         file_path: &Path,
@@ -606,6 +623,7 @@ impl SidecarStorage {
     }
 
     /// Get recent events across all sessions
+    #[allow(dead_code)]
     pub async fn get_recent_events(&self, limit: usize) -> Result<Vec<SessionEvent>> {
         let table = self
             .events_table
@@ -694,7 +712,7 @@ impl SidecarStorage {
         }
 
         // Calculate optimal number of partitions (sqrt(n) is a good heuristic)
-        let num_partitions = ((count as f64).sqrt() as u32).max(1).min(256);
+        let num_partitions = ((count as f64).sqrt() as u32).clamp(1, 256);
 
         tracing::info!(
             "Creating IVF_PQ index on events table ({} events, {} partitions)",
@@ -736,7 +754,7 @@ impl SidecarStorage {
             return Ok(false);
         }
 
-        let num_partitions = ((count as f64).sqrt() as u32).max(1).min(256);
+        let num_partitions = ((count as f64).sqrt() as u32).clamp(1, 256);
 
         tracing::info!(
             "Creating IVF_PQ index on checkpoints table ({} checkpoints)",
@@ -1128,6 +1146,7 @@ pub struct StorageStats {
 
 impl StorageStats {
     /// Get human-readable size
+    #[allow(dead_code)]
     pub fn human_size(&self) -> String {
         let bytes = self.total_size_bytes;
         if bytes < 1024 {
@@ -1354,7 +1373,11 @@ mod proptests {
                 let retrieved = storage.get_session_events(session_id).await.unwrap();
                 assert_eq!(retrieved.len(), 1);
                 assert_eq!(retrieved[0].id, event_id);
-                assert_eq!(retrieved[0].content, expected_content, "Content mismatch for: {:?}", content);
+                assert_eq!(
+                    retrieved[0].content, expected_content,
+                    "Content mismatch for: {:?}",
+                    content
+                );
             });
         }
     }

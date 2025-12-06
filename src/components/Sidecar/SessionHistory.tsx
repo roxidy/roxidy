@@ -1,25 +1,17 @@
-import { useEffect, useState } from "react";
-import {
-  Calendar,
-  ChevronRight,
-  Clock,
-  File,
-  Loader2,
-  MessageSquare,
-  Search,
-} from "lucide-react";
+import { Calendar, ChevronRight, Clock, File, Loader2, MessageSquare, Search } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
 import {
-  listSessions,
-  searchEvents,
-  queryHistory,
-  type SidecarSession,
-  type SessionEvent,
   type HistoryResponse,
+  listSessions,
+  queryHistory,
+  type SessionEvent,
+  type SidecarSession,
+  searchEvents,
 } from "@/lib/sidecar";
+import { cn } from "@/lib/utils";
 
 interface SessionHistoryProps {
   className?: string;
@@ -35,12 +27,7 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
   const [historyAnswer, setHistoryAnswer] = useState<HistoryResponse | null>(null);
   const [searching, setSearching] = useState(false);
 
-  // Load sessions on mount
-  useEffect(() => {
-    loadSessions();
-  }, []);
-
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     try {
       setLoading(true);
       const data = await listSessions();
@@ -51,7 +38,12 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Load sessions on mount
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -138,18 +130,14 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
             disabled={searching}
             className="h-8 bg-[#bb9af7] hover:bg-[#bb9af7]/80 text-[#1a1b26]"
           >
-            {searching ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              "Search"
-            )}
+            {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
           </Button>
         </div>
       </div>
 
       <ScrollArea className="flex-1">
         {/* AI Answer */}
-        {historyAnswer && historyAnswer.answer && (
+        {historyAnswer?.answer && (
           <div className="p-3 border-b border-[#3b4261] bg-[#1f2335]/50">
             <div className="text-xs text-[#bb9af7] mb-1.5 flex items-center gap-1">
               <MessageSquare className="w-3 h-3" />
@@ -172,18 +160,11 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
             </div>
             <div className="space-y-2">
               {searchResults.map((event) => (
-                <div
-                  key={event.id}
-                  className="p-2 rounded bg-[#1f2335] text-sm"
-                >
+                <div key={event.id} className="p-2 rounded bg-[#1f2335] text-sm">
                   <div className="flex items-center gap-2">
                     {getEventIcon(event)}
-                    <span className="text-[#c0caf5] truncate flex-1">
-                      {event.content}
-                    </span>
-                    <span className="text-xs text-[#565f89]">
-                      {formatTime(event.timestamp)}
-                    </span>
+                    <span className="text-[#c0caf5] truncate flex-1">{event.content}</span>
+                    <span className="text-xs text-[#565f89]">{formatTime(event.timestamp)}</span>
                   </div>
                 </div>
               ))}
@@ -197,13 +178,12 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
             {sessions.length} session{sessions.length !== 1 ? "s" : ""}
           </div>
 
-          {error && (
-            <div className="text-xs text-[#f7768e] mb-2">{error}</div>
-          )}
+          {error && <div className="text-xs text-[#f7768e] mb-2">{error}</div>}
 
           <div className="space-y-2">
             {sessions.map((session) => (
               <button
+                type="button"
                 key={session.id}
                 onClick={() => onSelectSession?.(session)}
                 className="w-full p-3 rounded-md bg-[#1f2335] hover:bg-[#292e42] transition-colors text-left"
@@ -225,9 +205,7 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1">
-                    <span className="text-xs text-[#bb9af7]">
-                      {session.event_count} events
-                    </span>
+                    <span className="text-xs text-[#bb9af7]">{session.event_count} events</span>
                     <span className="text-xs text-[#565f89]">
                       {session.files_touched.length} files
                     </span>

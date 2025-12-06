@@ -54,6 +54,7 @@ pub struct ModelsStatus {
     pub llm_loaded: bool,
 }
 
+#[allow(dead_code)]
 impl ModelsStatus {
     /// Check if all models are available
     pub fn all_available(&self) -> bool {
@@ -218,6 +219,7 @@ impl ModelManager {
     }
 
     /// Check if the LLM is loaded
+    #[allow(dead_code)]
     pub fn llm_loaded(&self) -> bool {
         self.llm.read().is_some()
     }
@@ -244,8 +246,8 @@ impl ModelManager {
             .with_cache_dir(self.models_dir.clone())
             .with_show_download_progress(true);
 
-        let embedding = TextEmbedding::try_new(options)
-            .context("Failed to initialize embedding model")?;
+        let embedding =
+            TextEmbedding::try_new(options).context("Failed to initialize embedding model")?;
 
         *model = Some(embedding);
 
@@ -272,9 +274,8 @@ impl ModelManager {
 
         // Initialize llama.cpp backend using global singleton
         // (llama.cpp can only be initialized once per process)
-        let backend = LLAMA_BACKEND.get_or_init(|| {
-            LlamaBackend::init().expect("Failed to initialize llama.cpp backend")
-        });
+        let backend = LLAMA_BACKEND
+            .get_or_init(|| LlamaBackend::init().expect("Failed to initialize llama.cpp backend"));
 
         // Configure model parameters (no GPU by default for compatibility)
         let model_params = LlamaModelParams::default();
@@ -355,8 +356,8 @@ impl ModelManager {
         };
 
         // Create context
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(DEFAULT_CTX_SIZE));
+        let ctx_params =
+            LlamaContextParams::default().with_n_ctx(NonZeroU32::new(DEFAULT_CTX_SIZE));
 
         let mut ctx = model
             .new_context(backend, ctx_params)
@@ -381,8 +382,7 @@ impl ModelManager {
         }
 
         // Decode the prompt
-        ctx.decode(&mut batch)
-            .context("Failed to decode prompt")?;
+        ctx.decode(&mut batch).context("Failed to decode prompt")?;
 
         // Set up sampler for generation
         let mut sampler = LlamaSampler::chain_simple([
@@ -393,7 +393,7 @@ impl ModelManager {
 
         // Generate tokens
         let mut output = String::new();
-        let mut n_cur = batch.n_tokens() as i32;
+        let mut n_cur = batch.n_tokens();
         let n_decode = max_tokens;
 
         for _ in 0..n_decode {
@@ -414,8 +414,7 @@ impl ModelManager {
             batch.add(new_token, n_cur, &[0], true)?;
 
             // Decode
-            ctx.decode(&mut batch)
-                .context("Failed to decode token")?;
+            ctx.decode(&mut batch).context("Failed to decode token")?;
 
             n_cur += 1;
         }
@@ -424,6 +423,7 @@ impl ModelManager {
     }
 
     /// Generate text with a chat template (for instruction-tuned models)
+    #[allow(dead_code)]
     pub fn generate_chat(&self, system: &str, user: &str, max_tokens: usize) -> Result<String> {
         // Format as Qwen chat template
         let prompt = format!(
@@ -471,7 +471,10 @@ impl ModelManager {
 
         let llm_path = self.llm_model_path();
         if llm_path.exists() {
-            tracing::info!("[sidecar-models] LLM model already exists at {:?}", llm_path);
+            tracing::info!(
+                "[sidecar-models] LLM model already exists at {:?}",
+                llm_path
+            );
             progress(DownloadProgress::completed("llm"));
             return Ok(());
         }

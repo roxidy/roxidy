@@ -55,11 +55,12 @@ impl CaptureContext {
             }
 
             AiEvent::ToolResult {
-                tool_name,
-                success,
-                ..
+                tool_name, success, ..
             } => {
-                debug!("[sidecar-capture] Tool result: {} success={}", tool_name, success);
+                debug!(
+                    "[sidecar-capture] Tool result: {} success={}",
+                    tool_name, success
+                );
 
                 // Capture file operations
                 if let Some(event) = self.create_file_event(session_id, tool_name, *success) {
@@ -71,7 +72,7 @@ impl CaptureContext {
                 let args_summary = self
                     .last_tool_args
                     .as_ref()
-                    .map(|a| summarize_args(a))
+                    .map(summarize_args)
                     .unwrap_or_else(|| "{}".to_string());
 
                 let event = SessionEvent::tool_call(
@@ -169,7 +170,10 @@ impl CaptureContext {
             | AiEvent::WorkflowStepCompleted { .. }
             | AiEvent::WorkflowCompleted { .. }
             | AiEvent::WorkflowError { .. } => {
-                trace!("[sidecar-capture] Ignoring low-signal event: {:?}", std::any::type_name::<AiEvent>());
+                trace!(
+                    "[sidecar-capture] Ignoring low-signal event: {:?}",
+                    std::any::type_name::<AiEvent>()
+                );
             }
         }
     }
@@ -211,10 +215,7 @@ impl CaptureContext {
                 let to = args.get("to").or_else(|| args.get("destination"))?;
                 let from_path = PathBuf::from(from.as_str()?);
                 let to_path = PathBuf::from(to.as_str()?);
-                (
-                    to_path,
-                    FileOperation::Rename { from: from_path },
-                )
+                (to_path, FileOperation::Rename { from: from_path })
             }
             _ => return None,
         };
@@ -314,9 +315,11 @@ fn truncate_path(path: &str) -> String {
     }
 
     // Keep first and last parts
-    format!("{}/.../{}",
+    format!(
+        "{}/.../{}",
         parts.first().unwrap_or(&""),
-        parts.last().unwrap_or(&""))
+        parts.last().unwrap_or(&"")
+    )
 }
 
 #[cfg(test)]
@@ -363,17 +366,17 @@ mod tests {
             Some(DecisionType::Assumption)
         );
 
-        assert_eq!(
-            infer_decision_type("Just a regular comment"),
-            None
-        );
+        assert_eq!(infer_decision_type("Just a regular comment"), None);
     }
 
     #[test]
     fn test_truncate_path() {
         assert_eq!(truncate_path("/short/path.rs"), "/short/path.rs");
         // Path exactly at 40 chars doesn't get truncated
-        assert_eq!(truncate_path("/this/is/exactly/forty/chars/file.rs"), "/this/is/exactly/forty/chars/file.rs");
+        assert_eq!(
+            truncate_path("/this/is/exactly/forty/chars/file.rs"),
+            "/this/is/exactly/forty/chars/file.rs"
+        );
         // Path over 40 chars with multiple segments gets truncated
         assert_eq!(
             truncate_path("/very/long/deeply/nested/path/to/some/file.rs"),

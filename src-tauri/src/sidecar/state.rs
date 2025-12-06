@@ -96,6 +96,7 @@ impl SidecarState {
     }
 
     /// Create a new sidecar state with custom configuration
+    #[allow(dead_code)]
     pub fn with_config(config: SidecarConfig) -> Self {
         Self {
             session: RwLock::new(None),
@@ -114,10 +115,7 @@ impl SidecarState {
 
     /// Initialize the sidecar for a workspace
     pub async fn initialize(&self, workspace_path: PathBuf) -> anyhow::Result<()> {
-        tracing::info!(
-            "[sidecar] Initializing for workspace: {:?}",
-            workspace_path
-        );
+        tracing::info!("[sidecar] Initializing for workspace: {:?}", workspace_path);
 
         // Ensure directories exist
         let config = self.config.read().clone();
@@ -256,6 +254,7 @@ impl SidecarState {
     }
 
     /// Check if there's an active session
+    #[allow(dead_code)]
     pub fn has_active_session(&self) -> bool {
         self.session.read().is_some()
     }
@@ -373,9 +372,7 @@ impl SidecarState {
     fn maybe_time_checkpoint(&self) {
         let config = self.config.read();
         let last_time = *self.last_checkpoint_time.read();
-        let elapsed = Utc::now()
-            .signed_duration_since(last_time)
-            .num_seconds() as u64;
+        let elapsed = Utc::now().signed_duration_since(last_time).num_seconds() as u64;
 
         if elapsed >= config.checkpoint_time_threshold_secs {
             let events = self.events_since_checkpoint.read();
@@ -500,6 +497,7 @@ impl SidecarState {
     }
 
     /// Check if embeddings are ready
+    #[allow(dead_code)]
     pub fn embeddings_ready(&self) -> bool {
         *self.embeddings_ready.read()
     }
@@ -526,7 +524,10 @@ impl SidecarState {
 
     /// Get pending files for commit boundary detection
     pub fn pending_commit_files(&self) -> Vec<PathBuf> {
-        self.commit_boundary_detector.read().pending_files().to_vec()
+        self.commit_boundary_detector
+            .read()
+            .pending_files()
+            .to_vec()
     }
 
     /// Clear commit boundary tracking (after manual commit)
@@ -535,6 +536,7 @@ impl SidecarState {
     }
 
     /// Check for commit boundary and return boundary info if detected
+    #[allow(dead_code)]
     pub fn check_commit_boundary(&self, event: &SessionEvent) -> Option<CommitBoundaryInfo> {
         self.commit_boundary_detector.write().check_boundary(event)
     }
