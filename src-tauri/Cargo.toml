@@ -65,5 +65,9 @@ async-trait = "0.1"
 # File walking with gitignore support
 ignore = "0.4"
 
+# TOML settings file support
+toml = "0.8"
+toml_edit = "0.22"
+
 [dev-dependencies]
 tempfile = "3"

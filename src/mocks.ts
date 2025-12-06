@@ -15,8 +15,8 @@
  * - emitAiEvent(event)
  */
 
-import { mockIPC, mockWindows, clearMocks } from "@tauri-apps/api/mocks";
 import * as tauriEvent from "@tauri-apps/api/event";
+import { clearMocks, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 // =============================================================================
 // Browser Mode Flag
@@ -47,7 +47,10 @@ export function isMockBrowserMode(): boolean {
 let nextHandlerId = 1;
 
 // Map of event name -> array of { handlerId, callback }
-const mockEventListeners: Map<string, Array<{ handlerId: number; callback: (event: { event: string; payload: unknown }) => void }>> = new Map();
+const mockEventListeners: Map<
+  string,
+  Array<{ handlerId: number; callback: (event: { event: string; payload: unknown }) => void }>
+> = new Map();
 
 // Map of handler ID -> { event, callback } (for unlisten)
 const handlerToEvent: Map<number, string> = new Map();
@@ -63,7 +66,7 @@ export function mockRegisterListener(
   if (!mockEventListeners.has(event)) {
     mockEventListeners.set(event, []);
   }
-  mockEventListeners.get(event)!.push({ handlerId, callback });
+  mockEventListeners.get(event)?.push({ handlerId, callback });
   handlerToEvent.set(handlerId, event);
   console.log(`[Mock Events] Registered listener for "${event}" (handler: ${handlerId})`);
   return handlerId;
@@ -91,7 +94,10 @@ export function mockUnregisterListener(handlerId: number): void {
 function dispatchMockEvent(eventName: string, payload: unknown): void {
   const listeners = mockEventListeners.get(eventName);
   if (listeners && listeners.length > 0) {
-    console.log(`[Mock Events] Dispatching "${eventName}" to ${listeners.length} listener(s)`, payload);
+    console.log(
+      `[Mock Events] Dispatching "${eventName}" to ${listeners.length} listener(s)`,
+      payload
+    );
     for (const { callback } of listeners) {
       try {
         callback({ event: eventName, payload });
@@ -287,7 +293,13 @@ export type AiEventType =
   | { type: "started"; turn_id: string }
   | { type: "text_delta"; delta: string; accumulated: string }
   | { type: "tool_request"; tool_name: string; args: unknown; request_id: string }
-  | { type: "tool_result"; tool_name: string; result: unknown; success: boolean; request_id: string }
+  | {
+      type: "tool_result";
+      tool_name: string;
+      result: unknown;
+      success: boolean;
+      request_id: string;
+    }
   | { type: "completed"; response: string; tokens_used?: number; duration_ms?: number }
   | { type: "error"; message: string; error_type: string };
 
@@ -395,10 +407,7 @@ export async function emitAiEvent(event: AiEventType): Promise<void> {
  * Simulate a complete AI response with streaming.
  * This emits started -> text_delta(s) -> completed events.
  */
-export async function simulateAiResponse(
-  response: string,
-  delayMs: number = 50
-): Promise<void> {
+export async function simulateAiResponse(response: string, delayMs: number = 50): Promise<void> {
   const turnId = `mock-turn-${Date.now()}`;
 
   // Emit started
@@ -458,7 +467,10 @@ export function setupMocks(): void {
       console.log(`[Mock Events] listen("${eventName}") called`);
 
       // Register the callback with our mock event system
-      const handlerId = mockRegisterListener(eventName, callback as (event: { event: string; payload: unknown }) => void);
+      const handlerId = mockRegisterListener(
+        eventName,
+        callback as (event: { event: string; payload: unknown }) => void
+      );
 
       // Return an unlisten function
       return () => {
@@ -485,7 +497,9 @@ export function setupMocks(): void {
     (window as unknown as { __MOCK_LISTEN__?: typeof mockListen }).__MOCK_LISTEN__ = mockListen;
 
     // Store reference to original for cleanup
-    (window as unknown as { __MOCK_ORIGINAL_LISTEN__?: typeof originalListen }).__MOCK_ORIGINAL_LISTEN__ = originalListen;
+    (
+      window as unknown as { __MOCK_ORIGINAL_LISTEN__?: typeof originalListen }
+    ).__MOCK_ORIGINAL_LISTEN__ = originalListen;
   } catch (error) {
     console.error("[Mocks] Error during initial setup:", error);
   }
@@ -560,7 +574,7 @@ export function setupMocks(): void {
         // In browser mode, we just return a mock response
         // Real streaming events would come from the backend
         mockConversationLength += 2; // User message + AI response
-        return "mock-turn-id-" + Date.now();
+        return `mock-turn-id-${Date.now()}`;
 
       case "execute_ai_tool":
         return { success: true, result: "Mock tool execution result" };
@@ -647,7 +661,9 @@ export function setupMocks(): void {
 
       case "restore_ai_session": {
         const restorePayload = args as { identifier: string };
-        const restoredSession = mockSessions.find((s) => s.identifier === restorePayload.identifier);
+        const restoredSession = mockSessions.find(
+          (s) => s.identifier === restorePayload.identifier
+        );
         if (!restoredSession) {
           throw new Error(`Session not found: ${restorePayload.identifier}`);
         }
@@ -749,13 +765,13 @@ export function setupMocks(): void {
           {
             file_path: "/home/user/qbit/src/lib/ai.ts",
             line_number: 42,
-            line_content: 'export async function initAiAgent(config: AiConfig): Promise<void> {',
+            line_content: "export async function initAiAgent(config: AiConfig): Promise<void> {",
             matches: ["initAiAgent"],
           },
           {
             file_path: "/home/user/qbit/src/lib/tauri.ts",
             line_number: 15,
-            line_content: 'export async function ptyCreate(',
+            line_content: "export async function ptyCreate(",
             matches: ["ptyCreate"],
           },
         ];

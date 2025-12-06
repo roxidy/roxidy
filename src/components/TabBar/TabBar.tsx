@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Bot, Plus, Terminal, X } from "lucide-react";
+import { Bot, Plus, Settings, Terminal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -18,9 +18,10 @@ const startDrag = async (e: React.MouseEvent) => {
 
 interface TabBarProps {
   onNewTab: () => void;
+  onOpenSettings?: () => void;
 }
 
-export function TabBar({ onNewTab }: TabBarProps) {
+export function TabBar({ onNewTab, onOpenSettings }: TabBarProps) {
   const sessions = useStore((state) => state.sessions);
   const activeSessionId = useStore((state) => state.activeSessionId);
   const setActiveSession = useStore((state) => state.setActiveSession);
@@ -84,6 +85,26 @@ export function TabBar({ onNewTab }: TabBarProps) {
 
         {/* Drag region - empty space extends to fill remaining width */}
         <div className="flex-1 h-full min-w-[100px]" />
+
+        {/* Settings button */}
+        {onOpenSettings && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onOpenSettings}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="h-7 w-7 text-[#565f89] hover:text-[#c0caf5] hover:bg-[#1f2335]"
+              >
+                <Settings className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>Settings (⌘,)</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
     </TooltipProvider>
   );

@@ -1,10 +1,13 @@
 //! Tavily web search integration
 //!
 //! Provides web search capabilities for the AI agent using Tavily's search API.
+//! Supports configuration via settings file with environment variable fallback.
 
 use anyhow::Result;
 use parking_lot::RwLock;
-use std::env;
+use std::sync::Arc;
+
+use crate::settings::{get_with_env_fallback, SettingsManager};
 
 /// Manages the Tavily API key state
 pub struct TavilyState {
@@ -13,18 +16,38 @@ pub struct TavilyState {
 }
 
 impl TavilyState {
-    /// Create a new TavilyState, checking for TAVILY_API_KEY
+    /// Create a new TavilyState, checking for TAVILY_API_KEY from environment.
+    /// This is the legacy constructor for backward compatibility.
     pub fn new() -> Self {
-        let api_key = match env::var("TAVILY_API_KEY") {
-            Ok(key) if !key.is_empty() => {
-                tracing::info!("Tavily API key found, web search tools available");
-                Some(key)
-            }
-            _ => {
-                tracing::debug!("TAVILY_API_KEY not set, web search tools will be unavailable");
-                None
-            }
-        };
+        let api_key = std::env::var("TAVILY_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty());
+
+        if api_key.is_some() {
+            tracing::info!("Tavily API key found, web search tools available");
+        } else {
+            tracing::debug!("TAVILY_API_KEY not set, web search tools will be unavailable");
+        }
+
+        Self {
+            api_key: RwLock::new(api_key),
+        }
+    }
+
+    /// Create TavilyState with settings-based configuration.
+    ///
+    /// Priority: settings.api_keys.tavily > $TAVILY_API_KEY
+    #[allow(dead_code)]
+    pub async fn with_settings(settings_manager: Arc<SettingsManager>) -> Self {
+        let settings = settings_manager.get().await;
+
+        let api_key = get_with_env_fallback(&settings.api_keys.tavily, &["TAVILY_API_KEY"], None);
+
+        if api_key.is_some() {
+            tracing::info!("Tavily API key found, web search tools available");
+        } else {
+            tracing::debug!("Tavily API key not configured, web search tools unavailable");
+        }
 
         Self {
             api_key: RwLock::new(api_key),

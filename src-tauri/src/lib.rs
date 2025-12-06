@@ -3,6 +3,7 @@ mod commands;
 mod error;
 mod indexer;
 mod pty;
+mod settings;
 mod state;
 mod tavily;
 mod web_fetch;
@@ -30,6 +31,10 @@ use indexer::{
     analyze_file, detect_language, extract_symbols, get_file_metrics, get_indexed_file_count,
     get_indexer_workspace, index_directory, index_file, init_indexer, is_indexer_initialized,
     search_code, search_files, shutdown_indexer,
+};
+use settings::{
+    get_setting, get_settings, get_settings_path, reload_settings, reset_settings, set_setting,
+    settings_file_exists, update_settings,
 };
 use state::AppState;
 
@@ -61,9 +66,13 @@ pub fn run() {
         )
         .try_init();
 
+    // Create tokio runtime for async AppState initialization
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    let app_state = runtime.block_on(AppState::new());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new())
+        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // PTY commands
             pty_create,
@@ -162,6 +171,15 @@ pub fn run() {
             get_workflow_state,
             list_workflow_sessions,
             cancel_workflow,
+            // Settings commands
+            get_settings,
+            update_settings,
+            get_setting,
+            set_setting,
+            reset_settings,
+            settings_file_exists,
+            get_settings_path,
+            reload_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
