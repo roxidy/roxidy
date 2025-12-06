@@ -2,6 +2,7 @@ import {
   ChevronDown,
   ChevronRight,
   Code,
+  Database,
   File,
   FileCode,
   Folder,
@@ -23,9 +24,11 @@ import {
   type SymbolResult,
   searchFiles,
 } from "@/lib/indexer";
+import { SessionHistory, CommitDraft, SidecarStatus } from "@/components/Sidecar";
 
 interface SidebarProps {
   workingDirectory?: string;
+  sessionId?: string;
   onFileSelect?: (filePath: string, line?: number) => void;
   isOpen: boolean;
   onToggle: () => void;
@@ -199,12 +202,12 @@ function buildFileTree(files: string[], workingDir: string): FileNode[] {
   return sortNodes(rootChildren);
 }
 
-export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: SidebarProps) {
+export function Sidebar({ workingDirectory, sessionId, onFileSelect, isOpen, onToggle }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [symbols, setSymbols] = useState<SymbolGroup[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"files" | "symbols">("files");
+  const [activeTab, setActiveTab] = useState<"files" | "symbols" | "context">("files");
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [expandedSymbolFiles, setExpandedSymbolFiles] = useState<Set<string>>(new Set());
 
@@ -366,11 +369,23 @@ export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: Si
         >
           Symbols
         </button>
+        <button
+          type="button"
+          className={`flex-1 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1 ${
+            activeTab === "context"
+              ? "text-[#bb9af7] border-b-2 border-[#bb9af7]"
+              : "text-[#565f89] hover:text-[#a9b1d6]"
+          }`}
+          onClick={() => setActiveTab("context")}
+        >
+          <Database className="w-3 h-3" />
+          Context
+        </button>
       </div>
 
       {/* Content */}
       <ScrollArea className="flex-1 min-h-0">
-        {isLoading ? (
+        {isLoading && activeTab !== "context" ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-[#565f89]" />
           </div>
@@ -393,7 +408,7 @@ export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: Si
               ))
             )}
           </div>
-        ) : (
+        ) : activeTab === "symbols" ? (
           <div className="py-1">
             {symbols.length === 0 ? (
               <div className="px-3 py-4 text-sm text-[#565f89] text-center">
@@ -442,6 +457,22 @@ export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: Si
                 );
               })
             )}
+          </div>
+        ) : (
+          /* Context tab - Sidecar features */
+          <div className="flex flex-col h-full">
+            {/* Sidecar status details */}
+            <SidecarStatus showDetails />
+
+            {/* Commit Draft section */}
+            <div className="border-t border-[#1f2335]">
+              <CommitDraft sessionId={sessionId} />
+            </div>
+
+            {/* Session History section */}
+            <div className="flex-1 border-t border-[#1f2335]">
+              <SessionHistory />
+            </div>
           </div>
         )}
       </ScrollArea>

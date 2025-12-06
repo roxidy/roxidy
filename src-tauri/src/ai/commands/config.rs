@@ -32,9 +32,10 @@ pub async fn init_ai_agent_vertex(
     model: String,
 ) -> Result<(), String> {
     let event_tx = spawn_event_forwarder(app);
+    let workspace_path: std::path::PathBuf = workspace.into();
 
     let mut bridge = AgentBridge::new_vertex_anthropic(
-        workspace.into(),
+        workspace_path.clone(),
         &credentials_path,
         &project_id,
         &location,
@@ -47,6 +48,14 @@ pub async fn init_ai_agent_vertex(
     configure_bridge(&mut bridge, &state);
 
     *state.ai_state.bridge.write().await = Some(bridge);
+
+    // Initialize sidecar with the workspace
+    if let Err(e) = state.sidecar_state.initialize(workspace_path).await {
+        tracing::warn!("Failed to initialize sidecar: {}", e);
+        // Don't fail the whole init - sidecar is optional
+    } else {
+        tracing::info!("Sidecar initialized for workspace");
+    }
 
     tracing::info!(
         "AI agent initialized with Vertex AI Anthropic, project: {}, model: {}",
@@ -72,7 +81,19 @@ pub async fn update_ai_workspace(
     })?;
     let bridge = bridge_guard.as_ref().unwrap();
 
-    bridge.set_workspace(workspace.into()).await;
+    let workspace_path: std::path::PathBuf = workspace.into();
+    bridge.set_workspace(workspace_path.clone()).await;
+
+    // Re-initialize sidecar if not already initialized or workspace changed significantly
+    let status = state.sidecar_state.status();
+    if !status.storage_ready || status.workspace_path.as_ref() != Some(&workspace_path) {
+        if let Err(e) = state.sidecar_state.initialize(workspace_path).await {
+            tracing::warn!("[cwd-sync] Failed to initialize sidecar: {}", e);
+        } else {
+            tracing::debug!("[cwd-sync] Sidecar re-initialized for new workspace");
+        }
+    }
+
     tracing::info!("[cwd-sync] AI workspace successfully updated");
     Ok(())
 }

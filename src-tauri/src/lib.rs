@@ -3,6 +3,7 @@ mod commands;
 mod error;
 mod indexer;
 mod pty;
+mod sidecar;
 mod state;
 mod tavily;
 mod web_fetch;
@@ -30,6 +31,16 @@ use indexer::{
     analyze_file, detect_language, extract_symbols, get_file_metrics, get_indexed_file_count,
     get_indexer_workspace, index_directory, index_file, init_indexer, is_indexer_initialized,
     search_code, search_files, shutdown_indexer,
+};
+use sidecar::{
+    sidecar_cleanup, sidecar_clear_commit_boundary, sidecar_create_indexes, sidecar_current_session,
+    sidecar_download_models, sidecar_end_session, sidecar_export_session,
+    sidecar_export_session_to_file, sidecar_generate_commit, sidecar_generate_summary,
+    sidecar_get_config, sidecar_get_session_checkpoints, sidecar_get_session_events,
+    sidecar_import_session, sidecar_import_session_from_file, sidecar_index_status,
+    sidecar_initialize, sidecar_list_sessions, sidecar_models_status, sidecar_pending_files,
+    sidecar_query_history, sidecar_search_events, sidecar_set_config, sidecar_shutdown,
+    sidecar_start_session, sidecar_status, sidecar_storage_stats,
 };
 use state::AppState;
 
@@ -162,6 +173,34 @@ pub fn run() {
             get_workflow_state,
             list_workflow_sessions,
             cancel_workflow,
+            // Sidecar commands
+            sidecar_status,
+            sidecar_initialize,
+            sidecar_start_session,
+            sidecar_end_session,
+            sidecar_current_session,
+            sidecar_generate_commit,
+            sidecar_generate_summary,
+            sidecar_query_history,
+            sidecar_search_events,
+            sidecar_get_session_events,
+            sidecar_get_session_checkpoints,
+            sidecar_list_sessions,
+            sidecar_storage_stats,
+            sidecar_models_status,
+            sidecar_download_models,
+            sidecar_get_config,
+            sidecar_set_config,
+            sidecar_shutdown,
+            sidecar_export_session,
+            sidecar_export_session_to_file,
+            sidecar_import_session,
+            sidecar_import_session_from_file,
+            sidecar_pending_files,
+            sidecar_clear_commit_boundary,
+            sidecar_cleanup,
+            sidecar_index_status,
+            sidecar_create_indexes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

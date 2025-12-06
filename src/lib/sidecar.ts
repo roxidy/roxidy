@@ -1,0 +1,231 @@
+import { invoke } from "@tauri-apps/api/core";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface SidecarStatus {
+  active_session: boolean;
+  session_id: string | null;
+  event_count: number;
+  buffer_size: number;
+  embeddings_ready: boolean;
+  llm_ready: boolean;
+  storage_ready: boolean;
+  workspace_path: string | null;
+}
+
+export interface SidecarSession {
+  id: string;
+  workspace_path: string;
+  initial_request: string;
+  started_at: string;
+  ended_at: string | null;
+  event_count: number;
+  checkpoint_count: number;
+  files_touched: string[];
+}
+
+export interface SessionEvent {
+  id: string;
+  session_id: string;
+  timestamp: string;
+  event_type: EventType;
+  content: string;
+  files: string[];
+}
+
+export type EventType =
+  | { type: "user_prompt"; intent: string }
+  | { type: "file_edit"; path: string; operation: FileOperation; summary?: string }
+  | { type: "tool_call"; tool_name: string; args_summary: string; reasoning?: string; success: boolean }
+  | { type: "agent_reasoning"; content: string; decision_type?: DecisionType }
+  | { type: "user_feedback"; feedback_type: FeedbackType; target_tool?: string; comment?: string }
+  | { type: "error_recovery"; error_message: string; recovery_action?: string; resolved: boolean }
+  | { type: "commit_boundary"; suggested_message?: string; files_in_scope: string[] }
+  | { type: "session_start"; initial_request: string }
+  | { type: "session_end"; summary?: string }
+  | { type: "ai_response"; content: string; truncated: boolean; duration_ms?: number };
+
+export type FileOperation =
+  | "create"
+  | "modify"
+  | "delete"
+  | { rename: { from: string } };
+
+export type DecisionType = "approach_choice" | "tradeoff" | "fallback" | "assumption";
+
+export type FeedbackType = "approve" | "deny" | "modify" | "annotate";
+
+export interface Checkpoint {
+  id: string;
+  session_id: string;
+  timestamp: string;
+  summary: string;
+  event_ids: string[];
+  files_touched: string[];
+}
+
+export interface CommitDraft {
+  message: string;
+  scope: string;
+  files: string[];
+  reasoning: string;
+}
+
+export interface SessionSummary {
+  session_id: string;
+  title: string;
+  description: string;
+  key_actions: string[];
+  files_modified: string[];
+  decisions_made: string[];
+}
+
+export interface HistoryResponse {
+  answer: string;
+  relevant_events: SessionEvent[];
+  confidence: number;
+}
+
+export interface StorageStats {
+  event_count: number;
+  checkpoint_count: number;
+  session_count: number;
+  total_size_bytes: number;
+  oldest_event: string | null;
+  newest_event: string | null;
+}
+
+export interface ModelsStatus {
+  embedding_available: boolean;
+  embedding_size_bytes: number;
+  llm_available: boolean;
+  llm_size_bytes: number;
+}
+
+export interface IndexStatus {
+  events_indexed: boolean;
+  checkpoints_indexed: boolean;
+  events_count: number;
+  checkpoints_count: number;
+}
+
+// ============================================================================
+// API Functions
+// ============================================================================
+
+/** Get the current sidecar status */
+export async function getSidecarStatus(): Promise<SidecarStatus> {
+  return invoke<SidecarStatus>("sidecar_status");
+}
+
+/** Initialize the sidecar for a workspace */
+export async function initializeSidecar(workspacePath: string): Promise<void> {
+  return invoke("sidecar_initialize", { workspacePath });
+}
+
+/** Start a new capture session */
+export async function startSession(initialRequest: string): Promise<string> {
+  return invoke<string>("sidecar_start_session", { initialRequest });
+}
+
+/** End the current session */
+export async function endSession(): Promise<SidecarSession | null> {
+  return invoke<SidecarSession | null>("sidecar_end_session");
+}
+
+/** Get the current session ID */
+export async function getCurrentSession(): Promise<string | null> {
+  return invoke<string | null>("sidecar_current_session");
+}
+
+/** Generate a commit message for a session */
+export async function generateCommit(sessionId?: string): Promise<CommitDraft> {
+  return invoke<CommitDraft>("sidecar_generate_commit", { sessionId });
+}
+
+/** Generate a summary for a session */
+export async function generateSummary(sessionId?: string): Promise<SessionSummary> {
+  return invoke<SessionSummary>("sidecar_generate_summary", { sessionId });
+}
+
+/** Query session history with a question */
+export async function queryHistory(question: string, limit?: number): Promise<HistoryResponse> {
+  return invoke<HistoryResponse>("sidecar_query_history", { question, limit });
+}
+
+/** Search events by keyword */
+export async function searchEvents(query: string, limit?: number): Promise<SessionEvent[]> {
+  return invoke<SessionEvent[]>("sidecar_search_events", { query, limit });
+}
+
+/** Get events for a specific session */
+export async function getSessionEvents(sessionId: string): Promise<SessionEvent[]> {
+  return invoke<SessionEvent[]>("sidecar_get_session_events", { sessionId });
+}
+
+/** Get checkpoints for a specific session */
+export async function getSessionCheckpoints(sessionId: string): Promise<Checkpoint[]> {
+  return invoke<Checkpoint[]>("sidecar_get_session_checkpoints", { sessionId });
+}
+
+/** List all sessions */
+export async function listSessions(): Promise<SidecarSession[]> {
+  return invoke<SidecarSession[]>("sidecar_list_sessions");
+}
+
+/** Get storage statistics */
+export async function getStorageStats(): Promise<StorageStats> {
+  return invoke<StorageStats>("sidecar_storage_stats");
+}
+
+/** Get model status */
+export async function getModelsStatus(): Promise<ModelsStatus> {
+  return invoke<ModelsStatus>("sidecar_models_status");
+}
+
+/** Download models */
+export async function downloadModels(): Promise<void> {
+  return invoke("sidecar_download_models");
+}
+
+/** Export a session to JSON */
+export async function exportSession(sessionId: string): Promise<string> {
+  return invoke<string>("sidecar_export_session", { sessionId });
+}
+
+/** Export a session to a file */
+export async function exportSessionToFile(sessionId: string, outputPath: string): Promise<void> {
+  return invoke("sidecar_export_session_to_file", { sessionId, outputPath });
+}
+
+/** Import a session from JSON */
+export async function importSession(json: string): Promise<string> {
+  return invoke<string>("sidecar_import_session", { json });
+}
+
+/** Get pending files for commit boundary */
+export async function getPendingFiles(): Promise<string[]> {
+  return invoke<string[]>("sidecar_pending_files");
+}
+
+/** Clear commit boundary tracking */
+export async function clearCommitBoundary(): Promise<void> {
+  return invoke("sidecar_clear_commit_boundary");
+}
+
+/** Clean up old events */
+export async function cleanup(maxAgeDays?: number): Promise<number> {
+  return invoke<number>("sidecar_cleanup", { maxAgeDays });
+}
+
+/** Get index status */
+export async function getIndexStatus(): Promise<IndexStatus> {
+  return invoke<IndexStatus>("sidecar_index_status");
+}
+
+/** Create vector indexes */
+export async function createIndexes(): Promise<IndexStatus> {
+  return invoke<IndexStatus>("sidecar_create_indexes");
+}

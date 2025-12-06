@@ -65,5 +65,15 @@ async-trait = "0.1"
 # File walking with gitignore support
 ignore = "0.4"
 
+# Sidecar: Vector database and embeddings
+lancedb = "0.16"
+arrow-array = "53"
+arrow-schema = "53"
+fastembed = "4"
+
+# Sidecar: Local LLM inference
+llama-cpp-2 = "0.1"
+
 [dev-dependencies]
 tempfile = "3"
+proptest = "1.4"

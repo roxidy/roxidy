@@ -37,6 +37,7 @@ use super::tool_executors::{
 };
 use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyManager};
 use crate::indexer::IndexerState;
+use crate::sidecar::{CaptureContext, SidecarState};
 use crate::tavily::TavilyState;
 
 /// Maximum number of tool call iterations before stopping
@@ -65,12 +66,53 @@ pub struct AgenticLoopContext<'a> {
     pub loop_detector: &'a Arc<RwLock<LoopDetector>>,
     /// Tool configuration for filtering available tools
     pub tool_config: &'a ToolConfig,
+    /// Sidecar state for context capture (optional)
+    pub sidecar_state: Option<&'a Arc<SidecarState>>,
 }
 
 /// Result of a single tool execution.
 pub struct ToolExecutionResult {
     pub value: serde_json::Value,
     pub success: bool,
+}
+
+/// Wrapper for capture context that persists across the loop
+pub struct LoopCaptureContext {
+    inner: Option<CaptureContext>,
+}
+
+impl LoopCaptureContext {
+    /// Create a new loop capture context
+    pub fn new(sidecar: Option<&Arc<SidecarState>>) -> Self {
+        Self {
+            inner: sidecar.map(|s| CaptureContext::new(s.clone())),
+        }
+    }
+
+    /// Process an event if capture is enabled
+    pub fn process(&mut self, event: &AiEvent) {
+        if let Some(ref mut capture) = self.inner {
+            capture.process(event);
+        }
+    }
+}
+
+/// Helper to emit an event to frontend
+fn emit_to_frontend(ctx: &AgenticLoopContext<'_>, event: AiEvent) {
+    let _ = ctx.event_tx.send(event);
+}
+
+/// Helper to emit an event to both frontend and sidecar (stateless capture)
+/// Use this for events that don't need state correlation (e.g., Reasoning)
+fn emit_event(ctx: &AgenticLoopContext<'_>, event: AiEvent) {
+    // Send to frontend
+    let _ = ctx.event_tx.send(event.clone());
+
+    // Capture in sidecar if available (stateless - creates fresh context each time)
+    if let Some(sidecar) = ctx.sidecar_state {
+        let mut capture = CaptureContext::new(sidecar.clone());
+        capture.process(&event);
+    }
 }
 
 /// Execute a tool with HITL approval check.
@@ -81,16 +123,27 @@ pub async fn execute_with_hitl(
     context: &SubAgentContext,
     model: &rig_anthropic_vertex::CompletionModel,
     ctx: &AgenticLoopContext<'_>,
+    capture_ctx: &mut LoopCaptureContext,
 ) -> Result<ToolExecutionResult> {
+    // Capture tool request for file tracking
+    capture_ctx.process(&AiEvent::ToolRequest {
+        request_id: tool_id.to_string(),
+        tool_name: tool_name.to_string(),
+        args: tool_args.clone(),
+        source: crate::ai::events::ToolSource::Main,
+    });
+
     // Step 1: Check if tool is denied by policy
     if ctx.tool_policy_manager.is_denied(tool_name).await {
-        let _ = ctx.event_tx.send(AiEvent::ToolDenied {
+        let denied_event = AiEvent::ToolDenied {
             request_id: tool_id.to_string(),
             tool_name: tool_name.to_string(),
             args: tool_args.clone(),
             reason: "Tool is denied by policy".to_string(),
             source: crate::ai::events::ToolSource::Main,
-        });
+        };
+        emit_to_frontend(ctx, denied_event.clone());
+        capture_ctx.process(&denied_event);
         return Ok(ToolExecutionResult {
             value: json!({
                 "error": format!("Tool '{}' is denied by policy", tool_name),
@@ -108,7 +161,7 @@ pub async fn execute_with_hitl(
     {
         PolicyConstraintResult::Allowed => (tool_args.clone(), None),
         PolicyConstraintResult::Violated(reason) => {
-            let _ = ctx.event_tx.send(AiEvent::ToolDenied {
+            emit_event(ctx, AiEvent::ToolDenied {
                 request_id: tool_id.to_string(),
                 tool_name: tool_name.to_string(),
                 args: tool_args.clone(),
@@ -137,7 +190,7 @@ pub async fn execute_with_hitl(
         } else {
             "Allowed by tool policy".to_string()
         };
-        let _ = ctx.event_tx.send(AiEvent::ToolAutoApproved {
+        emit_event(ctx, AiEvent::ToolAutoApproved {
             request_id: tool_id.to_string(),
             tool_name: tool_name.to_string(),
             args: effective_args.clone(),
@@ -150,7 +203,7 @@ pub async fn execute_with_hitl(
 
     // Step 4: Check if tool should be auto-approved based on learned patterns
     if ctx.approval_recorder.should_auto_approve(tool_name).await {
-        let _ = ctx.event_tx.send(AiEvent::ToolAutoApproved {
+        emit_event(ctx, AiEvent::ToolAutoApproved {
             request_id: tool_id.to_string(),
             tool_name: tool_name.to_string(),
             args: effective_args.clone(),
@@ -433,6 +486,9 @@ pub async fn run_agentic_loop(
         detector.reset();
     }
 
+    // Create persistent capture context for file event correlation
+    let mut capture_ctx = LoopCaptureContext::new(ctx.sidecar_state);
+
     // Get all available tools (filtered by config + sub-agents + web search)
     let mut tools = get_all_tool_definitions_with_config(ctx.tool_config);
 
@@ -561,8 +617,8 @@ pub async fn run_agentic_loop(
                                 tracing::debug!("Text chunk is [Thinking] prefixed");
                                 thinking_content.push_str(thinking);
                                 accumulated_thinking.push_str(thinking);
-                                // Emit reasoning event for frontend
-                                let _ = ctx.event_tx.send(AiEvent::Reasoning {
+                                // Emit reasoning event (to frontend and sidecar)
+                                emit_event(ctx, AiEvent::Reasoning {
                                     content: thinking.to_string(),
                                 });
                             } else {
@@ -589,8 +645,8 @@ pub async fn run_agentic_loop(
                             if reasoning.signature.is_some() {
                                 thinking_signature = reasoning.signature.clone();
                             }
-                            // Emit reasoning event for frontend
-                            let _ = ctx.event_tx.send(AiEvent::Reasoning {
+                            // Emit reasoning event (to frontend and sidecar)
+                            emit_event(ctx, AiEvent::Reasoning {
                                 content: reasoning_text,
                             });
                         }
@@ -786,21 +842,23 @@ pub async fn run_agentic_loop(
             }
 
             // Execute tool with HITL approval check
-            let result = execute_with_hitl(tool_name, &tool_args, &tool_id, &context, model, ctx)
+            let result = execute_with_hitl(tool_name, &tool_args, &tool_id, &context, model, ctx, &mut capture_ctx)
                 .await
                 .unwrap_or_else(|e| ToolExecutionResult {
                     value: json!({ "error": e.to_string() }),
                     success: false,
                 });
 
-            // Emit tool result event
-            let _ = ctx.event_tx.send(AiEvent::ToolResult {
+            // Emit tool result event (to frontend and capture to sidecar with state)
+            let result_event = AiEvent::ToolResult {
                 tool_name: tool_name.clone(),
                 result: result.value.clone(),
                 success: result.success,
                 request_id: tool_id.clone(),
                 source: crate::ai::events::ToolSource::Main,
-            });
+            };
+            emit_to_frontend(ctx, result_event.clone());
+            capture_ctx.process(&result_event);
 
             // Add to tool results for LLM
             let result_text = serde_json::to_string(&result.value).unwrap_or_default();

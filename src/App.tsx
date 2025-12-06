@@ -417,6 +417,7 @@ function App() {
         {/* Sidebar */}
         <Sidebar
           workingDirectory={workingDirectory}
+          sessionId={activeSessionId ?? undefined}
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen(false)}
           onFileSelect={(_filePath, _line) => {
