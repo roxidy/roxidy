@@ -6,12 +6,13 @@ import {
   FileCode,
   Folder,
   FolderOpen,
+  GripVertical,
   Hash,
   Loader2,
   Search,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -199,6 +200,10 @@ function buildFileTree(files: string[], workingDir: string): FileNode[] {
   return sortNodes(rootChildren);
 }
 
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 600;
+const DEFAULT_WIDTH = 256;
+
 export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [files, setFiles] = useState<string[]>([]);
@@ -207,6 +212,46 @@ export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: Si
   const [activeTab, setActiveTab] = useState<"files" | "symbols">("files");
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [expandedSymbolFiles, setExpandedSymbolFiles] = useState<Set<string>>(new Set());
+
+  // Resize state
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const isResizing = useRef(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  // Handle resize
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+
+      const newWidth = e.clientX;
+      if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
+        setWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isResizing.current) {
+        isResizing.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
 
   // Load initial file list
   const loadFiles = useCallback(async () => {
@@ -320,7 +365,21 @@ export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: Si
   }
 
   return (
-    <div className="w-64 h-full bg-[#1a1b26] border-r border-[#1f2335] flex flex-col overflow-hidden">
+    <div
+      ref={sidebarRef}
+      className="h-full bg-[#1a1b26] border-r border-[#1f2335] flex flex-col overflow-hidden relative"
+      style={{ width: `${width}px`, minWidth: `${MIN_WIDTH}px`, maxWidth: `${MAX_WIDTH}px` }}
+    >
+      {/* Resize handle */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle is mouse-only */}
+      <div
+        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-[#7aa2f7] transition-colors z-10 group"
+        onMouseDown={startResizing}
+      >
+        <div className="absolute top-1/2 right-0 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <GripVertical className="w-3 h-3 text-[#565f89]" />
+        </div>
+      </div>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[#1f2335]">
         <span className="text-sm font-medium text-[#c0caf5]">Explorer</span>

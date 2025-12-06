@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   Clock,
+  Database,
   FileSearch,
   FileText,
   FolderTree,
@@ -42,6 +43,7 @@ interface CommandPaletteProps {
   workingDirectory?: string;
   onShowSearchResults?: (results: SearchResult[]) => void;
   onOpenSessionBrowser?: () => void;
+  onOpenContextPanel?: () => void;
   onOpenSettings?: () => void;
 }
 
@@ -76,6 +78,7 @@ export function CommandPalette({
   workingDirectory,
   onShowSearchResults,
   onOpenSessionBrowser,
+  onOpenContextPanel,
   onOpenSettings,
 }: CommandPaletteProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -230,6 +233,13 @@ export function CommandPalette({
               <CommandShortcut>⌘H</CommandShortcut>
             </CommandItem>
           )}
+          {onOpenContextPanel && (
+            <CommandItem onSelect={() => runCommand(onOpenContextPanel)}>
+              <Database className="mr-2 h-4 w-4" />
+              <span>Context Capture</span>
+              <CommandShortcut>⌘⇧C</CommandShortcut>
+            </CommandItem>
+          )}
         </CommandGroup>
 
         <CommandSeparator />
@@ -254,15 +264,8 @@ export function CommandPalette({
 
         <CommandSeparator />
 
-        {/* Settings & Help */}
-        <CommandGroup heading="Settings & Help">
-          {onOpenSettings && (
-            <CommandItem onSelect={() => runCommand(onOpenSettings)}>
-              <Settings className="mr-2 h-4 w-4" />
-              <span>Settings</span>
-              <CommandShortcut>⌘,</CommandShortcut>
-            </CommandItem>
-          )}
+        {/* Help */}
+        <CommandGroup heading="Help">
           <CommandItem disabled>
             <Keyboard className="mr-2 h-4 w-4" />
             <span>Keyboard Shortcuts</span>
@@ -271,6 +274,13 @@ export function CommandPalette({
             <FileText className="mr-2 h-4 w-4" />
             <span>Documentation</span>
           </CommandItem>
+          {onOpenSettings && (
+            <CommandItem onSelect={() => runCommand(onOpenSettings)}>
+              <Settings className="mr-2 h-4 w-4" />
+              <span>Settings</span>
+              <CommandShortcut>⌘,</CommandShortcut>
+            </CommandItem>
+          )}
         </CommandGroup>
       </CommandList>
     </CommandDialog>

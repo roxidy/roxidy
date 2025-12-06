@@ -4,6 +4,7 @@ mod error;
 mod indexer;
 mod pty;
 mod settings;
+mod sidecar;
 mod state;
 mod tavily;
 mod web_fetch;
@@ -36,10 +37,25 @@ use settings::{
     get_setting, get_settings, get_settings_path, reload_settings, reset_settings, set_setting,
     settings_file_exists, update_settings,
 };
+use sidecar::{
+    sidecar_available_backends, sidecar_cleanup, sidecar_clear_commit_boundary,
+    sidecar_create_indexes, sidecar_current_session, sidecar_download_models, sidecar_end_session,
+    sidecar_export_session, sidecar_export_session_to_file, sidecar_generate_commit,
+    sidecar_generate_summary, sidecar_get_config, sidecar_get_session_checkpoints,
+    sidecar_get_session_events, sidecar_import_session, sidecar_import_session_from_file,
+    sidecar_index_status, sidecar_initialize, sidecar_list_sessions, sidecar_models_status,
+    sidecar_pending_files, sidecar_query_history, sidecar_search_events, sidecar_set_backend,
+    sidecar_set_config, sidecar_shutdown, sidecar_start_session, sidecar_status,
+    sidecar_storage_stats,
+};
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install rustls crypto provider (required for rustls 0.23+)
+    // This must be done before any TLS operations (e.g., LanceDB, reqwest)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Load .env file from the project root (if it exists)
     // This loads env vars before anything else needs them
     if let Err(e) = dotenvy::dotenv() {
@@ -180,6 +196,36 @@ pub fn run() {
             settings_file_exists,
             get_settings_path,
             reload_settings,
+            // Sidecar commands
+            sidecar_status,
+            sidecar_initialize,
+            sidecar_start_session,
+            sidecar_end_session,
+            sidecar_current_session,
+            sidecar_generate_commit,
+            sidecar_generate_summary,
+            sidecar_query_history,
+            sidecar_search_events,
+            sidecar_get_session_events,
+            sidecar_get_session_checkpoints,
+            sidecar_list_sessions,
+            sidecar_storage_stats,
+            sidecar_models_status,
+            sidecar_download_models,
+            sidecar_get_config,
+            sidecar_set_config,
+            sidecar_shutdown,
+            sidecar_export_session,
+            sidecar_export_session_to_file,
+            sidecar_import_session,
+            sidecar_import_session_from_file,
+            sidecar_pending_files,
+            sidecar_clear_commit_boundary,
+            sidecar_cleanup,
+            sidecar_index_status,
+            sidecar_create_indexes,
+            sidecar_set_backend,
+            sidecar_available_backends,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

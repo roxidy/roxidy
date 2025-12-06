@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import type { AiSettings as AiSettingsType, ApiKeysSettings } from "@/lib/settings";
+import { setBackend, type SynthesisBackend } from "@/lib/sidecar";
 
 interface AiSettingsProps {
   settings: AiSettingsType;
@@ -43,8 +45,43 @@ function SimpleSelect({
 }
 
 export function AiSettings({ settings, apiKeys, onChange, onApiKeysChange }: AiSettingsProps) {
+  const [synthesisBackend, setSynthesisBackend] = useState<string>("template");
+  const [synthesisStatus, setSynthesisStatus] = useState<string>("");
+  const [isChangingBackend, setIsChangingBackend] = useState(false);
+
   const updateField = <K extends keyof AiSettingsType>(key: K, value: AiSettingsType[K]) => {
     onChange({ ...settings, [key]: value });
+  };
+
+  const handleSynthesisBackendChange = async (value: string) => {
+    setIsChangingBackend(true);
+    setSynthesisStatus("");
+
+    try {
+      let backend: SynthesisBackend;
+      if (value === "local") {
+        backend = { backend: "Local" };
+      } else if (value === "vertex-anthropic") {
+        backend = {
+          backend: "Remote",
+          provider: {
+            type: "VertexAnthropic",
+            project_id: settings.vertex_ai.project_id || "",
+            location: settings.vertex_ai.location || "us-east5",
+          },
+        };
+      } else {
+        backend = { backend: "Template" };
+      }
+
+      const description = await setBackend(backend);
+      setSynthesisBackend(value);
+      setSynthesisStatus(`✓ ${description}`);
+    } catch (error) {
+      setSynthesisStatus(`✗ ${error instanceof Error ? error.message : "Failed to change backend"}`);
+    } finally {
+      setIsChangingBackend(false);
+    }
   };
 
   const updateVertexAi = (field: string, value: string | null) => {
@@ -192,6 +229,62 @@ export function AiSettings({ settings, apiKeys, onChange, onApiKeysChange }: AiS
             Use $TAVILY_API_KEY to reference an environment variable
           </p>
         </div>
+      </div>
+
+      {/* Synthesis Backend (Sidecar) */}
+      <div className="space-y-4 p-4 rounded-lg bg-[#1f2335] border border-[#3b4261]">
+        <h4 className="text-sm font-medium text-[#7aa2f7]">Commit Synthesis Backend</h4>
+        <p className="text-xs text-[#565f89]">
+          Choose the AI backend for generating commit messages and session summaries
+        </p>
+
+        <div className="space-y-2">
+          <label htmlFor="synthesis-backend" className="text-sm text-[#c0caf5]">
+            Backend
+          </label>
+          <SimpleSelect
+            id="synthesis-backend"
+            value={synthesisBackend}
+            onValueChange={handleSynthesisBackendChange}
+            options={[
+              { value: "local", label: "Local (Qwen via mistral.rs)" },
+              { value: "vertex-anthropic", label: "Vertex AI (Claude)" },
+              { value: "template", label: "Template Only (No LLM)" },
+            ]}
+          />
+          {isChangingBackend && (
+            <p className="text-xs text-[#7aa2f7]">Switching backend...</p>
+          )}
+          {synthesisStatus && (
+            <p className={`text-xs ${synthesisStatus.startsWith("✓") ? "text-[#9ece6a]" : "text-[#f7768e]"}`}>
+              {synthesisStatus}
+            </p>
+          )}
+        </div>
+
+        {synthesisBackend === "local" && (
+          <div className="text-xs text-[#565f89] space-y-1">
+            <p>• Uses Qwen 2.5 0.5B model for on-device inference</p>
+            <p>• Slower but works offline</p>
+            <p>• Model downloads automatically on first use (~350MB)</p>
+          </div>
+        )}
+
+        {synthesisBackend === "vertex-anthropic" && (
+          <div className="text-xs text-[#565f89] space-y-1">
+            <p>• Uses Claude via your Vertex AI configuration above</p>
+            <p>• Fast and high quality</p>
+            <p>• Requires active Vertex AI credentials</p>
+          </div>
+        )}
+
+        {synthesisBackend === "template" && (
+          <div className="text-xs text-[#565f89] space-y-1">
+            <p>• Uses simple templates without LLM enhancement</p>
+            <p>• Fastest option, works offline</p>
+            <p>• Basic commit messages based on file changes</p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -69,3 +69,5 @@ Thumbs.db
 
 .vtcode/
 /external/
+
+mistral-testbed/target/

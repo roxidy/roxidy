@@ -6,6 +6,7 @@ import { MockDevTools } from "./components/MockDevTools";
 import { SessionBrowser } from "./components/SessionBrowser";
 import { SettingsDialog } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
+import { ContextPanel } from "./components/Sidecar";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
 import { UnifiedInput } from "./components/UnifiedInput";
@@ -46,6 +47,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageRoute>("main");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -277,6 +279,13 @@ function App() {
         return;
       }
 
+      // Cmd+Shift+C for context panel
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "c") {
+        e.preventDefault();
+        setContextPanelOpen(true);
+        return;
+      }
+
       // Cmd+, for settings
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
@@ -421,7 +430,7 @@ function App() {
   return (
     <div className="h-screen w-screen bg-[#1a1b26] flex flex-col overflow-hidden">
       {/* Tab bar */}
-      <TabBar onNewTab={handleNewTab} onOpenSettings={() => setSettingsOpen(true)} />
+      <TabBar onNewTab={handleNewTab} />
 
       {/* Main content area with sidebar */}
       <div className="flex-1 min-h-0 min-w-0 flex overflow-hidden">
@@ -474,7 +483,15 @@ function App() {
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
         workingDirectory={workingDirectory}
         onOpenSessionBrowser={() => setSessionBrowserOpen(true)}
+        onOpenContextPanel={() => setContextPanelOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+      />
+
+      {/* Context Panel */}
+      <ContextPanel
+        sessionId={activeSessionId ?? undefined}
+        open={contextPanelOpen}
+        onOpenChange={setContextPanelOpen}
       />
 
       {/* Session Browser */}

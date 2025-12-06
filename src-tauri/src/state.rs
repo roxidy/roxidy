@@ -5,6 +5,7 @@ use crate::ai::AiState;
 use crate::indexer::IndexerState;
 use crate::pty::PtyManager;
 use crate::settings::SettingsManager;
+use crate::sidecar::SidecarState;
 use crate::tavily::TavilyState;
 
 pub struct AppState {
@@ -14,6 +15,7 @@ pub struct AppState {
     pub indexer_state: Arc<IndexerState>,
     pub tavily_state: Arc<TavilyState>,
     pub settings_manager: Arc<SettingsManager>,
+    pub sidecar_state: Arc<SidecarState>,
 }
 
 impl AppState {
@@ -40,6 +42,7 @@ impl AppState {
             indexer_state: Arc::new(IndexerState::new()),
             tavily_state: Arc::new(TavilyState::new()),
             settings_manager,
+            sidecar_state: Arc::new(SidecarState::new()),
         }
     }
 }

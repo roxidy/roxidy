@@ -69,5 +69,20 @@ ignore = "0.4"
 toml = "0.8"
 toml_edit = "0.22"
 
+# Sidecar: Vector database and embeddings
+lancedb = "0.22"
+arrow-array = "56"
+arrow-schema = "56"
+fastembed = "4"
+
+# Sidecar: Local LLM inference via mistral.rs (async, auto chat templates)
+# Using Metal for GPU-accelerated inference on macOS
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["metal"] }
+
+# TLS crypto provider (required for rustls 0.23+)
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
 [dev-dependencies]
 tempfile = "3"
+proptest = "1.4"
+

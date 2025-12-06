@@ -1,0 +1,24 @@
+[package]
+name = "mistral-testbed"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Mistral.rs for LLM inference (accelerate = CPU on macOS, metal requires full Xcode)
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["accelerate"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+anyhow = "1.0"
+
+# Home directory
+dirs = "5"
+
+# Tracing for logs
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async streams
+futures = "0.3"
