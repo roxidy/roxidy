@@ -13,6 +13,7 @@ import { UnifiedTimeline } from "./components/UnifiedTimeline";
 import { Skeleton } from "./components/ui/skeleton";
 import { useAiEvents } from "./hooks/useAiEvents";
 import { useTauriEvents } from "./hooks/useTauriEvents";
+import { ThemeProvider } from "./hooks/useTheme";
 import {
   getVertexAiConfig,
   initVertexClaudeOpus,
@@ -242,6 +243,12 @@ function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+, for settings
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
       // Cmd+K for command palette
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
@@ -419,7 +426,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen w-screen bg-[#1a1b26] flex flex-col overflow-hidden">
+    <div className="h-screen w-screen bg-background flex flex-col overflow-hidden app-bg-layered">
       {/* Tab bar */}
       <TabBar onNewTab={handleNewTab} onOpenSettings={() => setSettingsOpen(true)} />
 
@@ -440,7 +447,7 @@ function App() {
           {activeSessionId ? (
             <>
               {/* Scrollable content area - auto-scroll handled in UnifiedTimeline */}
-              <div className="flex-1 min-w-0 overflow-auto bg-[#1a1b26]">
+              <div className="flex-1 min-w-0 overflow-auto">
                 <UnifiedTimeline sessionId={activeSessionId} />
               </div>
 
@@ -480,7 +487,7 @@ function App() {
       {/* Session Browser */}
       <SessionBrowser
         open={sessionBrowserOpen}
-        onOpenChange={setSessionBrowserOpen}
+        onClose={() => setSessionBrowserOpen(false)}
         onSessionRestore={handleRestoreSession}
       />
 
@@ -506,4 +513,12 @@ function App() {
   );
 }
 
-export default App;
+function AppWithTheme() {
+  return (
+    <ThemeProvider defaultThemeId="qbit">
+      <App />
+    </ThemeProvider>
+  );
+}
+
+export default AppWithTheme;

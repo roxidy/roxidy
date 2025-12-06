@@ -163,6 +163,13 @@ pub fn run() {
             read_prompt,
             // File commands
             list_workspace_files,
+            // Theme commands
+            list_themes,
+            read_theme,
+            save_theme,
+            delete_theme,
+            save_theme_asset,
+            get_theme_asset_path,
             // Workflow commands (generic)
             list_workflows,
             start_workflow,

@@ -42,42 +42,11 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* Default fallback values - will be overridden by theme manager */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
-
-.dark {
+  
+  /* Minimal fallback colors - theme manager will override these */
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -115,9 +84,50 @@
   * {
     @apply border-border outline-ring/50;
   }
+  
+  html,
   body {
     @apply bg-background text-foreground;
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
   }
+
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+/* Theme background image support for app container */
+.app-bg-layered {
+  position: relative;
+  isolation: isolate;
+  /* Keep the solid background color as base layer */
+}
+
+/* Apply background image as ::before pseudo-element overlaying the background color */
+.app-bg-layered::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: var(--background-image-url, none);
+  background-size: var(--background-size, cover);
+  background-position: var(--background-position, center);
+  background-repeat: no-repeat;
+  opacity: var(--background-opacity, 1);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Ensure content appears above the background image */
+.app-bg-layered > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* Blinking cursor animation */
@@ -141,9 +151,9 @@
   right: 0 !important;
   left: unset !important;
   transform: translate(35%, -35%) !important;
-  background: #1f2335 !important;
-  border: 1px solid #3b4261 !important;
-  color: #c0caf5 !important;
+  background: var(--muted, #1f2335) !important;
+  border: 1px solid var(--border, #3b4261) !important;
+  color: var(--foreground, #c0caf5) !important;
   cursor: pointer !important;
   padding: 0 !important;
   border-radius: 50% !important;
@@ -159,8 +169,8 @@
 }
 
 [data-sonner-toast] [data-close-button]:hover {
-  color: #ffffff !important;
-  background: #3b4261 !important;
+  color: var(--foreground, #ffffff) !important;
+  background: var(--accent, #3b4261) !important;
 }
 
 [data-sonner-toast] [data-close-button] svg {

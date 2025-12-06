@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qbit.ai/schemas/qbit-theme.schema.json",
+  "title": "Qbit Theme",
+  "type": "object",
+  "required": ["schemaVersion", "name", "colors"],
+  "properties": {
+    "schemaVersion": { "type": "string", "pattern": "^1\\.0\\.0$" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "author": { "type": "string" },
+    "license": { "type": "string" },
+    "homepage": { "type": "string", "format": "uri" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "colors": {
+      "type": "object",
+      "description": "Design tokens mapped to CSS variables and ANSI palette",
+      "properties": {
+        "ui": {
+          "type": "object",
+          "properties": {
+            "background": { "type": "string" },
+            "foreground": { "type": "string" },
+            "card": { "type": "string" },
+            "cardForeground": { "type": "string" },
+            "popover": { "type": "string" },
+            "popoverForeground": { "type": "string" },
+            "primary": { "type": "string" },
+            "primaryForeground": { "type": "string" },
+            "secondary": { "type": "string" },
+            "secondaryForeground": { "type": "string" },
+            "muted": { "type": "string" },
+            "mutedForeground": { "type": "string" },
+            "accent": { "type": "string" },
+            "accentForeground": { "type": "string" },
+            "destructive": { "type": "string" },
+            "border": { "type": "string" },
+            "input": { "type": "string" },
+            "ring": { "type": "string" },
+            "chart": {
+              "type": "object",
+              "properties": {
+                "c1": { "type": "string" },
+                "c2": { "type": "string" },
+                "c3": { "type": "string" },
+                "c4": { "type": "string" },
+                "c5": { "type": "string" }
+              }
+            },
+            "sidebar": { "type": "string" },
+            "sidebarForeground": { "type": "string" },
+            "sidebarPrimary": { "type": "string" },
+            "sidebarPrimaryForeground": { "type": "string" },
+            "sidebarAccent": { "type": "string" },
+            "sidebarAccentForeground": { "type": "string" },
+            "sidebarBorder": { "type": "string" },
+            "sidebarRing": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "ansi": {
+          "type": "object",
+          "properties": {
+            "black": { "type": "string" },
+            "red": { "type": "string" },
+            "green": { "type": "string" },
+            "yellow": { "type": "string" },
+            "blue": { "type": "string" },
+            "magenta": { "type": "string" },
+            "cyan": { "type": "string" },
+            "white": { "type": "string" },
+            "brightBlack": { "type": "string" },
+            "brightRed": { "type": "string" },
+            "brightGreen": { "type": "string" },
+            "brightYellow": { "type": "string" },
+            "brightBlue": { "type": "string" },
+            "brightMagenta": { "type": "string" },
+            "brightCyan": { "type": "string" },
+            "brightWhite": { "type": "string" },
+            "defaultFg": { "type": "string" },
+            "defaultBg": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["ui", "ansi"],
+      "additionalProperties": false
+    },
+    "typography": {
+      "type": "object",
+      "properties": {
+        "terminal": {
+          "type": "object",
+          "properties": {
+            "fontFamily": { "type": "string" },
+            "fontSize": { "type": "number", "minimum": 8, "maximum": 48 },
+            "lineHeight": { "type": "number", "minimum": 0.9, "maximum": 2.0 }
+          },
+          "additionalProperties": false
+        },
+        "ui": {
+          "type": "object",
+          "properties": {
+            "fontFamily": { "type": "string" },
+            "headingFamily": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "radii": {
+      "type": "object",
+      "properties": {
+        "base": { "type": "string" },
+        "sm": { "type": "string" },
+        "md": { "type": "string" },
+        "lg": { "type": "string" },
+        "xl": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "terminal": {
+      "type": "object",
+      "properties": {
+        "cursorStyle": { "type": "string", "enum": ["block", "underline", "bar"] },
+        "cursorBlink": { "type": "boolean" },
+        "selectionBackground": { "type": "string" },
+        "webgl": { "type": "boolean" },
+        "opacity": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "backgroundImage": { "type": "string" },
+        "backgroundSize": { "type": "string" },
+        "backgroundPosition": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "effects": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "object",
+          "properties": {
+            "style": { "type": "string" },
+            "color": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Optional JS/TS plugin references to enhance cursor, typing animations, etc.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "entry": { "type": "string" },
+              "config": { "type": "object" }
+            },
+            "required": ["id", "entry"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
