@@ -1,0 +1,177 @@
+# Qbit Configuration
+# https://github.com/qbit-ai/qbit
+#
+# This file was auto-generated on first run. Customize as needed.
+# Values starting with $ reference environment variables (e.g., $TAVILY_API_KEY).
+# Commented-out settings show defaults - uncomment to override.
+
+# =============================================================================
+# AI Provider Configuration
+# =============================================================================
+
+[ai]
+# Default provider: "vertex_ai" | "openrouter" | "anthropic" | "openai" | "ollama"
+default_provider = "vertex_ai"
+
+# Default model for the selected provider
+default_model = "claude-opus-4-5@20251101"
+
+[ai.vertex_ai]
+# Path to Google Cloud service account JSON
+# credentials_path = "/path/to/service-account.json"
+
+# Google Cloud project ID
+# project_id = "your-project-id"
+
+# Vertex AI region (default: us-east5)
+# location = "us-east5"
+
+[ai.openrouter]
+# OpenRouter API key (or use $OPENROUTER_API_KEY)
+# api_key = "$OPENROUTER_API_KEY"
+
+[ai.anthropic]
+# Anthropic API key for direct access (or use $ANTHROPIC_API_KEY)
+# api_key = "$ANTHROPIC_API_KEY"
+
+[ai.openai]
+# OpenAI API key (or use $OPENAI_API_KEY)
+# api_key = "$OPENAI_API_KEY"
+
+# Custom base URL for OpenAI-compatible APIs
+# base_url = "https://api.openai.com/v1"
+
+[ai.ollama]
+# Ollama server URL (default: http://localhost:11434)
+base_url = "http://localhost:11434"
+
+# =============================================================================
+# API Keys for Tools
+# =============================================================================
+
+[api_keys]
+# Tavily API key for web search (or use $TAVILY_API_KEY)
+# tavily = "$TAVILY_API_KEY"
+
+# GitHub token for repository access (or use $GITHUB_TOKEN)
+# github = "$GITHUB_TOKEN"
+
+# =============================================================================
+# User Interface Preferences
+# =============================================================================
+
+[ui]
+# Theme: "dark" | "light" | "system"
+theme = "dark"
+
+# Show tips on startup
+show_tips = true
+
+# Hide banner/welcome message
+hide_banner = false
+
+# =============================================================================
+# Terminal Settings
+# =============================================================================
+
+[terminal]
+# Default shell (if not detected from environment)
+# shell = "/bin/zsh"
+
+# Font family for terminal
+font_family = "JetBrains Mono"
+
+# Font size in pixels
+font_size = 14
+
+# Scrollback buffer lines
+scrollback = 10000
+
+# =============================================================================
+# Agent Behavior
+# =============================================================================
+
+[agent]
+# Session persistence: auto-save conversations
+session_persistence = true
+
+# Maximum session retention (days, 0 = forever)
+session_retention_days = 30
+
+# Enable pattern learning for tool auto-approval
+pattern_learning = true
+
+# Minimum approvals before auto-approve
+min_approvals_for_auto = 3
+
+# Approval rate threshold (0.0 - 1.0)
+approval_threshold = 0.8
+
+# =============================================================================
+# MCP Servers (Model Context Protocol)
+# =============================================================================
+
+# Define MCP servers for extending agent capabilities.
+# Each server has a name (table key) and connection configuration.
+#
+# Example: Filesystem MCP server
+# [mcp_servers.filesystem]
+# command = "npx"
+# args = ["-y", "@anthropic-ai/mcp-server-filesystem", "/home/user/documents"]
+#
+# Example: GitHub MCP server
+# [mcp_servers.github]
+# command = "npx"
+# args = ["-y", "@anthropic-ai/mcp-server-github"]
+# env = { GITHUB_TOKEN = "$GITHUB_TOKEN" }
+#
+# Example: Custom HTTP MCP server
+# [mcp_servers.custom]
+# url = "http://localhost:3000/mcp"
+
+# =============================================================================
+# Trusted Repositories
+# =============================================================================
+
+# Repositories where certain actions are pre-approved.
+# Uses glob patterns for matching.
+
+[trust]
+# Repositories with full trust (all tools allowed)
+# full_trust = [
+#     "~/Projects/personal/*",
+#     "~/work/internal-tools/*",
+# ]
+
+# Repositories with read-only trust (only read tools allowed)
+# read_only_trust = [
+#     "~/opensource/*",
+# ]
+
+# Repositories that are never trusted (always prompt)
+# never_trust = [
+#     "/tmp/*",
+#     "~/Downloads/*",
+# ]
+
+# =============================================================================
+# Privacy & Telemetry
+# =============================================================================
+
+[privacy]
+# Enable anonymous usage statistics
+usage_statistics = false
+
+# Log prompts for debugging (stored locally)
+log_prompts = false
+
+# =============================================================================
+# Advanced / Experimental
+# =============================================================================
+
+[advanced]
+# Enable experimental features
+enable_experimental = false
+
+# Debug logging level: "error" | "warn" | "info" | "debug" | "trace"
+log_level = "info"
