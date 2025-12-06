@@ -4,13 +4,19 @@ use tauri::State;
 
 use super::super::agent_bridge::AgentBridge;
 use super::{configure_bridge, spawn_event_forwarder};
+use crate::settings::get_with_env_fallback;
 use crate::state::AppState;
 
-/// Get the OpenRouter API key from environment.
-/// Looks for OPENROUTER_API_KEY in environment variables.
+/// Get the OpenRouter API key from settings with environment variable fallback.
+/// Priority: settings.ai.openrouter.api_key > $OPENROUTER_API_KEY
 #[tauri::command]
-pub fn get_openrouter_api_key() -> Result<Option<String>, String> {
-    Ok(std::env::var("OPENROUTER_API_KEY").ok())
+pub async fn get_openrouter_api_key(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let settings = state.settings_manager.get().await;
+    Ok(get_with_env_fallback(
+        &settings.ai.openrouter.api_key,
+        &["OPENROUTER_API_KEY"],
+        None,
+    ))
 }
 
 /// Initialize the AI agent with Anthropic on Google Cloud Vertex AI.
@@ -94,7 +100,7 @@ pub fn load_env_file(path: String) -> Result<usize, String> {
     }
 }
 
-/// Vertex AI configuration from environment variables.
+/// Vertex AI configuration from settings with environment variable fallback.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct VertexAiEnvConfig {
     pub credentials_path: Option<String>,
@@ -102,26 +108,37 @@ pub struct VertexAiEnvConfig {
     pub location: Option<String>,
 }
 
-/// Get Vertex AI configuration from environment variables.
-/// Looks for:
-/// - GOOGLE_APPLICATION_CREDENTIALS or VERTEX_AI_CREDENTIALS_PATH
-/// - VERTEX_AI_PROJECT_ID or GOOGLE_CLOUD_PROJECT
-/// - VERTEX_AI_LOCATION (defaults to "us-east5" if not set)
+/// Get Vertex AI configuration from settings with environment variable fallback.
+///
+/// Priority for each field:
+/// - credentials_path: settings > $VERTEX_AI_CREDENTIALS_PATH > $GOOGLE_APPLICATION_CREDENTIALS
+/// - project_id: settings > $VERTEX_AI_PROJECT_ID > $GOOGLE_CLOUD_PROJECT
+/// - location: settings > $VERTEX_AI_LOCATION > "us-east5"
 #[tauri::command]
-pub fn get_vertex_ai_config() -> VertexAiEnvConfig {
-    let credentials_path = std::env::var("VERTEX_AI_CREDENTIALS_PATH")
-        .or_else(|_| std::env::var("GOOGLE_APPLICATION_CREDENTIALS"))
-        .ok();
+pub async fn get_vertex_ai_config(state: State<'_, AppState>) -> Result<VertexAiEnvConfig, String> {
+    let settings = state.settings_manager.get().await;
 
-    let project_id = std::env::var("VERTEX_AI_PROJECT_ID")
-        .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
-        .ok();
+    let credentials_path = get_with_env_fallback(
+        &settings.ai.vertex_ai.credentials_path,
+        &["VERTEX_AI_CREDENTIALS_PATH", "GOOGLE_APPLICATION_CREDENTIALS"],
+        None,
+    );
 
-    let location = std::env::var("VERTEX_AI_LOCATION").ok();
+    let project_id = get_with_env_fallback(
+        &settings.ai.vertex_ai.project_id,
+        &["VERTEX_AI_PROJECT_ID", "GOOGLE_CLOUD_PROJECT"],
+        None,
+    );
 
-    VertexAiEnvConfig {
+    let location = get_with_env_fallback(
+        &settings.ai.vertex_ai.location,
+        &["VERTEX_AI_LOCATION"],
+        Some("us-east5".to_string()),
+    );
+
+    Ok(VertexAiEnvConfig {
         credentials_path,
         project_id,
         location,
-    }
+    })
 }
