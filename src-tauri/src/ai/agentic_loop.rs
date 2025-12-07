@@ -29,12 +29,13 @@ use super::sub_agent_executor::{execute_sub_agent, SubAgentExecutorContext};
 use super::token_budget::TokenAlertLevel;
 use super::tool_definitions::{
     get_all_tool_definitions_with_config, get_sub_agent_tool_definitions,
-    get_tavily_tool_definitions, get_workflow_tool_definitions, ToolConfig,
+    get_tavily_tool_definitions, ToolConfig,
 };
-use super::tool_executors::{
-    execute_indexer_tool, execute_tavily_tool, execute_web_fetch_tool, execute_workflow_tool,
-    normalize_run_pty_cmd_args, WorkflowToolContext,
-};
+#[cfg(feature = "tauri")]
+use super::tool_definitions::get_workflow_tool_definitions;
+use super::tool_executors::{execute_indexer_tool, execute_tavily_tool, execute_web_fetch_tool, normalize_run_pty_cmd_args};
+#[cfg(feature = "tauri")]
+use super::tool_executors::{execute_workflow_tool, WorkflowToolContext};
 use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyManager};
 use crate::indexer::IndexerState;
 use crate::sidecar::{CaptureContext, SidecarState};
@@ -56,6 +57,7 @@ pub struct AgenticLoopContext<'a> {
     pub sub_agent_registry: &'a Arc<RwLock<SubAgentRegistry>>,
     pub indexer_state: Option<&'a Arc<IndexerState>>,
     pub tavily_state: Option<&'a Arc<TavilyState>>,
+    #[cfg(feature = "tauri")]
     pub workflow_state: Option<&'a Arc<super::commands::workflow::WorkflowState>>,
     pub workspace: &'a Arc<RwLock<std::path::PathBuf>>,
     pub client: &'a Arc<RwLock<super::llm_client::LlmClient>>,
@@ -317,7 +319,8 @@ pub async fn execute_tool_direct(
         return Ok(ToolExecutionResult { value, success });
     }
 
-    // Check if this is a workflow tool call
+    // Check if this is a workflow tool call (only with tauri feature)
+    #[cfg(feature = "tauri")]
     if tool_name == "run_workflow" {
         let workflow_ctx = WorkflowToolContext {
             workflow_state: ctx.workflow_state,
@@ -521,7 +524,8 @@ pub async fn run_agentic_loop(
         tools.extend(get_sub_agent_tool_definitions(&registry).await);
     }
 
-    // Add workflow tools if workflow_state is available
+    // Add workflow tools if workflow_state is available (only with tauri feature)
+    #[cfg(feature = "tauri")]
     if let Some(workflow_state) = ctx.workflow_state {
         let registry = workflow_state.registry.read().await;
         tools.extend(get_workflow_tool_definitions(&registry));

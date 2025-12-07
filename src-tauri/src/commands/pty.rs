@@ -1,7 +1,9 @@
 use crate::error::Result;
 use crate::pty::PtySession;
+use crate::runtime::TauriRuntime;
 use crate::state::AppState;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::State;
 
 #[tauri::command]
@@ -16,9 +18,12 @@ pub async fn pty_create(
     let rows = rows.unwrap_or(24);
     let cols = cols.unwrap_or(80);
 
+    // Create TauriRuntime for event emission
+    let runtime = Arc::new(TauriRuntime::new(app_handle));
+
     state
         .pty_manager
-        .create_session(app_handle, working_dir, rows, cols)
+        .create_session_with_runtime(runtime, working_dir, rows, cols)
 }
 
 #[tauri::command]

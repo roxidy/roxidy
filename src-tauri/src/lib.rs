@@ -1,14 +1,24 @@
 mod ai;
-mod commands;
 mod error;
 mod indexer;
 mod pty;
+pub mod runtime;
 mod settings;
 mod sidecar;
+#[cfg(feature = "tauri")]
 mod state;
 mod tavily;
 mod web_fetch;
 
+// CLI module (only compiled when cli feature is enabled)
+#[cfg(feature = "cli")]
+pub mod cli;
+
+// Tauri-specific modules and commands (only compiled when tauri feature is enabled)
+#[cfg(feature = "tauri")]
+mod commands;
+
+#[cfg(feature = "tauri")]
 use ai::{
     add_tool_always_allow, cancel_workflow, clear_ai_conversation, disable_full_auto_mode,
     disable_loop_detection, enable_full_auto_mode, enable_loop_detection, enforce_context_window,
@@ -27,16 +37,20 @@ use ai::{
     set_loop_protection_config, set_tool_policy, set_tool_policy_config, shutdown_ai_agent,
     start_workflow, step_workflow, update_ai_workspace,
 };
+#[cfg(feature = "tauri")]
 use commands::*;
+#[cfg(feature = "tauri")]
 use indexer::{
     analyze_file, detect_language, extract_symbols, get_file_metrics, get_indexed_file_count,
     get_indexer_workspace, index_directory, index_file, init_indexer, is_indexer_initialized,
     search_code, search_files, shutdown_indexer,
 };
+#[cfg(feature = "tauri")]
 use settings::{
     get_setting, get_settings, get_settings_path, reload_settings, reset_settings, set_setting,
     settings_file_exists, update_settings,
 };
+#[cfg(feature = "tauri")]
 use sidecar::{
     sidecar_available_backends, sidecar_cleanup, sidecar_clear_commit_boundary,
     sidecar_create_indexes, sidecar_current_session, sidecar_download_models, sidecar_end_session,
@@ -48,8 +62,11 @@ use sidecar::{
     sidecar_set_config, sidecar_shutdown, sidecar_start_session, sidecar_status,
     sidecar_storage_stats,
 };
+#[cfg(feature = "tauri")]
 use state::AppState;
 
+/// Tauri application entry point (only available with tauri feature)
+#[cfg(feature = "tauri")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Install rustls crypto provider (required for rustls 0.23+)

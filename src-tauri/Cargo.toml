@@ -9,13 +9,22 @@ edition = "2021"
 name = "qbit_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "qbit-cli"
+path = "src/bin/qbit-cli.rs"
+required-features = ["cli"]
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-# Tauri
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
+# Tauri (optional - only for GUI app)
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+
+# CLI dependencies (optional - only for CLI binary)
+clap = { version = "4", features = ["derive", "env"], optional = true }
+atty = { version = "0.2", optional = true }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -84,7 +93,11 @@ mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features =
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [features]
-default = []
+default = ["tauri"]
+# Tauri GUI application (mutually exclusive with cli)
+tauri = ["dep:tauri", "dep:tauri-plugin-opener", "dep:tauri-build"]
+# CLI binary for headless operation (mutually exclusive with tauri)
+cli = ["dep:clap", "dep:atty"]
 # Enable local LLM inference via mistral.rs (adds ~400MB binary size, requires Metal on macOS)
 local-llm = ["dep:mistralrs"]
 

@@ -21,10 +21,12 @@
 //! );
 //! ```
 
+#[cfg(feature = "tauri")]
 pub mod commands;
 pub mod loader;
 pub mod schema;
 
+#[cfg(feature = "tauri")]
 pub use commands::*;
 pub use loader::{get_with_env_fallback, SettingsManager};
 // Re-export for external use (e.g., tests, other crates)

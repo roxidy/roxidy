@@ -1,9 +1,11 @@
 // Configuration commands for AI agent setup and workspace management.
 
+use std::sync::Arc;
 use tauri::State;
 
 use super::super::agent_bridge::AgentBridge;
-use super::{configure_bridge, spawn_event_forwarder};
+use super::configure_bridge;
+use crate::runtime::{QbitRuntime, TauriRuntime};
 use crate::settings::get_with_env_fallback;
 use crate::state::AppState;
 
@@ -37,16 +39,23 @@ pub async fn init_ai_agent_vertex(
     location: String,
     model: String,
 ) -> Result<(), String> {
-    let event_tx = spawn_event_forwarder(app);
+    // Phase 5: Use runtime-based constructor
+    // TauriRuntime handles event emission via Tauri's event system
+    let runtime: Arc<dyn QbitRuntime> = Arc::new(TauriRuntime::new(app));
+
+    // Store runtime in AiState (for potential future use by other components)
+    *state.ai_state.runtime.write().await = Some(runtime.clone());
+
     let workspace_path: std::path::PathBuf = workspace.into();
 
-    let mut bridge = AgentBridge::new_vertex_anthropic(
+    // Create bridge with runtime (Phase 5 - new path)
+    let mut bridge = AgentBridge::new_vertex_anthropic_with_runtime(
         workspace_path.clone(),
         &credentials_path,
         &project_id,
         &location,
         &model,
-        event_tx,
+        runtime,
     )
     .await
     .map_err(|e| e.to_string())?;

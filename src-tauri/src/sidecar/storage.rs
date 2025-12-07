@@ -823,6 +823,11 @@ impl SidecarStorage {
         })
     }
 
+    /// Get the data directory path
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// Get storage statistics
     pub async fn stats(&self) -> Result<StorageStats> {
         let events_table = self

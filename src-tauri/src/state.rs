@@ -1,3 +1,9 @@
+//! Application state for Tauri commands.
+//!
+//! This module is only compiled when the `tauri` feature is enabled.
+
+#![cfg(feature = "tauri")]
+
 use std::sync::Arc;
 
 use crate::ai::commands::WorkflowState;

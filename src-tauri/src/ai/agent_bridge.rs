@@ -46,6 +46,7 @@ use super::tool_definitions::ToolConfig;
 use super::tool_policy::ToolPolicyManager;
 use crate::indexer::IndexerState;
 use crate::pty::PtyManager;
+use crate::runtime::{QbitRuntime, RuntimeEvent};
 use crate::sidecar::SidecarState;
 use crate::tavily::TavilyState;
 
@@ -58,7 +59,12 @@ pub struct AgentBridge {
     pub(crate) model_name: String,
     pub(crate) tool_registry: Arc<RwLock<ToolRegistry>>,
     pub(crate) client: Arc<RwLock<LlmClient>>,
-    pub(crate) event_tx: mpsc::UnboundedSender<AiEvent>,
+
+    // Event emission - dual mode during transition
+    // The event_tx channel is the legacy path, runtime is the new abstraction.
+    // During transition, emit_event() sends through BOTH to verify parity.
+    pub(crate) event_tx: Option<mpsc::UnboundedSender<AiEvent>>,
+    pub(crate) runtime: Option<Arc<dyn QbitRuntime>>,
 
     // Sub-agents
     pub(crate) sub_agent_registry: Arc<RwLock<SubAgentRegistry>>,
@@ -73,6 +79,7 @@ pub struct AgentBridge {
     // External services
     pub(crate) indexer_state: Option<Arc<IndexerState>>,
     pub(crate) tavily_state: Option<Arc<TavilyState>>,
+    #[cfg(feature = "tauri")]
     pub(crate) workflow_state: Option<Arc<super::commands::workflow::WorkflowState>>,
 
     // Session persistence
@@ -105,6 +112,9 @@ impl AgentBridge {
     // ========================================================================
 
     /// Create a new AgentBridge with vtcode-core (for OpenRouter, OpenAI, etc.)
+    ///
+    /// This is the legacy constructor using event_tx channel.
+    /// For new code, prefer `new_with_runtime()`.
     pub async fn new(
         workspace: PathBuf,
         provider: &str,
@@ -121,10 +131,36 @@ impl AgentBridge {
 
         let components = create_vtcode_components(config).await?;
 
-        Ok(Self::from_components(components, event_tx))
+        Ok(Self::from_components_with_event_tx(components, event_tx))
+    }
+
+    /// Create a new AgentBridge with runtime abstraction.
+    ///
+    /// This is the preferred constructor for CLI and future code.
+    /// Uses the `QbitRuntime` trait for event emission and approval handling.
+    pub async fn new_with_runtime(
+        workspace: PathBuf,
+        provider: &str,
+        model: &str,
+        api_key: &str,
+        runtime: Arc<dyn QbitRuntime>,
+    ) -> Result<Self> {
+        let config = VtcodeClientConfig {
+            workspace,
+            provider,
+            model,
+            api_key,
+        };
+
+        let components = create_vtcode_components(config).await?;
+
+        Ok(Self::from_components_with_runtime(components, runtime))
     }
 
     /// Create a new AgentBridge for Anthropic on Google Cloud Vertex AI.
+    ///
+    /// This is the legacy constructor using event_tx channel.
+    /// For new code, prefer `new_vertex_anthropic_with_runtime()`.
     pub async fn new_vertex_anthropic(
         workspace: PathBuf,
         credentials_path: &str,
@@ -143,11 +179,35 @@ impl AgentBridge {
 
         let components = create_vertex_components(config).await?;
 
-        Ok(Self::from_components(components, event_tx))
+        Ok(Self::from_components_with_event_tx(components, event_tx))
     }
 
-    /// Create an AgentBridge from pre-built components.
-    fn from_components(
+    /// Create a new AgentBridge for Anthropic on Google Cloud Vertex AI with runtime.
+    ///
+    /// This is the preferred constructor for CLI and future code.
+    pub async fn new_vertex_anthropic_with_runtime(
+        workspace: PathBuf,
+        credentials_path: &str,
+        project_id: &str,
+        location: &str,
+        model: &str,
+        runtime: Arc<dyn QbitRuntime>,
+    ) -> Result<Self> {
+        let config = VertexAnthropicClientConfig {
+            workspace,
+            credentials_path,
+            project_id,
+            location,
+            model,
+        };
+
+        let components = create_vertex_components(config).await?;
+
+        Ok(Self::from_components_with_runtime(components, runtime))
+    }
+
+    /// Create an AgentBridge from pre-built components (legacy event_tx path).
+    fn from_components_with_event_tx(
         components: AgentBridgeComponents,
         event_tx: mpsc::UnboundedSender<AiEvent>,
     ) -> Self {
@@ -170,13 +230,15 @@ impl AgentBridge {
             model_name,
             tool_registry,
             client,
-            event_tx,
+            event_tx: Some(event_tx),
+            runtime: None,
             sub_agent_registry,
             pty_manager: None,
             current_session_id: Default::default(),
             conversation_history: Default::default(),
             indexer_state: None,
             tavily_state: None,
+            #[cfg(feature = "tauri")]
             workflow_state: None,
             session_manager: Default::default(),
             session_persistence_enabled: Arc::new(RwLock::new(true)),
@@ -188,6 +250,108 @@ impl AgentBridge {
             tool_config: ToolConfig::main_agent(),
             sidecar_state: None,
         }
+    }
+
+    /// Create an AgentBridge from pre-built components with runtime abstraction.
+    fn from_components_with_runtime(
+        components: AgentBridgeComponents,
+        runtime: Arc<dyn QbitRuntime>,
+    ) -> Self {
+        let AgentBridgeComponents {
+            workspace,
+            provider_name,
+            model_name,
+            tool_registry,
+            client,
+            sub_agent_registry,
+            approval_recorder,
+            tool_policy_manager,
+            context_manager,
+            loop_detector,
+        } = components;
+
+        Self {
+            workspace,
+            provider_name,
+            model_name,
+            tool_registry,
+            client,
+            event_tx: None,
+            runtime: Some(runtime),
+            sub_agent_registry,
+            pty_manager: None,
+            current_session_id: Default::default(),
+            conversation_history: Default::default(),
+            indexer_state: None,
+            tavily_state: None,
+            #[cfg(feature = "tauri")]
+            workflow_state: None,
+            session_manager: Default::default(),
+            session_persistence_enabled: Arc::new(RwLock::new(true)),
+            approval_recorder,
+            pending_approvals: Default::default(),
+            tool_policy_manager,
+            context_manager,
+            loop_detector,
+            tool_config: ToolConfig::main_agent(),
+            sidecar_state: None,
+        }
+    }
+
+    // ========================================================================
+    // Event Emission Helpers
+    // ========================================================================
+
+    /// Helper to emit events through available channels.
+    ///
+    /// During the transition period, this emits through BOTH `event_tx` and `runtime`
+    /// if both are available. This ensures no events are lost during migration.
+    ///
+    /// After migration is complete, only `runtime` will be used.
+    pub(crate) fn emit_event(&self, event: AiEvent) {
+        // Emit through legacy event_tx channel if available
+        if let Some(ref tx) = self.event_tx {
+            let _ = tx.send(event.clone());
+        }
+
+        // Emit through runtime abstraction if available
+        if let Some(ref rt) = self.runtime {
+            if let Err(e) = rt.emit(RuntimeEvent::Ai(event)) {
+                tracing::warn!("Failed to emit event through runtime: {}", e);
+            }
+        }
+    }
+
+    /// Get or create an event channel for the agentic loop.
+    ///
+    /// If `event_tx` is available, returns a clone of that sender.
+    /// If only `runtime` is available, creates a forwarding channel that sends to runtime.
+    ///
+    /// This is a transition helper - once we update AgenticLoopContext to use runtime
+    /// directly, this method will be removed.
+    pub(crate) fn get_or_create_event_tx(&self) -> mpsc::UnboundedSender<AiEvent> {
+        // If we have an event_tx, use it
+        if let Some(ref tx) = self.event_tx {
+            return tx.clone();
+        }
+
+        // Otherwise, create a forwarding channel to runtime
+        let runtime = self.runtime.clone().expect(
+            "AgentBridge must have either event_tx or runtime - this is a bug in construction",
+        );
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<AiEvent>();
+
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let Err(e) = runtime.emit(RuntimeEvent::Ai(event)) {
+                    tracing::warn!("Failed to forward event to runtime: {}", e);
+                }
+            }
+            tracing::debug!("Agentic loop event forwarder shut down");
+        });
+
+        tx
     }
 
     // ========================================================================
@@ -210,6 +374,7 @@ impl AgentBridge {
     }
 
     /// Set the WorkflowState for workflow tools
+    #[cfg(feature = "tauri")]
     pub fn set_workflow_state(
         &mut self,
         workflow_state: Arc<super::commands::workflow::WorkflowState>,
@@ -261,7 +426,7 @@ impl AgentBridge {
         let turn_id = uuid::Uuid::new_v4().to_string();
 
         // Emit turn started event
-        let _ = self.event_tx.send(AiEvent::Started {
+        self.emit_event(AiEvent::Started {
             turn_id: turn_id.clone(),
         });
 
@@ -303,11 +468,11 @@ impl AgentBridge {
         match result {
             Ok(content) => {
                 let duration_ms = start_time.elapsed().as_millis() as u64;
-                let _ = self.event_tx.send(AiEvent::TextDelta {
+                self.emit_event(AiEvent::TextDelta {
                     delta: content.clone(),
                     accumulated: content.clone(),
                 });
-                let _ = self.event_tx.send(AiEvent::Completed {
+                self.emit_event(AiEvent::Completed {
                     response: content.clone(),
                     tokens_used: None,
                     duration_ms: Some(duration_ms),
@@ -315,7 +480,7 @@ impl AgentBridge {
                 Ok(content)
             }
             Err(e) => {
-                let _ = self.event_tx.send(AiEvent::Error {
+                self.emit_event(AiEvent::Error {
                     message: e.to_string(),
                     error_type: "llm_error".to_string(),
                 });
@@ -381,13 +546,18 @@ impl AgentBridge {
         let initial_history = history_guard.clone();
         drop(history_guard);
 
+        // Get or create event channel for the agentic loop
+        // This handles both legacy (event_tx) and new (runtime) paths
+        let loop_event_tx = self.get_or_create_event_tx();
+
         // Build agentic loop context
         let loop_ctx = AgenticLoopContext {
-            event_tx: &self.event_tx,
+            event_tx: &loop_event_tx,
             tool_registry: &self.tool_registry,
             sub_agent_registry: &self.sub_agent_registry,
             indexer_state: self.indexer_state.as_ref(),
             tavily_state: self.tavily_state.as_ref(),
+            #[cfg(feature = "tauri")]
             workflow_state: self.workflow_state.as_ref(),
             workspace: &self.workspace,
             client: &self.client,
@@ -446,7 +616,7 @@ impl AgentBridge {
         }
 
         // Emit completion event
-        let _ = self.event_tx.send(AiEvent::Completed {
+        self.emit_event(AiEvent::Completed {
             response: accumulated_response.clone(),
             tokens_used: None,
             duration_ms: Some(duration_ms),
