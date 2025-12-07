@@ -1408,4 +1408,78 @@ message without cwd"#;
         assert_eq!(imported.events.len(), 2);
         assert_eq!(imported.checkpoints.len(), 1);
     }
+
+    #[test]
+    fn test_should_embed_filtering() {
+        let session_id = Uuid::new_v4();
+
+        // User prompts should be embedded
+        let user_prompt = SessionEvent::user_prompt(session_id, "Add authentication");
+        assert!(user_prompt.should_embed(), "user_prompt should be embedded");
+
+        // Agent reasoning should be embedded
+        let reasoning = SessionEvent::reasoning(session_id, "I'll use JWT for auth", None);
+        assert!(reasoning.should_embed(), "reasoning should be embedded");
+
+        // File edits should NOT be embedded (structured, search by path)
+        let file_edit = SessionEvent::file_edit(
+            session_id,
+            PathBuf::from("src/auth.rs"),
+            FileOperation::Modify,
+            None,
+        );
+        assert!(!file_edit.should_embed(), "file_edit should NOT be embedded");
+
+        // Regular tool calls should NOT be embedded
+        let tool_call = SessionEvent::tool_call_with_output(
+            session_id,
+            "write",
+            "path=test.rs",
+            true,
+            Some("File written".to_string()),
+            None,
+            vec![PathBuf::from("test.rs")],
+            None,
+        );
+        assert!(!tool_call.should_embed(), "write tool should NOT be embedded");
+
+        // Read tool calls WITH output SHOULD be embedded
+        let read_tool = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=src/main.rs",
+            true,
+            Some("fn main() { println!(\"Hello\"); }".to_string()),
+            Some(vec![PathBuf::from("src/main.rs")]),
+            vec![],
+            None,
+        );
+        assert!(read_tool.should_embed(), "read_file with output should be embedded");
+
+        // Read tool without output should NOT be embedded
+        let read_no_output = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=missing.rs",
+            false,
+            None, // No output
+            None,
+            vec![],
+            None,
+        );
+        assert!(!read_no_output.should_embed(), "read_file without output should NOT be embedded");
+
+        // Grep tool with output should be embedded
+        let grep_tool = SessionEvent::tool_call_with_output(
+            session_id,
+            "grep",
+            "pattern=authenticate",
+            true,
+            Some("src/auth.rs:1: fn authenticate".to_string()),
+            Some(vec![PathBuf::from("src/auth.rs")]),
+            vec![],
+            None,
+        );
+        assert!(grep_tool.should_embed(), "grep with output should be embedded");
+    }
 }
