@@ -109,10 +109,6 @@ class CliRunner:
         timeout: int = 300,
     ) -> subprocess.CompletedProcess:
         """Run multiple prompts from a temp file."""
-        self._log(f"\n>>> BATCH ({len(prompts)} prompts):")
-        for i, p in enumerate(prompts, 1):
-            self._log(f"    [{i}] {p}")
-
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             for prompt in prompts:
                 f.write(prompt + "\n")
@@ -123,11 +119,36 @@ class CliRunner:
             args = ["-f", temp_path]
             if auto_approve:
                 args.append("--auto-approve")
-            if quiet:
+            # In verbose mode, don't use quiet so we see sequential execution
+            if quiet and not self.verbose:
                 args.append("--quiet")
+
+            self._log(f"\n{'='*60}")
+            self._log(f"BATCH: {len(prompts)} prompts")
+            self._log('='*60)
+
             result = self.run(*args, timeout=timeout)
 
-            self._log(f"<<< BATCH RESPONSE:\n{result.stdout}")
+            # Parse and display the sequential Q&A from stderr
+            if self.verbose and result.stderr:
+                self._log("\n--- Sequential Execution ---")
+                lines = result.stderr.split('\n')
+                stdout_lines = result.stdout.strip().split('\n') if result.stdout else []
+                response_idx = 0
+
+                for line in lines:
+                    if '[batch]' in line and 'Executing:' in line:
+                        # Extract prompt from: [batch] [1/3] Executing: prompt text
+                        prompt_part = line.split('Executing:', 1)[-1].strip()
+                        self._log(f"\n>>> Q: {prompt_part}")
+                    elif '[batch]' in line and 'Complete' in line:
+                        # Show the response that came before this
+                        if response_idx < len(stdout_lines):
+                            self._log(f"<<< A: {stdout_lines[response_idx]}")
+                            response_idx += 1
+
+                self._log("--- End Execution ---\n")
+
             return result
         finally:
             os.unlink(temp_path)
