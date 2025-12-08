@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "AI-powered terminal emulator"
 authors = ["you"]
 edition = "2021"
+default-run = "qbit"
 
 [lib]
 name = "qbit_lib"
