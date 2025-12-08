@@ -1,5 +1,0 @@
-
-> qbit@0.1.0 check /Users/xlyk/Code/qbit
-> biome check .
-
-Checked 86 files in 20ms. No fixes applied.
