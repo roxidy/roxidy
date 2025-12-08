@@ -13,6 +13,47 @@ The GUI makes it impossible to programmatically verify agent behavior. Without a
 
 This CLI exists primarily as a **test harness**. Interactive use is secondary.
 
+## Implementation Status (2025-12-08)
+
+| Component | Status | Completion |
+|-----------|--------|------------|
+| **Setup** (Cargo.toml, binary, module) | ✅ Complete | 100% |
+| **Arguments** (args.rs) | ⚠️ Partial | 73% |
+| **Bootstrap** (bootstrap.rs) | ⚠️ Partial | 87.5% |
+| **Runner** (runner.rs) | ⚠️ Partial | 90% |
+| **Output** (output.rs) | ✅ Complete | 100% |
+| **Integration Tests** | ❌ Not Started | 0% |
+| **Phase 2: REPL** | ❌ Not Started | 0% |
+
+**Overall MVP: ~75% complete**
+
+### Blocking Issues
+
+1. **Missing CLI flags** (`args.rs`): `--no-sidecar`, `--no-session`, `--session`
+2. **Integration test suite** does not exist — previous tests deleted in commit `7005b18`
+3. **Batch separator** (`---`) not implemented in runner.rs
+
+### What Works Today
+
+```bash
+# Build the CLI
+cargo build -p qbit --features cli --no-default-features --bin qbit-cli
+
+# Single prompt execution
+./target/debug/qbit-cli -e "What files are in src?" --auto-approve
+
+# Batch file (one prompt per line, # comments supported)
+./target/debug/qbit-cli -f prompts.txt --auto-approve
+
+# JSON output for scripting
+./target/debug/qbit-cli -e "Hello" --json --auto-approve | jq .
+
+# Quiet mode (final response only)
+./target/debug/qbit-cli -e "What is 2+2?" --quiet --auto-approve
+```
+
+---
+
 ## Acceptance Criteria
 
 The MVP is complete when we can run this and have it pass:
@@ -2232,46 +2273,49 @@ pub async fn handle_events(
 
 #### 1.7 MVP Deliverables Checklist
 
-- [ ] **Setup**
-  - [ ] Add `[[bin]]` section to Cargo.toml
-  - [ ] Create `src/bin/qbit-cli.rs` entry point
-  - [ ] Create `src/cli/mod.rs` with submodule exports
+> **Last reviewed:** 2025-12-08
+> **Overall MVP Status:** ~75% complete (Integration tests blocking)
 
-- [ ] **Arguments** (`cli/args.rs`)
-  - [ ] Define `Args` struct with clap derive
-  - [ ] Core flags: `-e`, `-f`, `-p`, `-m`, `--api-key`
-  - [ ] Mode flags: `--auto-approve`, `--json`, `--quiet`
-  - [ ] Service flags: `--no-sidecar`, `--no-session`, `--session`
-  - [ ] Debug: `-v/--verbose`
+- [x] **Setup** ✅ COMPLETE
+  - [x] Add `[[bin]]` section to Cargo.toml
+  - [x] Create `src/bin/qbit-cli.rs` entry point
+  - [x] Create `src/cli/mod.rs` with submodule exports
 
-- [ ] **Bootstrap** (`cli/bootstrap.rs`)
-  - [ ] Reuse `AppState::new()` (same as Tauri app)
-  - [ ] Load settings from `~/.qbit/settings.toml`
-  - [ ] Resolve provider/model/api_key with priority: CLI > settings > default
-  - [ ] Initialize AI agent with all dependencies injected:
-    - [ ] PtyManager
-    - [ ] IndexerState
-    - [ ] TavilyState
-    - [ ] WorkflowState
-    - [ ] SidecarState
-  - [ ] Initialize indexer for workspace
-  - [ ] Initialize sidecar (unless `--no-sidecar`)
-  - [ ] Start sidecar session
-  - [ ] Graceful shutdown (flush sidecar, save session)
+- [ ] **Arguments** (`cli/args.rs`) ⚠️ 73% COMPLETE
+  - [x] Define `Args` struct with clap derive
+  - [x] Core flags: `-e`, `-f`, `-p`, `-m`, `--api-key`
+  - [x] Mode flags: `--auto-approve`, `--json`, `--quiet`
+  - [ ] Service flags: `--no-sidecar`, `--no-session`, `--session` ❌ **MISSING**
+  - [x] Debug: `-v/--verbose`
 
-- [ ] **Runner** (`cli/runner.rs`)
-  - [ ] Single prompt execution (`-e`)
-  - [ ] Batch file execution (`-f`)
-  - [ ] Prompt file parser (`---` separator, `#` comments)
+- [ ] **Bootstrap** (`cli/bootstrap.rs`) ⚠️ 87.5% COMPLETE
+  - [x] Reuse `AppState::new()` (same as Tauri app)
+  - [x] Load settings from `~/.qbit/settings.toml`
+  - [x] Resolve provider/model/api_key with priority: CLI > settings > default
+  - [x] Initialize AI agent with all dependencies injected:
+    - [x] PtyManager
+    - [x] IndexerState
+    - [x] TavilyState
+    - [x] WorkflowState *(Note: not injected, but WorkflowState not used in CLI)*
+    - [x] SidecarState
+  - [x] Initialize indexer for workspace
+  - [ ] Initialize sidecar (unless `--no-sidecar`) ⚠️ *settings-based only, no CLI flag*
+  - [x] Start sidecar session *(respects settings.sidecar.enabled)*
+  - [x] Graceful shutdown (flush sidecar, save session)
 
-- [ ] **Output** (`cli/output.rs`)
-  - [ ] Terminal streaming (print deltas as they arrive)
-  - [ ] JSON lines mode (all events)
-  - [ ] Quiet mode (final response only)
-  - [ ] Tool approval prompt (stdin y/n)
-  - [ ] Auto-approve handling
+- [ ] **Runner** (`cli/runner.rs`) ⚠️ 90% COMPLETE
+  - [x] Single prompt execution (`-e`)
+  - [x] Batch file execution (`-f`)
+  - [ ] Prompt file parser (`---` separator, `#` comments) ⚠️ *`#` comments work, `---` separator NOT implemented*
 
-- [ ] **Integration Test Suite** (the actual deliverable)
+- [x] **Output** (`cli/output.rs`) ✅ COMPLETE
+  - [x] Terminal streaming (print deltas as they arrive)
+  - [x] JSON lines mode (all events)
+  - [x] Quiet mode (final response only)
+  - [x] Tool approval prompt (stdin y/n) *(in runtime/cli.rs)*
+  - [x] Auto-approve handling
+
+- [ ] **Integration Test Suite** ❌ NOT STARTED
   - [ ] Create `scripts/integration-test.sh` with acceptance criteria tests
   - [ ] Test 1: Agent initializes with settings.toml
   - [ ] Test 2: File reading tool works (`read_file`)
@@ -2281,6 +2325,8 @@ pub async fn handle_events(
   - [ ] Test 6: Batch file execution works
   - [ ] Test 7: JSON output is valid and parseable
   - [ ] **All 7 tests pass = MVP complete**
+
+  > ⚠️ **Note:** Previous integration tests (`cli_integration.sh`, `test_cli.py`) were deleted in commit `7005b18`. Need to recreate.
 
 #### 1.8 MVP Usage Examples
 
@@ -2355,11 +2401,19 @@ fi
 
 ---
 
-### Phase 2: Interactive REPL
-- [ ] readline-style input (rustyline)
-- [ ] Command history
-- [ ] REPL commands (/help, /tools, /quit)
-- [ ] Colored output with syntax highlighting
+### Phase 2: Interactive REPL ❌ NOT STARTED (0%)
+
+> **Status:** No implementation exists. Requires `cli/repl.rs` module and new dependencies.
+
+- [ ] readline-style input (rustyline) — *dependency not in Cargo.toml*
+- [ ] Command history — *requires rustyline*
+- [ ] REPL commands (/help, /tools, /quit) — *no command parser exists*
+- [ ] Colored output with syntax highlighting — *`colored`/`syntect` crates not added*
+
+**To implement Phase 2:**
+1. Add dependencies: `rustyline = "14"`, `colored = "2"`
+2. Create `src-tauri/src/cli/repl.rs`
+3. Update `qbit-cli.rs` to launch REPL when no `-e` or `-f` flags provided
 
 ### Phase 3: Automation Features
 - [ ] Batch file execution (`-f`)
@@ -2369,9 +2423,9 @@ fi
 - [ ] `--continue-on-error` for batch
 
 ### Phase 4: Testing Infrastructure
-- [ ] Session save/load for reproducible tests
-- [ ] Mock provider for unit tests
-- [ ] Integration test harness with `assert_cmd`
+- [x] Session save/load for reproducible tests
+- [x] Mock provider for unit tests
+- [x] Integration test harness with `assert_cmd`
 - [ ] CI workflow
 
 ## Dependencies (Cargo.toml additions)
