@@ -5,6 +5,7 @@ description = "Integration tests for qbit-cli"
 requires-python = ">=3.10"
 dependencies = [
     "pytest>=7.0",
+    "deepeval>=2.0",
 ]
 
 [tool.pytest.ini_options]

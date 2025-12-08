@@ -3,10 +3,46 @@
 import os
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Generator
 
 import pytest
+from deepeval.models import GPTModel
+
+
+def load_settings() -> dict:
+    """Load settings from settings.toml."""
+    settings_path = "~/.qbit/settings.toml"
+    if not os.path.exists(settings_path):
+        return {"eval": {"model": "gpt-4o-mini", "temperature": 0}}
+    with open(settings_path, "rb") as f:
+        return tomllib.load(f)
+
+
+def create_eval_model():
+    """Create the OpenAI evaluation model from settings."""
+    settings = load_settings()
+    eval_settings = settings.get("eval", {})
+
+    # Set API key from settings if provided (overrides env var)
+    if api_key := eval_settings.get("api_key"):
+        os.environ["OPENAI_API_KEY"] = api_key
+
+    return GPTModel(
+        model=eval_settings.get("model", "gpt-4o-mini"),
+        temperature=eval_settings.get("temperature", 0),
+    )
+
+
+def get_last_response(stdout: str) -> str:
+    """Extract the last response from batch output.
+
+    Batch mode outputs each response on a separate line.
+    This returns only the final response for evaluation.
+    """
+    lines = [line for line in stdout.strip().split("\n") if line.strip()]
+    return lines[-1] if lines else ""
 
 
 def get_cli_path() -> str:
@@ -16,8 +52,7 @@ def get_cli_path() -> str:
         return cli_path
 
     # Default to debug build
-    repo_root = Path(__file__).parent.parent.parent
-    return str(repo_root / "target" / "debug" / "qbit-cli")
+    return str("../src-tauri/target/debug/qbit-cli")
 
 
 @pytest.fixture(scope="session")
@@ -163,6 +198,18 @@ def cli(cli_path: str, request) -> CliRunner:
         or request.config.getoption("-v", default=0) > 0
     )
     return CliRunner(cli_path, verbose=verbose)
+
+
+@pytest.fixture(scope="session")
+def eval_model():
+    """Create OpenAI evaluation model from settings.toml.
+
+    Requires OPENAI_API_KEY environment variable.
+    Configure model in settings.toml:
+        [eval]
+        model = "gpt-4o-mini"
+    """
+    return create_eval_model()
 
 
 def pytest_configure(config):

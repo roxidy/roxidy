@@ -73,3 +73,7 @@ Thumbs.db
 mistral-testbed/target/
 
 *.pyc
+/src-tauri/tests/integration/.deepeval/
+/evals/.deepeval/.deepeval-cache.json
+/evals/.deepeval/.deepeval_telemetry.txt
+/evals/.deepeval/.latest_test_run.json
