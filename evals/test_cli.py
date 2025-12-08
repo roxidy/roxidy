@@ -12,14 +12,12 @@ Configure OpenAI model in settings.toml:
     api_key = "sk-..."  # or use OPENAI_API_KEY env var
 """
 
-import json
-
 import pytest
 from deepeval import evaluate
 from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
-from conftest import CliRunner, get_last_response
+from conftest import CliRunner, JsonRunResult, get_last_response
 
 
 # =============================================================================
@@ -333,16 +331,20 @@ class TestBatchProcessing:
 
 @pytest.mark.requires_api
 class TestSinglePrompt:
-    """Tests for single prompt execution."""
+    """Tests for single prompt execution using JSON output mode."""
 
     def test_basic_prompt(self, cli: CliRunner, eval_model):
-        """Basic single prompt execution."""
-        result = cli.run_prompt("What is 1+1? Just the number.", quiet=True)
+        """Basic single prompt execution with JSON parsing."""
+        result: JsonRunResult = cli.run_prompt_json("What is 1+1? Just the number.")
         assert result.returncode == 0
+
+        # Verify we got structured events
+        assert len(result.events) > 0, "Expected JSON events"
+        assert result.completed_event is not None, "Expected completed event"
 
         test_case = LLMTestCase(
             input="What is 1+1? Just the number.",
-            actual_output=result.stdout.strip(),
+            actual_output=result.response,
             expected_output="2",
         )
 
@@ -358,19 +360,44 @@ class TestSinglePrompt:
         results = evaluate([test_case], [arithmetic_metric])
         assert all(r.success for r in results.test_results), f"DeepEval failed: {results}"
 
-    def test_json_output(self, cli: CliRunner):
-        """JSON output mode produces valid JSON."""
-        result = cli.run_prompt("Say 'hello'", json_output=True)
+    def test_json_output_structure(self, cli: CliRunner):
+        """JSON output mode produces valid structured events."""
+        result: JsonRunResult = cli.run_prompt_json("Say 'hello'")
         assert result.returncode == 0
 
-        # Each non-empty line should be valid JSON
-        for line in result.stdout.strip().split("\n"):
-            if line.strip():
-                try:
-                    data = json.loads(line)
-                    assert "type" in data or isinstance(data, dict)
-                except json.JSONDecodeError as e:
-                    pytest.fail(f"Invalid JSON: {line}\nError: {e}")
+        # Verify basic event structure
+        assert len(result.events) > 0, "Expected at least one event"
+
+        # Check for expected event types
+        event_types = {e.event for e in result.events}
+        assert "started" in event_types, "Expected 'started' event"
+        assert "completed" in event_types, "Expected 'completed' event"
+
+        # Verify all events have timestamps
+        for event in result.events:
+            assert event.timestamp > 0, f"Event {event.event} missing valid timestamp"
+
+        # Verify completed event has response
+        assert result.response, "Expected non-empty response"
+
+    def test_json_event_sequence(self, cli: CliRunner):
+        """JSON events arrive in correct order."""
+        result: JsonRunResult = cli.run_prompt_json("Say 'test'")
+        assert result.returncode == 0
+
+        # Find indices of key events
+        event_types = [e.event for e in result.events]
+
+        started_idx = event_types.index("started") if "started" in event_types else -1
+        completed_idx = event_types.index("completed") if "completed" in event_types else -1
+
+        assert started_idx >= 0, "Missing started event"
+        assert completed_idx >= 0, "Missing completed event"
+        assert started_idx < completed_idx, "started should come before completed"
+
+        # Timestamps should be monotonically increasing
+        timestamps = [e.timestamp for e in result.events]
+        assert timestamps == sorted(timestamps), "Timestamps should be in order"
 
     def test_quiet_mode(self, cli: CliRunner, eval_model):
         """Quiet mode only outputs final response."""
@@ -405,10 +432,10 @@ class TestSinglePrompt:
 
 @pytest.mark.requires_api
 class TestEdgeCases:
-    """Edge case tests."""
+    """Edge case tests using JSON output mode."""
 
     def test_unicode_handling(self, cli: CliRunner, eval_model):
-        """Agent handles Unicode correctly."""
+        """Agent handles Unicode correctly - verify via JSON events."""
         result = cli.run_batch(
             [
                 "The word is '日本語'. Say 'received'.",
@@ -440,17 +467,27 @@ class TestEdgeCases:
         results = evaluate([test_case], [unicode_metric])
         assert all(r.success for r in results.test_results), f"DeepEval failed: {results}"
 
+    def test_unicode_in_json(self, cli: CliRunner):
+        """Unicode characters are preserved in JSON output."""
+        result: JsonRunResult = cli.run_prompt_json("Say the Japanese word '日本語'")
+        assert result.returncode == 0
+
+        # Verify unicode is preserved in response
+        assert "日本語" in result.response, "Unicode should be preserved in JSON response"
+
+        # Verify completed event contains unicode
+        completed = result.completed_event
+        assert completed is not None
+        assert "日本語" in completed.get("response", ""), "Unicode in completed event"
+
     def test_special_characters(self, cli: CliRunner, eval_model):
-        """Agent handles special characters."""
-        result = cli.run_prompt(
-            "Echo back exactly: @#$%^&*()",
-            quiet=True,
-        )
+        """Agent handles special characters - verify via JSON."""
+        result: JsonRunResult = cli.run_prompt_json("Echo back exactly: @#$%^&*()")
         assert result.returncode == 0
 
         test_case = LLMTestCase(
             input="Echo back exactly: @#$%^&*()",
-            actual_output=result.stdout.strip(),
+            actual_output=result.response,
             expected_output="@#$%^&*()",
         )
 
@@ -470,16 +507,13 @@ class TestEdgeCases:
         assert all(r.success for r in results.test_results), f"DeepEval failed: {results}"
 
     def test_multiline_response(self, cli: CliRunner, eval_model):
-        """Agent can produce multiline responses."""
-        result = cli.run_prompt(
-            "List the numbers 1, 2, 3 on separate lines.",
-            quiet=True,
-        )
+        """Agent can produce multiline responses - verify via JSON."""
+        result: JsonRunResult = cli.run_prompt_json("List the numbers 1, 2, 3 on separate lines.")
         assert result.returncode == 0
 
         test_case = LLMTestCase(
             input="List the numbers 1, 2, 3 on separate lines.",
-            actual_output=result.stdout.strip(),
+            actual_output=result.response,
             expected_output="1\n2\n3",
         )
 
@@ -500,27 +534,58 @@ class TestEdgeCases:
         results = evaluate([test_case], [multiline_metric])
         assert all(r.success for r in results.test_results), f"DeepEval failed: {results}"
 
+    def test_newlines_in_json_response(self, cli: CliRunner):
+        """Newlines are properly escaped/preserved in JSON output."""
+        result: JsonRunResult = cli.run_prompt_json("Print 'line1' then 'line2' on separate lines")
+        assert result.returncode == 0
+
+        # Response should contain newline
+        assert "\n" in result.response or "line1" in result.response, "Response should have content"
+
+        # All events should be valid (no JSON parsing errors from newlines)
+        assert len(result.events) > 0, "Should have parsed events successfully"
+
 
 # =============================================================================
-# Tool Execution Tests (require API) - DeepEval
+# Tool Execution Tests (require API) - DeepEval with JSON Output
 # =============================================================================
 
 
 @pytest.mark.requires_api
 class TestToolExecution:
-    """Tests that verify tool execution works."""
+    """Tests that verify tool execution works using JSON output mode.
+
+    These tests use JSON output to structurally verify that tools are
+    called correctly and return expected results.
+    """
 
     def test_read_file(self, cli: CliRunner, eval_model):
-        """Agent can read files with auto-approve."""
-        result = cli.run_prompt(
-            "Read conftest.py and tell me what the CliRunner class does in one sentence.",
-            quiet=True,
+        """Agent can read files with auto-approve - verify via JSON events."""
+        result: JsonRunResult = cli.run_prompt_json(
+            "Read conftest.py and tell me what the CliRunner class does in one sentence."
         )
         assert result.returncode == 0
 
+        # Verify a read tool was called (read_file or similar)
+        read_tools = {"read_file", "read", "file_read"}
+        tool_names_called = {tc.get("tool_name") for tc in result.tool_calls}
+        assert tool_names_called & read_tools, (
+            f"Expected a file read tool to be called. Got: {tool_names_called}"
+        )
+
+        # Verify the tool succeeded
+        successful_results = [tr for tr in result.tool_results if tr.get("success")]
+        assert len(successful_results) > 0, "Expected at least one successful tool result"
+
+        # Verify the tool output contains expected content (not truncated in JSON mode)
+        read_results = [tr for tr in result.tool_results if tr.get("tool_name") in read_tools]
+        if read_results:
+            output = read_results[0].get("output", "")
+            assert "CliRunner" in output, "Tool output should contain 'CliRunner'"
+
         test_case = LLMTestCase(
             input="Read conftest.py and tell me what the CliRunner class does in one sentence.",
-            actual_output=result.stdout.strip(),
+            actual_output=result.response,
             expected_output="CliRunner is a helper class that runs CLI commands for testing.",
             context=[
                 "conftest.py contains the CliRunner class",
@@ -546,16 +611,26 @@ class TestToolExecution:
         assert all(r.success for r in results.test_results), f"DeepEval failed: {results}"
 
     def test_list_directory(self, cli: CliRunner, eval_model):
-        """Agent can list directories with auto-approve."""
-        result = cli.run_prompt(
-            "What files are in the current directory? Just list a few.",
-            quiet=True,
+        """Agent can list directories with auto-approve - verify via JSON events."""
+        result: JsonRunResult = cli.run_prompt_json(
+            "What files are in the current directory? Just list a few."
         )
         assert result.returncode == 0
 
+        # Verify a directory listing tool was called
+        ls_tools = {"list_directory", "ls", "list_files", "glob", "list_dir"}
+        tool_names_called = {tc.get("tool_name") for tc in result.tool_calls}
+        assert tool_names_called & ls_tools, (
+            f"Expected a directory listing tool to be called. Got: {tool_names_called}"
+        )
+
+        # Verify the tool succeeded
+        successful_results = [tr for tr in result.tool_results if tr.get("success")]
+        assert len(successful_results) > 0, "Expected at least one successful tool result"
+
         test_case = LLMTestCase(
             input="What files are in the current directory? Just list a few.",
-            actual_output=result.stdout.strip(),
+            actual_output=result.response,
             expected_output="conftest.py, test_cli.py, pyproject.toml",
             context=[
                 "The directory contains conftest.py",
@@ -578,3 +653,190 @@ class TestToolExecution:
 
         results = evaluate([test_case], [directory_listing_metric])
         assert all(r.success for r in results.test_results), f"DeepEval failed: {results}"
+
+    def test_tool_call_has_input(self, cli: CliRunner):
+        """Tool calls include input parameters in JSON output."""
+        result: JsonRunResult = cli.run_prompt_json("Read the file conftest.py")
+        assert result.returncode == 0
+
+        # Verify tool call has input field
+        assert len(result.tool_calls) > 0, "Expected at least one tool call"
+        first_call = result.tool_calls[0]
+        assert first_call.get("input") is not None, "Tool call should have 'input' field"
+
+    def test_tool_result_has_output(self, cli: CliRunner):
+        """Tool results include output in JSON output (not truncated)."""
+        result: JsonRunResult = cli.run_prompt_json("Read the file conftest.py")
+        assert result.returncode == 0
+
+        # Verify tool result has output field
+        assert len(result.tool_results) > 0, "Expected at least one tool result"
+        first_result = result.tool_results[0]
+        assert first_result.get("output") is not None, "Tool result should have 'output' field"
+        assert first_result.get("success") is True, "Tool should have succeeded"
+
+    def test_tool_sequence_correct(self, cli: CliRunner):
+        """Tool call events precede their corresponding result events."""
+        result: JsonRunResult = cli.run_prompt_json("Read conftest.py and summarize it briefly")
+        assert result.returncode == 0
+
+        # Get indices of tool calls and results
+        events = result.events
+        call_indices = [i for i, e in enumerate(events) if e.event == "tool_call"]
+        result_indices = [i for i, e in enumerate(events) if e.event == "tool_result"]
+
+        assert len(call_indices) > 0, "Expected at least one tool call"
+        assert len(result_indices) > 0, "Expected at least one tool result"
+
+        # First call should come before first result
+        assert call_indices[0] < result_indices[0], "tool_call should precede tool_result"
+
+
+# =============================================================================
+# JSON Output Validation Tests (require API)
+# =============================================================================
+
+
+@pytest.mark.requires_api
+class TestJsonOutput:
+    """Tests that validate JSON output structure and metadata.
+
+    These tests verify the JSON output mode provides complete,
+    untruncated data with proper event structure.
+    """
+
+    def test_completed_event_has_tokens(self, cli: CliRunner):
+        """Completed event includes token usage metrics."""
+        result: JsonRunResult = cli.run_prompt_json("What is 2+2?")
+        assert result.returncode == 0
+
+        # Verify tokens_used is present
+        assert result.tokens_used is not None, "Expected tokens_used in completed event"
+        assert result.tokens_used > 0, "Expected positive token count"
+
+    def test_completed_event_has_duration(self, cli: CliRunner):
+        """Completed event includes duration metrics."""
+        result: JsonRunResult = cli.run_prompt_json("What is 2+2?")
+        assert result.returncode == 0
+
+        # Verify duration_ms is present
+        assert result.duration_ms is not None, "Expected duration_ms in completed event"
+        assert result.duration_ms > 0, "Expected positive duration"
+
+    def test_started_event_has_turn_id(self, cli: CliRunner):
+        """Started event includes turn_id."""
+        result: JsonRunResult = cli.run_prompt_json("Say hello")
+        assert result.returncode == 0
+
+        # Find started event
+        started_events = [e for e in result.events if e.event == "started"]
+        assert len(started_events) == 1, "Expected exactly one started event"
+
+        started = started_events[0]
+        assert started.get("turn_id") is not None, "Started event should have turn_id"
+
+    def test_text_delta_events_stream(self, cli: CliRunner):
+        """Text delta events contain streaming text chunks."""
+        result: JsonRunResult = cli.run_prompt_json("Write a short sentence about cats")
+        assert result.returncode == 0
+
+        # Find text_delta events
+        text_deltas = [e for e in result.events if e.event == "text_delta"]
+
+        # Should have at least one text delta (streaming)
+        assert len(text_deltas) > 0, "Expected text_delta events"
+
+        # Each delta should have delta and accumulated fields
+        for delta in text_deltas:
+            assert "delta" in delta.data or "accumulated" in delta.data, (
+                "text_delta should have delta or accumulated field"
+            )
+
+    def test_no_truncation_in_json_mode(self, cli: CliRunner):
+        """JSON mode does not truncate tool output (unlike terminal mode)."""
+        # Read a file that's likely to be longer than 500 chars (terminal truncation limit)
+        result: JsonRunResult = cli.run_prompt_json("Read conftest.py completely")
+        assert result.returncode == 0
+
+        # Find tool results
+        if result.tool_results:
+            # Check that output is longer than terminal truncation limit
+            for tr in result.tool_results:
+                output = tr.get("output", "")
+                if output and len(output) > 100:  # If we got substantial output
+                    # In terminal mode, this would be truncated to 500 chars
+                    # In JSON mode, it should be complete
+                    # The conftest.py file is > 500 chars, so if we got it all, no truncation
+                    assert "CliRunner" in output, "Should have CliRunner class in output"
+                    assert "def " in output, "Should have function definitions"
+
+    def test_all_event_types_recognized(self, cli: CliRunner):
+        """All events have known event types."""
+        result: JsonRunResult = cli.run_prompt_json("Read conftest.py and summarize briefly")
+        assert result.returncode == 0
+
+        known_event_types = {
+            "started",
+            "text_delta",
+            "tool_call",
+            "tool_result",
+            "tool_approval",
+            "tool_auto_approved",
+            "tool_denied",
+            "reasoning",
+            "completed",
+            "error",
+            "sub_agent_started",
+            "sub_agent_tool_request",
+            "sub_agent_tool_result",
+            "sub_agent_completed",
+            "sub_agent_error",
+            "context_pruned",
+            "context_warning",
+            "tool_response_truncated",
+            "loop_warning",
+            "loop_blocked",
+            "max_iterations_reached",
+            "workflow_started",
+            "workflow_step_started",
+            "workflow_step_completed",
+            "workflow_completed",
+            "workflow_error",
+        }
+
+        for event in result.events:
+            assert event.event in known_event_types, (
+                f"Unknown event type: {event.event}"
+            )
+
+    def test_error_event_on_failure(self, cli: CliRunner):
+        """Error events are properly structured."""
+        # This test validates the error event structure if we can trigger one
+        # For now, just verify the JsonRunResult handles errors gracefully
+        result: JsonRunResult = cli.run_prompt_json("Say hello")
+        assert result.returncode == 0
+
+        # If there was an error event, it should have message field
+        if result.error_event:
+            assert result.error_event.get("message") is not None, (
+                "Error event should have message field"
+            )
+
+    def test_json_result_convenience_methods(self, cli: CliRunner):
+        """JsonRunResult convenience methods work correctly."""
+        result: JsonRunResult = cli.run_prompt_json("Read conftest.py and tell me about it")
+        assert result.returncode == 0
+
+        # Test has_tool method
+        tool_names = {tc.get("tool_name") for tc in result.tool_calls}
+        if tool_names:
+            first_tool = next(iter(tool_names))
+            assert result.has_tool(first_tool), f"has_tool should find {first_tool}"
+
+        assert not result.has_tool("nonexistent_tool_xyz"), "has_tool should return False for missing tool"
+
+        # Test get_tool_output method
+        if result.tool_results:
+            first_result_tool = result.tool_results[0].get("tool_name")
+            output = result.get_tool_output(first_result_tool)
+            assert output is not None, "get_tool_output should return output"

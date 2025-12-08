@@ -20,6 +20,9 @@
 //!
 //! # Quiet mode - only final response
 //! ./target/debug/qbit-cli -e "What is 2+2?" --quiet --auto-approve
+//!
+//! # Interactive REPL mode (when no -e or -f provided)
+//! ./target/debug/qbit-cli --auto-approve
 //! ```
 //!
 //! # Features
@@ -30,7 +33,7 @@
 use anyhow::Result;
 use clap::Parser;
 
-use qbit_lib::cli::{execute_batch, execute_once, initialize, Args};
+use qbit_lib::cli::{execute_batch, execute_once, initialize, run_repl, Args};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,15 +50,8 @@ async fn main() -> Result<()> {
         // Batch file execution mode
         execute_batch(&mut ctx, file).await
     } else {
-        // No prompt provided - show help
-        eprintln!("Error: No prompt provided.");
-        eprintln!();
-        eprintln!("Usage:");
-        eprintln!("  qbit-cli -e \"prompt\"     Execute a single prompt");
-        eprintln!("  qbit-cli -f prompts.txt  Execute prompts from file");
-        eprintln!();
-        eprintln!("Use --help for more options.");
-        std::process::exit(1);
+        // No prompt provided - enter interactive REPL mode
+        run_repl(&mut ctx).await
     };
 
     // Graceful shutdown

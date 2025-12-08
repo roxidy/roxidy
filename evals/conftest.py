@@ -1,14 +1,197 @@
 """Pytest configuration and fixtures for CLI integration tests."""
 
+import json
 import os
 import subprocess
 import tempfile
 import tomllib
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generator
 
 import pytest
 from deepeval.models import GPTModel
+
+
+# =============================================================================
+# JSON Output Parsing Utilities
+# =============================================================================
+
+
+@dataclass
+class CliJsonEvent:
+    """Structured representation of a CLI JSON event.
+
+    The CLI outputs events in JSONL format (one JSON object per line).
+    Each event has an 'event' type, 'timestamp', and event-specific fields.
+    """
+
+    event: str
+    timestamp: int
+    data: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CliJsonEvent":
+        """Create a CliJsonEvent from a parsed JSON dict."""
+        event = d.pop("event", "unknown")
+        timestamp = d.pop("timestamp", 0)
+        return cls(event=event, timestamp=timestamp, data=d)
+
+    def __getitem__(self, key: str):
+        """Allow dict-like access to data fields."""
+        return self.data.get(key)
+
+    def get(self, key: str, default=None):
+        """Get a data field with optional default."""
+        return self.data.get(key, default)
+
+
+def parse_json_output(stdout: str) -> list[CliJsonEvent]:
+    """Parse JSONL output from CLI into structured events.
+
+    Args:
+        stdout: Raw stdout from CLI with --json flag
+
+    Returns:
+        List of CliJsonEvent objects in order received
+
+    Raises:
+        ValueError: If any line contains invalid JSON
+    """
+    events = []
+    for line in stdout.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            events.append(CliJsonEvent.from_dict(data))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in CLI output: {line!r}") from e
+    return events
+
+
+def get_response_from_json(events: list[CliJsonEvent]) -> str:
+    """Extract the final response text from JSON events.
+
+    Looks for a 'completed' event and returns its 'response' field.
+    Falls back to accumulating text_delta events if no completed event.
+
+    Args:
+        events: List of parsed CLI events
+
+    Returns:
+        The final response string, or empty string if not found
+    """
+    # First try to find completed event
+    for event in reversed(events):
+        if event.event == "completed":
+            return event.get("response", "")
+
+    # Fall back to accumulated text from last text_delta
+    for event in reversed(events):
+        if event.event == "text_delta":
+            return event.get("accumulated", "")
+
+    return ""
+
+
+def get_tool_events(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
+    """Extract tool-related events from the event stream.
+
+    Args:
+        events: List of parsed CLI events
+
+    Returns:
+        List of events with type: tool_call, tool_result, tool_approval, etc.
+    """
+    tool_event_types = {
+        "tool_call",
+        "tool_result",
+        "tool_approval",
+        "tool_auto_approved",
+        "tool_denied",
+    }
+    return [e for e in events if e.event in tool_event_types]
+
+
+def get_tool_calls(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
+    """Extract only tool_call events."""
+    return [e for e in events if e.event == "tool_call"]
+
+
+def get_tool_results(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
+    """Extract only tool_result events."""
+    return [e for e in events if e.event == "tool_result"]
+
+
+def filter_events_by_type(events: list[CliJsonEvent], event_type: str) -> list[CliJsonEvent]:
+    """Filter events by their type."""
+    return [e for e in events if e.event == event_type]
+
+
+@dataclass
+class JsonRunResult:
+    """Result of running CLI in JSON mode.
+
+    Contains both the parsed events and convenience accessors.
+    """
+
+    events: list[CliJsonEvent]
+    response: str
+    returncode: int
+    stderr: str
+
+    @property
+    def tool_calls(self) -> list[CliJsonEvent]:
+        """Get all tool_call events."""
+        return get_tool_calls(self.events)
+
+    @property
+    def tool_results(self) -> list[CliJsonEvent]:
+        """Get all tool_result events."""
+        return get_tool_results(self.events)
+
+    @property
+    def completed_event(self) -> CliJsonEvent | None:
+        """Get the completed event if present."""
+        for event in reversed(self.events):
+            if event.event == "completed":
+                return event
+        return None
+
+    @property
+    def error_event(self) -> CliJsonEvent | None:
+        """Get the error event if present."""
+        for event in reversed(self.events):
+            if event.event == "error":
+                return event
+        return None
+
+    @property
+    def tokens_used(self) -> int | None:
+        """Get tokens_used from completed event."""
+        if completed := self.completed_event:
+            return completed.get("tokens_used")
+        return None
+
+    @property
+    def duration_ms(self) -> int | None:
+        """Get duration_ms from completed event."""
+        if completed := self.completed_event:
+            return completed.get("duration_ms")
+        return None
+
+    def has_tool(self, tool_name: str) -> bool:
+        """Check if a specific tool was called."""
+        return any(tc.get("tool_name") == tool_name for tc in self.tool_calls)
+
+    def get_tool_output(self, tool_name: str) -> str | None:
+        """Get the output of a specific tool call."""
+        for tr in self.tool_results:
+            if tr.get("tool_name") == tool_name:
+                return tr.get("output")
+        return None
 
 
 def load_settings() -> dict:
@@ -135,6 +318,43 @@ class CliRunner:
 
         self._log(f"<<< RESPONSE: {result.stdout.strip()}")
         return result
+
+    def run_prompt_json(
+        self,
+        prompt: str,
+        auto_approve: bool = True,
+        timeout: int = 120,
+    ) -> JsonRunResult:
+        """Run a single prompt in JSON mode and return parsed results.
+
+        This is the preferred method for tests that need to inspect
+        tool calls, timing, or other structured event data.
+
+        Args:
+            prompt: The prompt to execute
+            auto_approve: Whether to auto-approve tool calls
+            timeout: Command timeout in seconds
+
+        Returns:
+            JsonRunResult with parsed events and convenience accessors
+        """
+        result = self.run_prompt(
+            prompt,
+            auto_approve=auto_approve,
+            quiet=False,
+            json_output=True,
+            timeout=timeout,
+        )
+
+        events = parse_json_output(result.stdout) if result.stdout else []
+        response = get_response_from_json(events)
+
+        return JsonRunResult(
+            events=events,
+            response=response,
+            returncode=result.returncode,
+            stderr=result.stderr,
+        )
 
     def run_batch(
         self,

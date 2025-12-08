@@ -17,13 +17,20 @@
 //! | (shared logic)  |     | (emit())    |     | (print/JSON)  |
 //! +-----------------+     +-------------+     +---------------+
 //! ```
+//!
+//! # REPL Mode
+//!
+//! When no prompt is provided via `-e` or `-f`, the CLI enters
+//! interactive REPL mode. See `repl.rs` for details.
 
 mod args;
 mod bootstrap;
 mod output;
+mod repl;
 mod runner;
 
 pub use args::Args;
 pub use bootstrap::{initialize, CliContext};
 pub use output::run_event_loop;
+pub use repl::run_repl;
 pub use runner::{execute_batch, execute_once};

@@ -33,7 +33,3 @@ bytes = "1"
 
 [dev-dependencies]
 tracing-subscriber = "0.3"
-
-[[example]]
-name = "test_vertex"
-path = "examples/test_vertex.rs"
