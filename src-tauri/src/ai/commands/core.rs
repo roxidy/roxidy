@@ -1,9 +1,11 @@
 // Core AI agent commands for initialization and execution.
 
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use super::super::agent_bridge::AgentBridge;
-use super::{configure_bridge, spawn_event_forwarder};
+use super::configure_bridge;
+use crate::runtime::{QbitRuntime, TauriRuntime};
 use crate::state::AppState;
 
 /// Initialize the AI agent with the specified configuration.
@@ -22,11 +24,18 @@ pub async fn init_ai_agent(
     model: String,
     api_key: String,
 ) -> Result<(), String> {
-    let event_tx = spawn_event_forwarder(app);
+    // Phase 5: Use runtime-based constructor
+    // TauriRuntime handles event emission via Tauri's event system
+    let runtime: Arc<dyn QbitRuntime> = Arc::new(TauriRuntime::new(app));
 
-    let mut bridge = AgentBridge::new(workspace.into(), &provider, &model, &api_key, event_tx)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Store runtime in AiState (for potential future use by other components)
+    *state.ai_state.runtime.write().await = Some(runtime.clone());
+
+    // Create bridge with runtime (Phase 5 - new path)
+    let mut bridge =
+        AgentBridge::new_with_runtime(workspace.into(), &provider, &model, &api_key, runtime)
+            .await
+            .map_err(|e| e.to_string())?;
 
     configure_bridge(&mut bridge, &state);
 

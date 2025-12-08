@@ -212,11 +212,7 @@ async fn test_event_capture_all_types() {
     let event_types: Vec<&str> = events.iter().map(|e| e.event_type.name()).collect();
     println!("Captured event types: {:?}", event_types);
 
-    // Core events should be present
-    assert!(
-        event_types.contains(&"session_start"),
-        "Should have session_start"
-    );
+    // Core events should be present (note: session_start is no longer emitted)
     assert!(
         event_types.contains(&"user_prompt"),
         "Should have user_prompt"
@@ -713,7 +709,7 @@ async fn test_concurrent_event_capture() {
     let events = state.get_session_events(session_id).await.unwrap();
 
     // The session's event_count is the ground truth (synchronous tracking)
-    // 10 tasks * 5 events + session_start + session_end = 52 events
+    // 10 tasks * 5 events + session_end = 51 events (session_start no longer emitted)
     println!(
         "Session event count: {} (ground truth)",
         ended_session.event_count
@@ -766,11 +762,11 @@ async fn test_empty_session() {
     // Wait for async processor to flush events
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-    // Should still have session_start and session_end events
+    // Should have session_end event (session_start is no longer emitted)
     let events = state.get_session_events(session_id).await.unwrap();
     assert!(
-        events.len() >= 2,
-        "Should have at least start and end events"
+        events.len() >= 1,
+        "Should have at least session_end event"
     );
 
     println!("✓ Empty session test passed");
@@ -1530,6 +1526,7 @@ async fn test_full_semantic_search_with_embeddings() {
 
 #[tokio::test]
 #[ignore]
+#[cfg(feature = "local-llm")]
 async fn test_synthesis_with_real_models() {
     use super::models::ModelManager;
     use super::synthesis::Synthesizer;

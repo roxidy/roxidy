@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 use uuid::Uuid;
 
 use super::config::SidecarConfig;
 use super::events::{
     Checkpoint, CommitBoundaryDetector, CommitBoundaryInfo, EventType, SessionEvent, SidecarSession,
 };
-use super::processor::{ProcessorTask, SidecarProcessor};
+use super::processor::{ProcessorHandle, ProcessorTask, SidecarProcessor};
 use super::storage::SidecarStorage;
 
 /// Status of the sidecar system
@@ -64,6 +64,9 @@ pub struct SidecarState {
     /// Channel for async processing tasks
     processor_tx: RwLock<Option<mpsc::UnboundedSender<ProcessorTask>>>,
 
+    /// Shutdown completion signal (for graceful async shutdown)
+    shutdown_rx: TokioMutex<Option<oneshot::Receiver<()>>>,
+
     /// Configuration
     config: RwLock<SidecarConfig>,
 
@@ -88,6 +91,7 @@ impl SidecarState {
             storage: RwLock::new(None),
             workspace_root: RwLock::new(None),
             processor_tx: RwLock::new(None),
+            shutdown_rx: TokioMutex::new(None),
             config: RwLock::new(SidecarConfig::default()),
             embeddings_ready: RwLock::new(false),
             llm_ready: RwLock::new(false),
@@ -106,6 +110,7 @@ impl SidecarState {
             storage: RwLock::new(None),
             workspace_root: RwLock::new(None),
             processor_tx: RwLock::new(None),
+            shutdown_rx: TokioMutex::new(None),
             config: RwLock::new(config),
             embeddings_ready: RwLock::new(false),
             llm_ready: RwLock::new(false),
@@ -146,8 +151,9 @@ impl SidecarState {
 
         // Spawn the background processor
         tracing::debug!("[sidecar] Spawning background processor...");
-        let processor_tx = SidecarProcessor::spawn(storage, config);
-        *self.processor_tx.write() = Some(processor_tx);
+        let handle = SidecarProcessor::spawn(storage, config);
+        *self.processor_tx.write() = Some(handle.task_tx);
+        *self.shutdown_rx.lock().await = Some(handle.shutdown_complete);
 
         tracing::info!(
             "[sidecar] Initialized successfully for workspace: {:?}",
@@ -194,20 +200,11 @@ impl SidecarState {
             truncate(initial_request, 100)
         );
 
-        // Create session start event
-        let event = SessionEvent::new(
-            session_id,
-            EventType::SessionStart {
-                initial_request: initial_request.to_string(),
-            },
-            format!("Session started: {}", truncate(initial_request, 200)),
-        );
+        // NOTE: session_start events are no longer emitted.
+        // Sessions begin with the first user_prompt event.
 
         *self.session.write() = Some(session);
         *self.last_checkpoint_time.write() = Utc::now();
-
-        // Capture the start event
-        self.capture_internal(event);
 
         tracing::info!("[sidecar] Session {} started successfully", session_id);
         Ok(session_id)
@@ -294,7 +291,7 @@ impl SidecarState {
         // Update session stats
         if let Some(ref mut session) = *self.session.write() {
             session.increment_events();
-            for file in &event.files {
+            for file in &event.files_modified {
                 session.touch_file(file.clone());
             }
             tracing::trace!(
@@ -541,17 +538,57 @@ impl SidecarState {
         self.commit_boundary_detector.write().check_boundary(event)
     }
 
-    /// Shutdown the sidecar
+    /// Shutdown the sidecar synchronously (deprecated, use shutdown_async for graceful shutdown)
     pub fn shutdown(&self) {
-        tracing::info!("Shutting down sidecar");
+        tracing::info!("Shutting down sidecar (sync)");
 
         // End any active session
         let _ = self.end_session();
 
+        // Send shutdown signal to processor (but don't wait)
+        if let Some(tx) = self.processor_tx.write().take() {
+            let _ = tx.send(ProcessorTask::Shutdown);
+        }
+
         // Clear state
-        *self.processor_tx.write() = None;
         *self.storage.write() = None;
         *self.workspace_root.write() = None;
+    }
+
+    /// Gracefully shutdown the sidecar, waiting for the processor to complete.
+    ///
+    /// This ensures all pending events are flushed to storage before returning.
+    pub async fn shutdown_async(&self) {
+        tracing::info!("Shutting down sidecar (async, graceful)");
+
+        // End any active session (flushes remaining events)
+        let _ = self.end_session();
+
+        // Send shutdown signal to processor
+        if let Some(tx) = self.processor_tx.write().take() {
+            let _ = tx.send(ProcessorTask::Shutdown);
+        }
+
+        // Wait for processor to complete (with timeout)
+        if let Some(rx) = self.shutdown_rx.lock().await.take() {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+                Ok(Ok(())) => {
+                    tracing::info!("Sidecar processor shutdown complete");
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!("Sidecar processor shutdown signal dropped");
+                }
+                Err(_) => {
+                    tracing::warn!("Sidecar processor shutdown timed out after 5s");
+                }
+            }
+        }
+
+        // Clear state
+        *self.storage.write() = None;
+        *self.workspace_root.write() = None;
+
+        tracing::info!("Sidecar shutdown complete");
     }
 }
 

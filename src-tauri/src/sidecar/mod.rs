@@ -6,22 +6,34 @@
 //!
 //! ## Architecture
 //!
-//! The sidecar operates in three layers:
+//! The sidecar operates in multiple layers:
 //!
-//! 1. **Event Capture** (synchronous, cheap) - No LLM calls, just logging
-//!    - File changes, tool calls, agent reasoning, user feedback
+//! ### Layer 0: Raw Event Capture (synchronous, cheap)
+//! - No LLM calls, just logging
+//! - File changes, tool calls, agent reasoning, user feedback
+//! - Persisted to LanceDB with embeddings
 //!
-//! 2. **Periodic Processing** (async, batched) - Runs during natural pauses
-//!    - Embed events for semantic search
-//!    - Generate checkpoint summaries
+//! ### Layer 1: Session State (async, interpreted)
+//! - Maintains live session state derived from L0 events
+//! - Tracks goals, decisions, file contexts, errors
+//! - Provides injectable context for agent system prompts
+//! - Uses sidecar LLM for interpretation (with rule-based fallback)
 //!
-//! 3. **On-Demand Synthesis** (user-triggered) - One-shot when user asks
-//!    - Commit messages, session summaries, history queries
+//! ### Periodic Processing (async, batched)
+//! - Runs during natural pauses
+//! - Embed events for semantic search
+//! - Generate checkpoint summaries
+//!
+//! ### On-Demand Synthesis (user-triggered)
+//! - One-shot when user asks
+//! - Commit messages, session summaries, history queries
 
 pub mod capture;
+#[cfg(feature = "tauri")]
 pub mod commands;
 pub mod config;
 pub mod events;
+pub mod layer1;
 pub mod models;
 pub mod processor;
 pub mod prompts;
@@ -33,6 +45,14 @@ pub mod synthesis_llm;
 #[cfg(test)]
 mod integration_tests;
 
+#[cfg(test)]
+mod schema_verification_test;
+
 pub use capture::CaptureContext;
+#[cfg(feature = "tauri")]
 pub use commands::*;
+pub use layer1::{
+    get_injectable_context, get_session_state, Decision, ErrorEntry, FileContext, Goal,
+    GoalSource, Layer1Processor, Layer1Storage, SessionState,
+};
 pub use state::SidecarState;

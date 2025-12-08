@@ -1,8 +1,11 @@
 import {
+  Bookmark,
   Calendar,
   ChevronRight,
   Clock,
   File,
+  FolderOpen,
+  Hammer,
   Loader2,
   MessageSquare,
   RefreshCw,
@@ -158,6 +161,28 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
     });
   };
 
+  const formatDuration = (startStr: string, endStr: string | null) => {
+    if (!endStr) return "Active";
+    const start = new Date(startStr).getTime();
+    const end = new Date(endStr).getTime();
+    const diffMs = end - start;
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    const diffHours = Math.floor(diffMins / 60);
+
+    if (diffHours > 0) return `${diffHours}h ${diffMins % 60}m`;
+    if (diffMins > 0) return `${diffMins}m ${diffSecs % 60}s`;
+    return `${diffSecs}s`;
+  };
+
+  const truncatePath = (path: string, maxLength: number = 30) => {
+    if (path.length <= maxLength) return path;
+    const parts = path.split("/");
+    if (parts.length <= 2) return "..." + path.slice(-maxLength);
+    // Keep the last two parts of the path
+    return ".../" + parts.slice(-2).join("/");
+  };
+
   const getEventIcon = (event: SessionEvent) => {
     const type = event.event_type.type;
     switch (type) {
@@ -268,31 +293,91 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
                 type="button"
                 key={session.id}
                 onClick={() => onSelectSession?.(session)}
-                className="w-full p-3 rounded-md bg-[#1f2335] hover:bg-[#292e42] transition-colors text-left"
+                className="w-full p-3 rounded-md bg-[#1f2335] hover:bg-[#292e42] transition-colors text-left group"
               >
-                <div className="flex items-start justify-between gap-2">
+                {/* Session title and status */}
+                <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[#c0caf5] truncate">
+                    <p className="text-sm text-[#c0caf5] truncate font-medium">
                       {extractSessionTitle(session.initial_request)}
                     </p>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-[#565f89]">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {formatDate(session.started_at)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {formatTime(session.started_at)}
-                      </span>
-                    </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span className="text-xs text-[#bb9af7]">{session.event_count} events</span>
-                    <span className="text-xs text-[#565f89]">
-                      {session.files_touched.length} files
-                    </span>
+                  <div
+                    className={cn(
+                      "text-xs px-1.5 py-0.5 rounded",
+                      session.ended_at
+                        ? "bg-[#565f89]/20 text-[#565f89]"
+                        : "bg-[#9ece6a]/20 text-[#9ece6a]"
+                    )}
+                  >
+                    {session.ended_at ? "Completed" : "Active"}
                   </div>
                 </div>
+
+                {/* Workspace path */}
+                {session.workspace_path && (
+                  <div className="flex items-center gap-1.5 text-xs text-[#565f89] mb-2">
+                    <FolderOpen className="w-3 h-3 shrink-0" />
+                    <span className="truncate font-mono" title={session.workspace_path}>
+                      {truncatePath(session.workspace_path)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Stats row */}
+                <div className="flex items-center gap-3 text-xs text-[#565f89] flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    {formatDate(session.started_at)}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {formatTime(session.started_at)}
+                  </span>
+                  <span className="flex items-center gap-1 text-[#7aa2f7]">
+                    <Clock className="w-3 h-3" />
+                    {formatDuration(session.started_at, session.ended_at)}
+                  </span>
+                </div>
+
+                {/* Metrics row */}
+                <div className="flex items-center gap-3 mt-2 text-xs">
+                  <span className="flex items-center gap-1 text-[#bb9af7]">
+                    <Hammer className="w-3 h-3" />
+                    {session.event_count} events
+                  </span>
+                  <span className="flex items-center gap-1 text-[#9ece6a]">
+                    <File className="w-3 h-3" />
+                    {session.files_touched.length} files
+                  </span>
+                  <span className="flex items-center gap-1 text-[#7dcfff]">
+                    <Bookmark className="w-3 h-3" />
+                    {session.checkpoint_count} checkpoints
+                  </span>
+                </div>
+
+                {/* Files touched preview (collapsed by default, show on hover) */}
+                {session.files_touched.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-[#3b4261]/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="text-xs text-[#565f89] mb-1">Files touched:</div>
+                    <div className="flex flex-wrap gap-1">
+                      {session.files_touched.slice(0, 5).map((file) => (
+                        <span
+                          key={file}
+                          className="px-1.5 py-0.5 rounded bg-[#292e42] text-[#c0caf5] text-xs font-mono truncate max-w-[150px]"
+                          title={file}
+                        >
+                          {file.split("/").pop()}
+                        </span>
+                      ))}
+                      {session.files_touched.length > 5 && (
+                        <span className="px-1.5 py-0.5 rounded bg-[#292e42] text-[#565f89] text-xs">
+                          +{session.files_touched.length - 5} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </button>
             ))}
 

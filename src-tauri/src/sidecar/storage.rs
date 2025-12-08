@@ -92,7 +92,11 @@ impl SidecarStorage {
             Field::new("timestamp_ms", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),
             Field::new("content", DataType::Utf8, false),
-            Field::new("files_json", DataType::Utf8, true),
+            Field::new("cwd", DataType::Utf8, true),
+            Field::new("tool_output", DataType::Utf8, true),
+            Field::new("files_accessed", DataType::Utf8, true),
+            Field::new("files_modified", DataType::Utf8, true),
+            Field::new("diff", DataType::Utf8, true),
             Field::new("event_data_json", DataType::Utf8, false),
             Field::new(
                 "embedding",
@@ -194,7 +198,11 @@ impl SidecarStorage {
             Field::new("timestamp_ms", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),
             Field::new("content", DataType::Utf8, false),
-            Field::new("files_json", DataType::Utf8, true),
+            Field::new("cwd", DataType::Utf8, true),
+            Field::new("tool_output", DataType::Utf8, true),
+            Field::new("files_accessed", DataType::Utf8, true),
+            Field::new("files_modified", DataType::Utf8, true),
+            Field::new("diff", DataType::Utf8, true),
             Field::new("event_data_json", DataType::Utf8, false),
             Field::new(
                 "embedding",
@@ -217,10 +225,21 @@ impl SidecarStorage {
             .map(|e| e.event_type.name().to_string())
             .collect();
         let contents: Vec<String> = events.iter().map(|e| e.content.clone()).collect();
-        let files_json: Vec<Option<String>> = events
+        let cwds: Vec<Option<String>> = events.iter().map(|e| e.cwd.clone()).collect();
+        let tool_outputs: Vec<Option<String>> = events.iter().map(|e| e.tool_output.clone()).collect();
+        let files_accessed: Vec<Option<String>> = events
             .iter()
-            .map(|e| Some(serde_json::to_string(&e.files).unwrap_or_default()))
+            .map(|e| {
+                e.files_accessed
+                    .as_ref()
+                    .map(|f| serde_json::to_string(f).unwrap_or_default())
+            })
             .collect();
+        let files_modified: Vec<Option<String>> = events
+            .iter()
+            .map(|e| Some(serde_json::to_string(&e.files_modified).unwrap_or_default()))
+            .collect();
+        let diffs: Vec<Option<String>> = events.iter().map(|e| e.diff.clone()).collect();
         let event_data_json: Vec<String> = events
             .iter()
             .map(|e| serde_json::to_string(&e.event_type).unwrap_or_default())
@@ -238,7 +257,11 @@ impl SidecarStorage {
                 Arc::new(Int64Array::from(timestamps)) as ArrayRef,
                 Arc::new(StringArray::from(event_types)) as ArrayRef,
                 Arc::new(StringArray::from(contents)) as ArrayRef,
-                Arc::new(StringArray::from(files_json)) as ArrayRef,
+                Arc::new(StringArray::from(cwds)) as ArrayRef,
+                Arc::new(StringArray::from(tool_outputs)) as ArrayRef,
+                Arc::new(StringArray::from(files_accessed)) as ArrayRef,
+                Arc::new(StringArray::from(files_modified)) as ArrayRef,
+                Arc::new(StringArray::from(diffs)) as ArrayRef,
                 Arc::new(StringArray::from(event_data_json)) as ArrayRef,
                 embeddings,
             ],
@@ -800,6 +823,11 @@ impl SidecarStorage {
         })
     }
 
+    /// Get the data directory path
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// Get storage statistics
     pub async fn stats(&self) -> Result<StorageStats> {
         let events_table = self
@@ -878,12 +906,28 @@ impl SidecarStorage {
             .downcast_ref::<StringArray>()
             .context("content column is not StringArray")?;
 
-        let files_json = batch
-            .column_by_name("files_json")
-            .context("Missing files_json column")?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .context("files_json column is not StringArray")?;
+        // New columns (nullable for backwards compat with old data)
+        let cwds = batch
+            .column_by_name("cwd")
+            .and_then(|col| col.as_any().downcast_ref::<StringArray>());
+
+        let tool_outputs = batch
+            .column_by_name("tool_output")
+            .and_then(|col| col.as_any().downcast_ref::<StringArray>());
+
+        let files_accessed_col = batch
+            .column_by_name("files_accessed")
+            .and_then(|col| col.as_any().downcast_ref::<StringArray>());
+
+        // Support both old "files_json" and new "files_modified" column names
+        let files_modified_col = batch
+            .column_by_name("files_modified")
+            .or_else(|| batch.column_by_name("files_json"))
+            .and_then(|col| col.as_any().downcast_ref::<StringArray>());
+
+        let diffs = batch
+            .column_by_name("diff")
+            .and_then(|col| col.as_any().downcast_ref::<StringArray>());
 
         let event_data_json = batch
             .column_by_name("event_data_json")
@@ -903,12 +947,50 @@ impl SidecarStorage {
             let session_id = Uuid::parse_str(session_ids.value(i))?;
             let timestamp = Utc.timestamp_millis_opt(timestamps.value(i)).unwrap();
             let content = contents.value(i).to_string();
-            let files: Vec<PathBuf> = files_json
-                .value(i)
-                .parse::<serde_json::Value>()
-                .ok()
-                .and_then(|v| serde_json::from_value(v).ok())
+
+            // Read new nullable columns
+            let cwd = cwds.and_then(|col| {
+                if col.is_null(i) {
+                    None
+                } else {
+                    Some(col.value(i).to_string())
+                }
+            });
+
+            let tool_output = tool_outputs.and_then(|col| {
+                if col.is_null(i) {
+                    None
+                } else {
+                    Some(col.value(i).to_string())
+                }
+            });
+
+            let files_accessed: Option<Vec<PathBuf>> = files_accessed_col.and_then(|col| {
+                if col.is_null(i) {
+                    None
+                } else {
+                    serde_json::from_str(col.value(i)).ok()
+                }
+            });
+
+            let files_modified: Vec<PathBuf> = files_modified_col
+                .and_then(|col| {
+                    if col.is_null(i) {
+                        None
+                    } else {
+                        serde_json::from_str(col.value(i)).ok()
+                    }
+                })
                 .unwrap_or_default();
+
+            let diff = diffs.and_then(|col| {
+                if col.is_null(i) {
+                    None
+                } else {
+                    Some(col.value(i).to_string())
+                }
+            });
+
             let event_type = serde_json::from_str(event_data_json.value(i))?;
 
             let embedding = embeddings.and_then(|emb| {
@@ -927,7 +1009,11 @@ impl SidecarStorage {
                 timestamp,
                 event_type,
                 content,
-                files,
+                cwd,
+                tool_output,
+                files_accessed,
+                files_modified,
+                diff,
                 embedding,
             });
         }
@@ -1294,6 +1380,239 @@ mod tests {
         };
         assert_eq!(stats.human_size(), "1.4 MB");
     }
+
+    #[tokio::test]
+    async fn test_event_with_cwd_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = SidecarStorage::new(temp_dir.path()).await.unwrap();
+
+        let session_id = Uuid::new_v4();
+        // Create event with context XML that sets cwd
+        let input = r#"<context>
+<cwd>/Users/test/project</cwd>
+</context>
+
+list files in current dir"#;
+        let event = SessionEvent::user_prompt(session_id, input);
+
+        assert_eq!(event.cwd, Some("/Users/test/project".to_string()));
+
+        storage.save_events(&[event.clone()]).await.unwrap();
+        let retrieved = storage.get_session_events(session_id).await.unwrap();
+
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(retrieved[0].cwd, Some("/Users/test/project".to_string()));
+        assert_eq!(retrieved[0].content, "list files in current dir");
+    }
+
+    #[tokio::test]
+    async fn test_event_with_tool_output_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = SidecarStorage::new(temp_dir.path()).await.unwrap();
+
+        let session_id = Uuid::new_v4();
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=src/main.rs",
+            true,
+            Some("fn main() {\n    println!(\"Hello, world!\");\n}".to_string()),
+            Some(vec![PathBuf::from("src/main.rs")]),
+            vec![],
+            None,
+        );
+
+        storage.save_events(&[event.clone()]).await.unwrap();
+        let retrieved = storage.get_session_events(session_id).await.unwrap();
+
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(
+            retrieved[0].tool_output,
+            Some("fn main() {\n    println!(\"Hello, world!\");\n}".to_string())
+        );
+        assert_eq!(
+            retrieved[0].files_accessed,
+            Some(vec![PathBuf::from("src/main.rs")])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_event_with_diff_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = SidecarStorage::new(temp_dir.path()).await.unwrap();
+
+        let session_id = Uuid::new_v4();
+        let diff = "--- src/lib.rs\n+++ src/lib.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    old_code();\n+    new_code();\n+    extra_line();\n }";
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "edit_file",
+            "path=src/lib.rs",
+            true,
+            Some("Edit applied".to_string()),
+            None,
+            vec![PathBuf::from("src/lib.rs")],
+            Some(diff.to_string()),
+        );
+
+        storage.save_events(&[event.clone()]).await.unwrap();
+        let retrieved = storage.get_session_events(session_id).await.unwrap();
+
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(retrieved[0].diff, Some(diff.to_string()));
+        assert_eq!(retrieved[0].files_modified, vec![PathBuf::from("src/lib.rs")]);
+    }
+
+    #[tokio::test]
+    async fn test_event_with_files_accessed_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = SidecarStorage::new(temp_dir.path()).await.unwrap();
+
+        let session_id = Uuid::new_v4();
+        let files = vec![
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from("Cargo.toml"),
+        ];
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "list_files",
+            "path=.",
+            true,
+            Some("src/\n  main.rs\n  lib.rs\nCargo.toml".to_string()),
+            Some(files.clone()),
+            vec![],
+            None,
+        );
+
+        storage.save_events(&[event.clone()]).await.unwrap();
+        let retrieved = storage.get_session_events(session_id).await.unwrap();
+
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(retrieved[0].files_accessed, Some(files));
+    }
+
+    #[tokio::test]
+    async fn test_event_all_new_fields_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = SidecarStorage::new(temp_dir.path()).await.unwrap();
+
+        let session_id = Uuid::new_v4();
+
+        // Create an event with ALL new fields populated
+        let mut event = SessionEvent::tool_call_with_output(
+            session_id,
+            "edit_file",
+            "path=src/api.rs",
+            true,
+            Some("Applied 3 changes".to_string()),
+            Some(vec![PathBuf::from("src/api.rs")]), // Read before edit
+            vec![PathBuf::from("src/api.rs")],      // Modified after edit
+            Some("--- src/api.rs\n+++ src/api.rs\n@@ @@\n-old\n+new".to_string()),
+        );
+        event.cwd = Some("/workspace/project".to_string());
+
+        storage.save_events(&[event.clone()]).await.unwrap();
+        let retrieved = storage.get_session_events(session_id).await.unwrap();
+
+        assert_eq!(retrieved.len(), 1);
+        let r = &retrieved[0];
+        assert_eq!(r.cwd, Some("/workspace/project".to_string()));
+        assert_eq!(r.tool_output, Some("Applied 3 changes".to_string()));
+        assert_eq!(r.files_accessed, Some(vec![PathBuf::from("src/api.rs")]));
+        assert_eq!(r.files_modified, vec![PathBuf::from("src/api.rs")]);
+        assert!(r.diff.is_some());
+        assert!(r.diff.as_ref().unwrap().contains("-old"));
+        assert!(r.diff.as_ref().unwrap().contains("+new"));
+    }
+
+    #[tokio::test]
+    async fn test_event_null_fields_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = SidecarStorage::new(temp_dir.path()).await.unwrap();
+
+        let session_id = Uuid::new_v4();
+        // Create event with no optional fields
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "bash",
+            "cmd=echo hello",
+            true,
+            None, // No output
+            None, // No files accessed
+            vec![], // No files modified
+            None, // No diff
+        );
+
+        storage.save_events(&[event.clone()]).await.unwrap();
+        let retrieved = storage.get_session_events(session_id).await.unwrap();
+
+        assert_eq!(retrieved.len(), 1);
+        assert!(retrieved[0].cwd.is_none());
+        assert!(retrieved[0].tool_output.is_none());
+        assert!(retrieved[0].files_accessed.is_none());
+        assert!(retrieved[0].files_modified.is_empty());
+        assert!(retrieved[0].diff.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mixed_events_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = SidecarStorage::new(temp_dir.path()).await.unwrap();
+
+        let session_id = Uuid::new_v4();
+
+        // User prompt with context
+        let prompt_input = r#"<context>
+<cwd>/project</cwd>
+</context>
+
+edit the config file"#;
+        let event1 = SessionEvent::user_prompt(session_id, prompt_input);
+
+        // Read operation
+        let event2 = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=config.toml",
+            true,
+            Some("[package]\nname = \"test\"".to_string()),
+            Some(vec![PathBuf::from("config.toml")]),
+            vec![],
+            None,
+        );
+
+        // Edit operation
+        let event3 = SessionEvent::tool_call_with_output(
+            session_id,
+            "edit_file",
+            "path=config.toml",
+            true,
+            Some("OK".to_string()),
+            None,
+            vec![PathBuf::from("config.toml")],
+            Some("--- config.toml\n+++ config.toml".to_string()),
+        );
+
+        storage.save_events(&[event1.clone(), event2.clone(), event3.clone()]).await.unwrap();
+        let retrieved = storage.get_session_events(session_id).await.unwrap();
+
+        assert_eq!(retrieved.len(), 3);
+
+        // Check event1 (user prompt)
+        assert_eq!(retrieved[0].cwd, Some("/project".to_string()));
+        assert_eq!(retrieved[0].content, "edit the config file");
+
+        // Check event2 (read)
+        assert!(retrieved[1].tool_output.is_some());
+        assert_eq!(
+            retrieved[1].files_accessed,
+            Some(vec![PathBuf::from("config.toml")])
+        );
+
+        // Check event3 (edit)
+        assert!(retrieved[2].diff.is_some());
+        assert_eq!(retrieved[2].files_modified, vec![PathBuf::from("config.toml")]);
+    }
 }
 
 /// Property-based tests for edge cases
@@ -1365,8 +1684,8 @@ mod proptests {
                 let session_id = Uuid::new_v4();
                 let event = SessionEvent::user_prompt(session_id, &content);
                 let event_id = event.id;
-                // user_prompt wraps content as "User asked: {content}"
-                let expected_content = format!("User asked: {}", truncate(&content, 500));
+                // user_prompt now stores clean content directly (without prefix)
+                let expected_content = truncate(&content, 500);
 
                 storage.save_events(&[event]).await.unwrap();
 

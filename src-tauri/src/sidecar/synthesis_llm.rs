@@ -24,16 +24,20 @@ pub trait SynthesisLlm: Send + Sync {
 }
 
 /// Local LLM backend using mistral.rs (Qwen, etc.)
+/// Only available when the `local-llm` feature is enabled.
+#[cfg(feature = "local-llm")]
 pub struct LocalLlm {
     model_manager: Arc<ModelManager>,
 }
 
+#[cfg(feature = "local-llm")]
 impl LocalLlm {
     pub fn new(model_manager: Arc<ModelManager>) -> Self {
         Self { model_manager }
     }
 }
 
+#[cfg(feature = "local-llm")]
 #[async_trait]
 impl SynthesisLlm for LocalLlm {
     async fn generate_chat(&self, system: &str, user: &str, max_tokens: usize) -> Result<String> {
@@ -187,6 +191,7 @@ impl SynthesisLlm for TemplateLlm {
 }
 
 /// Create a synthesis LLM from backend configuration
+#[cfg(feature = "local-llm")]
 pub async fn create_synthesis_llm(
     backend: &SynthesisBackend,
     model_manager: Arc<ModelManager>,
@@ -195,6 +200,34 @@ pub async fn create_synthesis_llm(
         SynthesisBackend::Local => {
             tracing::info!("[synthesis-llm] Using local LLM backend");
             Ok(Arc::new(LocalLlm::new(model_manager)))
+        }
+        SynthesisBackend::Remote { provider } => {
+            tracing::info!(
+                "[synthesis-llm] Using remote LLM backend: {}",
+                provider.provider_name()
+            );
+            let remote = RemoteLlm::from_provider(provider.clone()).await?;
+            Ok(Arc::new(remote))
+        }
+        SynthesisBackend::Template => {
+            tracing::info!("[synthesis-llm] Using template-only backend");
+            Ok(Arc::new(TemplateLlm))
+        }
+    }
+}
+
+/// Create a synthesis LLM from backend configuration (without local-llm feature)
+#[cfg(not(feature = "local-llm"))]
+pub async fn create_synthesis_llm(
+    backend: &SynthesisBackend,
+    _model_manager: Arc<ModelManager>,
+) -> Result<Arc<dyn SynthesisLlm>> {
+    match backend {
+        SynthesisBackend::Local => {
+            anyhow::bail!(
+                "Local LLM backend requested but the 'local-llm' feature is not enabled. \
+                Build with --features local-llm or use a remote backend (vertex_anthropic, openai, grok)."
+            )
         }
         SynthesisBackend::Remote { provider } => {
             tracing::info!(

@@ -1,13 +1,20 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import type { AiSettings as AiSettingsType, ApiKeysSettings } from "@/lib/settings";
-import { setBackend, type SynthesisBackend } from "@/lib/sidecar";
+import type {
+  AiSettings as AiSettingsType,
+  ApiKeysSettings,
+  SidecarSettings,
+  SynthesisBackendType,
+} from "@/lib/settings";
+import { type SynthesisBackend, setBackend } from "@/lib/sidecar";
 
 interface AiSettingsProps {
   settings: AiSettingsType;
   apiKeys: ApiKeysSettings;
+  sidecarSettings: SidecarSettings;
   onChange: (settings: AiSettingsType) => void;
   onApiKeysChange: (keys: ApiKeysSettings) => void;
+  onSidecarChange: (settings: SidecarSettings) => void;
 }
 
 // Simple Select component using native select for now
@@ -44,13 +51,23 @@ function SimpleSelect({
   );
 }
 
-export function AiSettings({ settings, apiKeys, onChange, onApiKeysChange }: AiSettingsProps) {
-  const [synthesisBackend, setSynthesisBackend] = useState<string>("template");
+export function AiSettings({
+  settings,
+  apiKeys,
+  sidecarSettings,
+  onChange,
+  onApiKeysChange,
+  onSidecarChange,
+}: AiSettingsProps) {
   const [synthesisStatus, setSynthesisStatus] = useState<string>("");
   const [isChangingBackend, setIsChangingBackend] = useState(false);
 
   const updateField = <K extends keyof AiSettingsType>(key: K, value: AiSettingsType[K]) => {
     onChange({ ...settings, [key]: value });
+  };
+
+  const updateSidecar = <K extends keyof SidecarSettings>(key: K, value: SidecarSettings[K]) => {
+    onSidecarChange({ ...sidecarSettings, [key]: value });
   };
 
   const handleSynthesisBackendChange = async (value: string) => {
@@ -61,13 +78,43 @@ export function AiSettings({ settings, apiKeys, onChange, onApiKeysChange }: AiS
       let backend: SynthesisBackend;
       if (value === "local") {
         backend = { backend: "Local" };
-      } else if (value === "vertex-anthropic") {
+      } else if (value === "vertex_anthropic") {
+        // Use sidecar synthesis vertex settings, fall back to main AI settings
+        const project_id =
+          sidecarSettings.synthesis_vertex.project_id || settings.vertex_ai.project_id || "";
+        const location =
+          sidecarSettings.synthesis_vertex.location || settings.vertex_ai.location || "us-east5";
+        const credentials_path =
+          sidecarSettings.synthesis_vertex.credentials_path ||
+          settings.vertex_ai.credentials_path ||
+          undefined;
         backend = {
           backend: "Remote",
           provider: {
             type: "VertexAnthropic",
-            project_id: settings.vertex_ai.project_id || "",
-            location: settings.vertex_ai.location || "us-east5",
+            project_id,
+            location,
+            model: sidecarSettings.synthesis_vertex.model,
+            credentials_path,
+          },
+        };
+      } else if (value === "openai") {
+        backend = {
+          backend: "Remote",
+          provider: {
+            type: "OpenAI",
+            model: sidecarSettings.synthesis_openai.model,
+            api_key: sidecarSettings.synthesis_openai.api_key || undefined,
+            base_url: sidecarSettings.synthesis_openai.base_url || undefined,
+          },
+        };
+      } else if (value === "grok") {
+        backend = {
+          backend: "Remote",
+          provider: {
+            type: "Grok",
+            model: sidecarSettings.synthesis_grok.model,
+            api_key: sidecarSettings.synthesis_grok.api_key || undefined,
           },
         };
       } else {
@@ -75,10 +122,12 @@ export function AiSettings({ settings, apiKeys, onChange, onApiKeysChange }: AiS
       }
 
       const description = await setBackend(backend);
-      setSynthesisBackend(value);
+      updateSidecar("synthesis_backend", value as SynthesisBackendType);
       setSynthesisStatus(`✓ ${description}`);
     } catch (error) {
-      setSynthesisStatus(`✗ ${error instanceof Error ? error.message : "Failed to change backend"}`);
+      setSynthesisStatus(
+        `✗ ${error instanceof Error ? error.message : "Failed to change backend"}`
+      );
     } finally {
       setIsChangingBackend(false);
     }
@@ -244,25 +293,27 @@ export function AiSettings({ settings, apiKeys, onChange, onApiKeysChange }: AiS
           </label>
           <SimpleSelect
             id="synthesis-backend"
-            value={synthesisBackend}
+            value={sidecarSettings.synthesis_backend}
             onValueChange={handleSynthesisBackendChange}
             options={[
               { value: "local", label: "Local (Qwen via mistral.rs)" },
-              { value: "vertex-anthropic", label: "Vertex AI (Claude)" },
+              { value: "vertex_anthropic", label: "Vertex AI (Claude)" },
+              { value: "openai", label: "OpenAI" },
+              { value: "grok", label: "xAI Grok" },
               { value: "template", label: "Template Only (No LLM)" },
             ]}
           />
-          {isChangingBackend && (
-            <p className="text-xs text-[#7aa2f7]">Switching backend...</p>
-          )}
+          {isChangingBackend && <p className="text-xs text-[#7aa2f7]">Switching backend...</p>}
           {synthesisStatus && (
-            <p className={`text-xs ${synthesisStatus.startsWith("✓") ? "text-[#9ece6a]" : "text-[#f7768e]"}`}>
+            <p
+              className={`text-xs ${synthesisStatus.startsWith("✓") ? "text-[#9ece6a]" : "text-[#f7768e]"}`}
+            >
               {synthesisStatus}
             </p>
           )}
         </div>
 
-        {synthesisBackend === "local" && (
+        {sidecarSettings.synthesis_backend === "local" && (
           <div className="text-xs text-[#565f89] space-y-1">
             <p>• Uses Qwen 2.5 0.5B model for on-device inference</p>
             <p>• Slower but works offline</p>
@@ -270,15 +321,180 @@ export function AiSettings({ settings, apiKeys, onChange, onApiKeysChange }: AiS
           </div>
         )}
 
-        {synthesisBackend === "vertex-anthropic" && (
-          <div className="text-xs text-[#565f89] space-y-1">
-            <p>• Uses Claude via your Vertex AI configuration above</p>
-            <p>• Fast and high quality</p>
-            <p>• Requires active Vertex AI credentials</p>
+        {sidecarSettings.synthesis_backend === "vertex_anthropic" && (
+          <div className="space-y-3">
+            <div className="text-xs text-[#565f89] space-y-1">
+              <p>• Uses Claude via your Vertex AI configuration</p>
+              <p>• Fast and high quality</p>
+              <p>• Requires active Vertex AI credentials</p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="synthesis-vertex-model" className="text-sm text-[#c0caf5]">
+                Model
+              </label>
+              <SimpleSelect
+                id="synthesis-vertex-model"
+                value={sidecarSettings.synthesis_vertex.model}
+                onValueChange={(value) =>
+                  onSidecarChange({
+                    ...sidecarSettings,
+                    synthesis_vertex: { ...sidecarSettings.synthesis_vertex, model: value },
+                  })
+                }
+                options={[
+                  { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5 (Most Capable)" },
+                  { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
+                  { value: "claude-haiku-4-5-20250514", label: "Claude Haiku 4.5 (Fastest)" },
+                ]}
+              />
+            </div>
+
+            {/* Optional: Override credentials for synthesis */}
+            <details className="text-xs">
+              <summary className="text-[#565f89] cursor-pointer hover:text-[#c0caf5]">
+                Override Vertex AI credentials (optional)
+              </summary>
+              <div className="mt-2 space-y-2 pl-2 border-l border-[#3b4261]">
+                <p className="text-[#565f89]">
+                  By default, synthesis uses your main Vertex AI configuration above.
+                </p>
+                <Input
+                  placeholder="Project ID (leave empty to use main config)"
+                  value={sidecarSettings.synthesis_vertex.project_id || ""}
+                  onChange={(e) =>
+                    onSidecarChange({
+                      ...sidecarSettings,
+                      synthesis_vertex: {
+                        ...sidecarSettings.synthesis_vertex,
+                        project_id: e.target.value || null,
+                      },
+                    })
+                  }
+                  className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5] h-8"
+                />
+                <Input
+                  placeholder="Location (leave empty to use main config)"
+                  value={sidecarSettings.synthesis_vertex.location || ""}
+                  onChange={(e) =>
+                    onSidecarChange({
+                      ...sidecarSettings,
+                      synthesis_vertex: {
+                        ...sidecarSettings.synthesis_vertex,
+                        location: e.target.value || null,
+                      },
+                    })
+                  }
+                  className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5] h-8"
+                />
+              </div>
+            </details>
           </div>
         )}
 
-        {synthesisBackend === "template" && (
+        {sidecarSettings.synthesis_backend === "openai" && (
+          <div className="space-y-3">
+            <div className="text-xs text-[#565f89] space-y-1">
+              <p>• Uses OpenAI API</p>
+              <p>• Fast and reliable</p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="synthesis-openai-model" className="text-sm text-[#c0caf5]">
+                Model
+              </label>
+              <SimpleSelect
+                id="synthesis-openai-model"
+                value={sidecarSettings.synthesis_openai.model}
+                onValueChange={(value) =>
+                  onSidecarChange({
+                    ...sidecarSettings,
+                    synthesis_openai: { ...sidecarSettings.synthesis_openai, model: value },
+                  })
+                }
+                options={[
+                  { value: "gpt-4o-mini", label: "GPT-4o Mini (Fastest)" },
+                  { value: "gpt-4o", label: "GPT-4o" },
+                  { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
+                ]}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="synthesis-openai-key" className="text-sm text-[#c0caf5]">
+                API Key
+              </label>
+              <Input
+                id="synthesis-openai-key"
+                type="password"
+                placeholder="sk-..."
+                value={sidecarSettings.synthesis_openai.api_key || ""}
+                onChange={(e) =>
+                  onSidecarChange({
+                    ...sidecarSettings,
+                    synthesis_openai: {
+                      ...sidecarSettings.synthesis_openai,
+                      api_key: e.target.value || null,
+                    },
+                  })
+                }
+                className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+              />
+            </div>
+          </div>
+        )}
+
+        {sidecarSettings.synthesis_backend === "grok" && (
+          <div className="space-y-3">
+            <div className="text-xs text-[#565f89] space-y-1">
+              <p>• Uses xAI Grok API</p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="synthesis-grok-model" className="text-sm text-[#c0caf5]">
+                Model
+              </label>
+              <SimpleSelect
+                id="synthesis-grok-model"
+                value={sidecarSettings.synthesis_grok.model}
+                onValueChange={(value) =>
+                  onSidecarChange({
+                    ...sidecarSettings,
+                    synthesis_grok: { ...sidecarSettings.synthesis_grok, model: value },
+                  })
+                }
+                options={[
+                  { value: "grok-2", label: "Grok 2" },
+                  { value: "grok-2-mini", label: "Grok 2 Mini (Faster)" },
+                ]}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="synthesis-grok-key" className="text-sm text-[#c0caf5]">
+                API Key
+              </label>
+              <Input
+                id="synthesis-grok-key"
+                type="password"
+                placeholder="xai-..."
+                value={sidecarSettings.synthesis_grok.api_key || ""}
+                onChange={(e) =>
+                  onSidecarChange({
+                    ...sidecarSettings,
+                    synthesis_grok: {
+                      ...sidecarSettings.synthesis_grok,
+                      api_key: e.target.value || null,
+                    },
+                  })
+                }
+                className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+              />
+            </div>
+          </div>
+        )}
+
+        {sidecarSettings.synthesis_backend === "template" && (
           <div className="text-xs text-[#565f89] space-y-1">
             <p>• Uses simple templates without LLM enhancement</p>
             <p>• Fastest option, works offline</p>

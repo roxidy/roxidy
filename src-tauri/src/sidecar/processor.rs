@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::config::SidecarConfig;
 use super::events::{Checkpoint, SessionEvent};
@@ -29,6 +29,14 @@ pub enum ProcessorTask {
     Shutdown,
 }
 
+/// Handle returned from spawn() for managing the processor lifecycle
+pub struct ProcessorHandle {
+    /// Sender for submitting tasks
+    pub task_tx: mpsc::UnboundedSender<ProcessorTask>,
+    /// Receiver that completes when the processor shuts down
+    pub shutdown_complete: oneshot::Receiver<()>,
+}
+
 /// Background processor for async sidecar operations
 pub struct SidecarProcessor {
     /// Storage instance
@@ -39,15 +47,19 @@ pub struct SidecarProcessor {
     config: SidecarConfig,
     /// Task receiver
     task_rx: mpsc::UnboundedReceiver<ProcessorTask>,
+    /// Shutdown completion signal
+    shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl SidecarProcessor {
-    /// Spawn the processor as a tokio task
-    pub fn spawn(
-        storage: Arc<SidecarStorage>,
-        config: SidecarConfig,
-    ) -> mpsc::UnboundedSender<ProcessorTask> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    /// Spawn the processor as a tokio task.
+    ///
+    /// Returns a `ProcessorHandle` containing:
+    /// - `task_tx`: Sender for submitting tasks
+    /// - `shutdown_complete`: Receiver that signals when shutdown is done
+    pub fn spawn(storage: Arc<SidecarStorage>, config: SidecarConfig) -> ProcessorHandle {
+        let (task_tx, task_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let model_manager = Arc::new(ModelManager::new(config.models_dir.clone()));
 
@@ -56,12 +68,16 @@ impl SidecarProcessor {
                 storage,
                 model_manager,
                 config,
-                task_rx: rx,
+                task_rx,
+                shutdown_tx: Some(shutdown_tx),
             };
             processor.run().await;
         });
 
-        tx
+        ProcessorHandle {
+            task_tx,
+            shutdown_complete: shutdown_rx,
+        }
     }
 
     /// Main processing loop
@@ -95,6 +111,12 @@ impl SidecarProcessor {
                 }
             }
         }
+
+        // Signal shutdown complete
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        tracing::info!("Sidecar processor shutdown complete");
     }
 
     /// Handle flushing events to storage
@@ -105,9 +127,65 @@ impl SidecarProcessor {
 
         tracing::debug!("Flushing {} events to storage", events.len());
 
-        if let Err(e) = self.storage.save_events(&events).await {
+        // Generate embeddings if enabled
+        let events_to_save = if self.config.embeddings_enabled {
+            self.embed_events(events).await
+        } else {
+            events
+        };
+
+        if let Err(e) = self.storage.save_events(&events_to_save).await {
             tracing::error!("Failed to flush events: {}", e);
         }
+    }
+
+    /// Generate embeddings for events that should be embedded (called during flush)
+    async fn embed_events(&self, mut events: Vec<SessionEvent>) -> Vec<SessionEvent> {
+        // Find indices of events that should be embedded
+        let indices: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.should_embed())
+            .map(|(i, _)| i)
+            .collect();
+
+        if indices.is_empty() {
+            tracing::debug!(
+                "No embeddable events in batch of {} (skipping tool calls, file edits, etc.)",
+                events.len()
+            );
+            return events;
+        }
+
+        // Collect texts to embed (clone to avoid borrow issues)
+        let texts: Vec<String> = indices.iter().map(|&i| events[i].content.clone()).collect();
+        let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+
+        tracing::debug!(
+            "Generating embeddings for {}/{} events (user_prompt, reasoning, read outputs)",
+            indices.len(),
+            events.len()
+        );
+
+        // Generate embeddings
+        match self.model_manager.embed(&text_refs) {
+            Ok(embeddings) => {
+                // Update only the embeddable events
+                for (idx, embedding) in indices.into_iter().zip(embeddings.into_iter()) {
+                    events[idx].embedding = Some(embedding);
+                }
+                tracing::debug!("Successfully generated {} embeddings", texts.len());
+            }
+            Err(e) => {
+                // Log error but continue - events will be saved without embeddings
+                tracing::warn!(
+                    "Failed to generate embeddings: {}. Events will be saved without embeddings.",
+                    e
+                );
+            }
+        }
+
+        events
     }
 
     /// Handle embedding generation for events
@@ -187,7 +265,7 @@ impl SidecarProcessor {
 
         let files_touched: Vec<_> = events
             .iter()
-            .flat_map(|e| e.files.clone())
+            .flat_map(|e| e.files_modified.clone())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
@@ -338,9 +416,9 @@ mod tests {
         let storage = Arc::new(SidecarStorage::new(temp_dir.path()).await.unwrap());
         let config = SidecarConfig::test_config(temp_dir.path());
 
-        let tx = SidecarProcessor::spawn(storage.clone(), config);
+        let handle = SidecarProcessor::spawn(storage.clone(), config);
 
-        (temp_dir, storage, tx)
+        (temp_dir, storage, handle.task_tx)
     }
 
     #[tokio::test]

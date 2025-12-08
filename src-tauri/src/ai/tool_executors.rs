@@ -4,6 +4,9 @@
 //! - Indexer tools (code search, file analysis)
 //! - Tavily tools (web search)
 //! - Workflow tools (multi-step AI workflows)
+//!
+//! Note: Workflow execution requires the `tauri` feature as it depends on
+//! `WorkflowState` and `BridgeLlmExecutor` from the commands module.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,9 +15,12 @@ use serde_json::json;
 use tokio::sync::RwLock;
 use vtcode_core::tools::tree_sitter::analysis::CodeAnalyzer;
 
+#[cfg(feature = "tauri")]
 use crate::ai::commands::workflow::{BridgeLlmExecutor, WorkflowState};
 use crate::ai::events::AiEvent;
+#[cfg(feature = "tauri")]
 use crate::ai::llm_client::LlmClient;
+#[cfg(feature = "tauri")]
 use crate::ai::workflow::{WorkflowLlmExecutor, WorkflowRunner};
 use crate::indexer::IndexerState;
 use crate::tavily::TavilyState;
@@ -312,6 +318,9 @@ pub async fn execute_web_fetch_tool(tool_name: &str, args: &serde_json::Value) -
 }
 
 /// Context for workflow tool execution.
+///
+/// Only available when the `tauri` feature is enabled.
+#[cfg(feature = "tauri")]
 pub struct WorkflowToolContext<'a> {
     pub workflow_state: Option<&'a Arc<WorkflowState>>,
     pub client: &'a Arc<RwLock<LlmClient>>,
@@ -325,6 +334,9 @@ pub struct WorkflowToolContext<'a> {
 /// Execute a workflow tool.
 ///
 /// This runs a workflow to completion and returns the final output.
+///
+/// Only available when the `tauri` feature is enabled.
+#[cfg(feature = "tauri")]
 pub async fn execute_workflow_tool(
     ctx: WorkflowToolContext<'_>,
     args: &serde_json::Value,

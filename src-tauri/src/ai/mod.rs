@@ -4,6 +4,7 @@ mod bridge_context;
 mod bridge_hitl;
 mod bridge_policy;
 mod bridge_session;
+#[cfg(feature = "tauri")]
 pub mod commands;
 pub mod context_manager;
 pub mod context_pruner;
@@ -22,6 +23,7 @@ pub mod tool_executors;
 pub mod tool_policy;
 pub mod workflow;
 
+#[cfg(feature = "tauri")]
 pub use commands::{
     add_tool_always_allow, cancel_workflow, clear_ai_conversation, disable_full_auto_mode,
     disable_loop_detection, enable_full_auto_mode, enable_loop_detection, enforce_context_window,

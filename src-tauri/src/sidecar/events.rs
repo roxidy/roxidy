@@ -125,7 +125,7 @@ impl EventType {
         }
     }
 
-    /// Check if this is a high-signal event worth embedding
+    /// Check if this is a high-signal event worth including in checkpoints
     pub fn is_high_signal(&self) -> bool {
         matches!(
             self,
@@ -136,6 +136,29 @@ impl EventType {
                 | EventType::CommitBoundary { .. }
                 | EventType::AiResponse { .. }
         )
+    }
+
+    /// Check if this event type should have embeddings generated for semantic search.
+    /// Returns true for events with searchable semantic content.
+    pub fn should_embed(&self) -> bool {
+        matches!(
+            self,
+            EventType::UserPrompt { .. } | EventType::AgentReasoning { .. }
+        )
+    }
+
+    /// Check if this is a read tool that accessed file content.
+    /// Used to determine if tool_output should be embedded.
+    pub fn is_read_tool(&self) -> bool {
+        match self {
+            EventType::ToolCall { tool_name, .. } => {
+                matches!(
+                    tool_name.as_str(),
+                    "read" | "read_file" | "Read" | "cat" | "grep" | "Grep" | "glob" | "Glob"
+                )
+            }
+            _ => false,
+        }
     }
 }
 
@@ -197,8 +220,20 @@ pub struct SessionEvent {
     pub event_type: EventType,
     /// Full content for embedding (human-readable summary)
     pub content: String,
-    /// Related files (for filtering/grouping)
-    pub files: Vec<PathBuf>,
+    /// Working directory extracted from context XML (for user_prompt events)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Tool result content, truncated to 2000 chars
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_output: Option<String>,
+    /// Files read/listed by tool (JSON array of paths)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_accessed: Option<Vec<PathBuf>>,
+    /// Files modified by tool (replaces old `files` field for modifications)
+    pub files_modified: Vec<PathBuf>,
+    /// Unified diff for edit operations, truncated to 4000 chars
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
     /// 384-dimensional embedding vector (computed async)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
@@ -207,27 +242,45 @@ pub struct SessionEvent {
 impl SessionEvent {
     /// Create a new session event
     pub fn new(session_id: Uuid, event_type: EventType, content: String) -> Self {
-        let files = Self::extract_files(&event_type);
+        let files_modified = Self::extract_files_modified(&event_type);
         Self {
             id: Uuid::new_v4(),
             session_id,
             timestamp: Utc::now(),
             event_type,
             content,
-            files,
+            cwd: None,
+            tool_output: None,
+            files_accessed: None,
+            files_modified,
+            diff: None,
             embedding: None,
         }
     }
 
     /// Create a user prompt event
+    ///
+    /// Parses context XML if present:
+    /// ```text
+    /// <context>
+    /// <cwd>/path/to/dir</cwd>
+    /// <session_id>abc-123</session_id>
+    /// </context>
+    ///
+    /// actual user message
+    /// ```
     pub fn user_prompt(session_id: Uuid, prompt: &str) -> Self {
-        Self::new(
+        let (cwd, clean_prompt) = parse_context_xml(prompt);
+
+        let mut event = Self::new(
             session_id,
             EventType::UserPrompt {
-                intent: prompt.to_string(),
+                intent: clean_prompt.clone(),
             },
-            format!("User asked: {}", truncate(prompt, 500)),
-        )
+            truncate(&clean_prompt, 500),
+        );
+        event.cwd = cwd;
+        event
     }
 
     /// Create a file edit event
@@ -311,6 +364,42 @@ impl SessionEvent {
                     .unwrap_or_default()
             ),
         )
+    }
+
+    /// Create a tool call event with full capture data
+    ///
+    /// This is the enhanced version that captures tool output, accessed files, and diffs.
+    pub fn tool_call_with_output(
+        session_id: Uuid,
+        tool_name: &str,
+        args_summary: &str,
+        success: bool,
+        tool_output: Option<String>,
+        files_accessed: Option<Vec<PathBuf>>,
+        files_modified: Vec<PathBuf>,
+        diff: Option<String>,
+    ) -> Self {
+        // Create content summary
+        let content = format!("{} {}", tool_name, args_summary);
+
+        Self {
+            id: Uuid::new_v4(),
+            session_id,
+            timestamp: Utc::now(),
+            event_type: EventType::ToolCall {
+                tool_name: tool_name.to_string(),
+                args_summary: args_summary.to_string(),
+                reasoning: None,
+                success,
+            },
+            content,
+            cwd: None,
+            tool_output: tool_output.map(|o| truncate(&o, 2000)),
+            files_accessed,
+            files_modified,
+            diff: diff.map(|d| truncate(&d, 4000)),
+            embedding: None,
+        }
     }
 
     /// Create an agent reasoning event
@@ -421,8 +510,8 @@ impl SessionEvent {
         )
     }
 
-    /// Extract file paths from event type
-    fn extract_files(event_type: &EventType) -> Vec<PathBuf> {
+    /// Extract modified file paths from event type
+    fn extract_files_modified(event_type: &EventType) -> Vec<PathBuf> {
         match event_type {
             EventType::FileEdit { path, .. } => vec![path.clone()],
             EventType::CommitBoundary { files_in_scope, .. } => files_in_scope.clone(),
@@ -435,6 +524,25 @@ impl SessionEvent {
     pub fn with_embedding(mut self, embedding: Vec<f32>) -> Self {
         self.embedding = Some(embedding);
         self
+    }
+
+    /// Check if this event should have an embedding generated.
+    /// Returns true for:
+    /// - User prompts (primary search use case)
+    /// - Agent reasoning (find what the agent was thinking)
+    /// - Read tool outputs (find sessions that accessed specific content)
+    pub fn should_embed(&self) -> bool {
+        // Always embed user prompts and reasoning
+        if self.event_type.should_embed() {
+            return true;
+        }
+
+        // Also embed read tool outputs (they contain file content worth searching)
+        if self.event_type.is_read_tool() && self.tool_output.is_some() {
+            return true;
+        }
+
+        false
     }
 }
 
@@ -772,6 +880,48 @@ impl SessionExport {
     }
 }
 
+/// Parse context XML from user prompts and extract cwd.
+///
+/// Returns (cwd, clean_message) where clean_message has the context block removed.
+fn parse_context_xml(input: &str) -> (Option<String>, String) {
+    // Look for <context>...</context> block
+    let context_start = input.find("<context>");
+    let context_end = input.find("</context>");
+
+    match (context_start, context_end) {
+        (Some(start), Some(end)) if start < end => {
+            let context_block = &input[start..end + "</context>".len()];
+
+            // Extract <cwd>...</cwd>
+            let cwd = extract_xml_tag(context_block, "cwd");
+
+            // Remove the context block and trim leading whitespace
+            let before = &input[..start];
+            let after = &input[end + "</context>".len()..];
+            let clean = format!("{}{}", before, after).trim().to_string();
+
+            (cwd, clean)
+        }
+        _ => (None, input.to_string()),
+    }
+}
+
+/// Extract content from a simple XML tag
+fn extract_xml_tag(input: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}>", tag);
+    let close = format!("</{}>", tag);
+
+    let start = input.find(&open)?;
+    let end = input.find(&close)?;
+
+    if start < end {
+        let content_start = start + open.len();
+        Some(input[content_start..end].trim().to_string())
+    } else {
+        None
+    }
+}
+
 /// Truncate a string to a maximum length
 fn truncate(s: &str, max_len: usize) -> String {
     if s.chars().count() <= max_len {
@@ -844,8 +994,229 @@ mod tests {
 
         let event = SessionEvent::file_edit(session_id, path.clone(), FileOperation::Modify, None);
 
-        assert_eq!(event.files, vec![path]);
+        assert_eq!(event.files_modified, vec![path]);
         assert!(event.content.contains("modified"));
+    }
+
+    #[test]
+    fn test_parse_context_xml() {
+        let input = r#"<context>
+<cwd>/Users/xlyk/Code/qbit</cwd>
+<session_id>abc-123</session_id>
+</context>
+
+which files are in the current directory?"#;
+
+        let (cwd, clean) = parse_context_xml(input);
+        assert_eq!(cwd, Some("/Users/xlyk/Code/qbit".to_string()));
+        assert_eq!(clean, "which files are in the current directory?");
+    }
+
+    #[test]
+    fn test_parse_context_xml_no_context() {
+        let input = "just a regular message";
+        let (cwd, clean) = parse_context_xml(input);
+        assert_eq!(cwd, None);
+        assert_eq!(clean, "just a regular message");
+    }
+
+    #[test]
+    fn test_user_prompt_with_context() {
+        let session_id = Uuid::new_v4();
+        let input = r#"<context>
+<cwd>/Users/xlyk/Code/qbit</cwd>
+</context>
+
+list files"#;
+
+        let event = SessionEvent::user_prompt(session_id, input);
+        assert_eq!(event.cwd, Some("/Users/xlyk/Code/qbit".to_string()));
+        assert_eq!(event.content, "list files");
+    }
+
+    #[test]
+    fn test_parse_context_xml_with_session_id() {
+        let input = r#"<context>
+<cwd>/path/to/project</cwd>
+<session_id>abc-123-def</session_id>
+</context>
+
+What files exist?"#;
+
+        let (cwd, clean) = parse_context_xml(input);
+        assert_eq!(cwd, Some("/path/to/project".to_string()));
+        assert_eq!(clean, "What files exist?");
+    }
+
+    #[test]
+    fn test_parse_context_xml_multiline_message() {
+        let input = r#"<context>
+<cwd>/project</cwd>
+</context>
+
+First line
+Second line
+Third line"#;
+
+        let (cwd, clean) = parse_context_xml(input);
+        assert_eq!(cwd, Some("/project".to_string()));
+        assert!(clean.contains("First line"));
+        assert!(clean.contains("Second line"));
+        assert!(clean.contains("Third line"));
+    }
+
+    #[test]
+    fn test_parse_context_xml_missing_cwd() {
+        let input = r#"<context>
+<session_id>abc-123</session_id>
+</context>
+
+message without cwd"#;
+
+        let (cwd, clean) = parse_context_xml(input);
+        assert_eq!(cwd, None);
+        assert_eq!(clean, "message without cwd");
+    }
+
+    #[test]
+    fn test_tool_call_with_output_basic() {
+        let session_id = Uuid::new_v4();
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=src/main.rs",
+            true,
+            Some("fn main() { println!(\"Hello\"); }".to_string()),
+            Some(vec![PathBuf::from("src/main.rs")]),
+            vec![],
+            None,
+        );
+
+        assert_eq!(event.event_type.name(), "tool_call");
+        assert_eq!(
+            event.tool_output,
+            Some("fn main() { println!(\"Hello\"); }".to_string())
+        );
+        assert_eq!(
+            event.files_accessed,
+            Some(vec![PathBuf::from("src/main.rs")])
+        );
+        assert!(event.files_modified.is_empty());
+        assert!(event.diff.is_none());
+    }
+
+    #[test]
+    fn test_tool_call_with_output_edit() {
+        let session_id = Uuid::new_v4();
+        let diff = "--- src/lib.rs\n+++ src/lib.rs\n@@ -1,1 +1,2 @@\n-old line\n+new line\n+added line";
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "edit_file",
+            "path=src/lib.rs",
+            true,
+            Some("Edit applied successfully".to_string()),
+            None,
+            vec![PathBuf::from("src/lib.rs")],
+            Some(diff.to_string()),
+        );
+
+        assert_eq!(event.files_modified, vec![PathBuf::from("src/lib.rs")]);
+        assert!(event.diff.is_some());
+        assert!(event.diff.as_ref().unwrap().contains("-old line"));
+        assert!(event.diff.as_ref().unwrap().contains("+new line"));
+    }
+
+    #[test]
+    fn test_tool_call_with_output_truncation() {
+        let session_id = Uuid::new_v4();
+        // Create content longer than 2000 chars
+        let long_output = "x".repeat(3000);
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=big.txt",
+            true,
+            Some(long_output),
+            None,
+            vec![],
+            None,
+        );
+
+        // Should be truncated to ~2000 chars (use char count, not byte len due to ellipsis)
+        assert!(event.tool_output.is_some());
+        let char_count = event.tool_output.as_ref().unwrap().chars().count();
+        assert!(char_count <= 2000, "Expected <= 2000 chars, got {}", char_count);
+    }
+
+    #[test]
+    fn test_tool_call_with_output_diff_truncation() {
+        let session_id = Uuid::new_v4();
+        // Create diff longer than 4000 chars
+        let long_diff = "+".repeat(5000);
+        let event = SessionEvent::tool_call_with_output(
+            session_id,
+            "write",
+            "path=big.rs",
+            true,
+            None,
+            None,
+            vec![PathBuf::from("big.rs")],
+            Some(long_diff),
+        );
+
+        // Should be truncated to ~4000 chars (use char count, not byte len due to ellipsis)
+        assert!(event.diff.is_some());
+        let char_count = event.diff.as_ref().unwrap().chars().count();
+        assert!(char_count <= 4000, "Expected <= 4000 chars, got {}", char_count);
+    }
+
+    #[test]
+    fn test_session_event_new_fields_initialized() {
+        let session_id = Uuid::new_v4();
+        let event = SessionEvent::new(
+            session_id,
+            EventType::UserPrompt {
+                intent: "test".to_string(),
+            },
+            "test content".to_string(),
+        );
+
+        // New fields should be None/empty by default
+        assert!(event.cwd.is_none());
+        assert!(event.tool_output.is_none());
+        assert!(event.files_accessed.is_none());
+        assert!(event.files_modified.is_empty());
+        assert!(event.diff.is_none());
+    }
+
+    #[test]
+    fn test_extract_xml_tag_various_formats() {
+        // Normal case
+        assert_eq!(
+            extract_xml_tag("<tag>value</tag>", "tag"),
+            Some("value".to_string())
+        );
+
+        // With whitespace
+        assert_eq!(
+            extract_xml_tag("<tag>  value  </tag>", "tag"),
+            Some("value".to_string())
+        );
+
+        // Nested in other content
+        assert_eq!(
+            extract_xml_tag("prefix <tag>value</tag> suffix", "tag"),
+            Some("value".to_string())
+        );
+
+        // Missing tag
+        assert_eq!(extract_xml_tag("<other>value</other>", "tag"), None);
+
+        // Empty value
+        assert_eq!(
+            extract_xml_tag("<tag></tag>", "tag"),
+            Some("".to_string())
+        );
     }
 
     #[test]
@@ -1036,5 +1407,79 @@ mod tests {
         assert_eq!(imported.session.id, session_id);
         assert_eq!(imported.events.len(), 2);
         assert_eq!(imported.checkpoints.len(), 1);
+    }
+
+    #[test]
+    fn test_should_embed_filtering() {
+        let session_id = Uuid::new_v4();
+
+        // User prompts should be embedded
+        let user_prompt = SessionEvent::user_prompt(session_id, "Add authentication");
+        assert!(user_prompt.should_embed(), "user_prompt should be embedded");
+
+        // Agent reasoning should be embedded
+        let reasoning = SessionEvent::reasoning(session_id, "I'll use JWT for auth", None);
+        assert!(reasoning.should_embed(), "reasoning should be embedded");
+
+        // File edits should NOT be embedded (structured, search by path)
+        let file_edit = SessionEvent::file_edit(
+            session_id,
+            PathBuf::from("src/auth.rs"),
+            FileOperation::Modify,
+            None,
+        );
+        assert!(!file_edit.should_embed(), "file_edit should NOT be embedded");
+
+        // Regular tool calls should NOT be embedded
+        let tool_call = SessionEvent::tool_call_with_output(
+            session_id,
+            "write",
+            "path=test.rs",
+            true,
+            Some("File written".to_string()),
+            None,
+            vec![PathBuf::from("test.rs")],
+            None,
+        );
+        assert!(!tool_call.should_embed(), "write tool should NOT be embedded");
+
+        // Read tool calls WITH output SHOULD be embedded
+        let read_tool = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=src/main.rs",
+            true,
+            Some("fn main() { println!(\"Hello\"); }".to_string()),
+            Some(vec![PathBuf::from("src/main.rs")]),
+            vec![],
+            None,
+        );
+        assert!(read_tool.should_embed(), "read_file with output should be embedded");
+
+        // Read tool without output should NOT be embedded
+        let read_no_output = SessionEvent::tool_call_with_output(
+            session_id,
+            "read_file",
+            "path=missing.rs",
+            false,
+            None, // No output
+            None,
+            vec![],
+            None,
+        );
+        assert!(!read_no_output.should_embed(), "read_file without output should NOT be embedded");
+
+        // Grep tool with output should be embedded
+        let grep_tool = SessionEvent::tool_call_with_output(
+            session_id,
+            "grep",
+            "pattern=authenticate",
+            true,
+            Some("src/auth.rs:1: fn authenticate".to_string()),
+            Some(vec![PathBuf::from("src/auth.rs")]),
+            vec![],
+            None,
+        );
+        assert!(grep_tool.should_embed(), "grep with output should be embedded");
     }
 }

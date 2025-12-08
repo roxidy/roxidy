@@ -1,6 +1,18 @@
-import { Check, Copy, GitCommit, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Cpu,
+  GitCommit,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -24,6 +36,7 @@ export function CommitDraft({ sessionId: _sessionId, className, onCommit }: Comm
   const [error, setError] = useState<string | null>(null);
   const [editedMessage, setEditedMessage] = useState("");
   const [copied, setCopied] = useState(false);
+  const [promptsExpanded, setPromptsExpanded] = useState(false);
 
   const generateDraft = async () => {
     setLoading(true);
@@ -122,13 +135,33 @@ export function CommitDraft({ sessionId: _sessionId, className, onCommit }: Comm
 
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-4">
-          {/* Scope badge */}
-          {draft?.scope && (
-            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#7aa2f7]/10 text-[#7aa2f7] text-xs">
-              <span className="font-medium">Scope:</span>
-              {draft.scope}
+          {/* Generation info badges */}
+          <div className="flex flex-wrap items-center gap-2">
+            {draft?.scope && (
+              <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#7aa2f7]/10 text-[#7aa2f7] text-xs">
+                <span className="font-medium">Scope:</span>
+                {draft.scope}
+              </div>
+            )}
+            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#9ece6a]/10 text-[#9ece6a] text-xs">
+              {draft?.llm_generated ? (
+                <>
+                  <Bot className="w-3 h-3" />
+                  <span>LLM Generated</span>
+                </>
+              ) : (
+                <>
+                  <Cpu className="w-3 h-3" />
+                  <span>Template Generated</span>
+                </>
+              )}
             </div>
-          )}
+            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#bb9af7]/10 text-[#bb9af7] text-xs">
+              <span>{draft?.event_count ?? 0} events</span>
+              <span className="text-[#565f89]">•</span>
+              <span>{draft?.checkpoint_count ?? 0} checkpoints</span>
+            </div>
+          </div>
 
           {/* Editable message */}
           <div className="space-y-1.5">
@@ -179,6 +212,47 @@ export function CommitDraft({ sessionId: _sessionId, className, onCommit }: Comm
                 <p className="text-xs text-[#565f89] italic">{draft.reasoning}</p>
               </div>
             </div>
+          )}
+
+          {/* Prompts used for generation */}
+          {(draft?.system_prompt || draft?.user_prompt) && (
+            <Collapsible open={promptsExpanded} onOpenChange={setPromptsExpanded}>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-xs text-[#565f89] hover:text-[#c0caf5] transition-colors w-full"
+                >
+                  {promptsExpanded ? (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  )}
+                  <span>View Prompts Used for Generation</span>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-3 mt-2">
+                {draft?.system_prompt && (
+                  <div className="space-y-1.5">
+                    <span className="text-xs text-[#7dcfff]">System Prompt</span>
+                    <div className="bg-[#1f2335] rounded-md p-2 max-h-40 overflow-y-auto">
+                      <pre className="text-xs text-[#c0caf5] whitespace-pre-wrap font-mono">
+                        {draft.system_prompt}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+                {draft?.user_prompt && (
+                  <div className="space-y-1.5">
+                    <span className="text-xs text-[#7dcfff]">User Prompt</span>
+                    <div className="bg-[#1f2335] rounded-md p-2 max-h-60 overflow-y-auto">
+                      <pre className="text-xs text-[#c0caf5] whitespace-pre-wrap font-mono">
+                        {draft.user_prompt}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
           )}
         </div>
       </ScrollArea>

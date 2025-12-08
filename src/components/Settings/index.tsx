@@ -1,16 +1,11 @@
+import { Bot, Cog, Loader2, Shield, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getSettings, type QbitSettings, updateSettings } from "@/lib/settings";
+import { cn } from "@/lib/utils";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { AgentSettings } from "./AgentSettings";
 import { AiSettings } from "./AiSettings";
@@ -21,9 +16,45 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+type SettingsSection = "ai" | "terminal" | "agent" | "advanced";
+
+interface NavItem {
+  id: SettingsSection;
+  label: string;
+  icon: React.ReactNode;
+  description: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  {
+    id: "ai",
+    label: "AI & Providers",
+    icon: <Bot className="w-4 h-4" />,
+    description: "Configure AI providers and synthesis",
+  },
+  {
+    id: "terminal",
+    label: "Terminal",
+    icon: <Terminal className="w-4 h-4" />,
+    description: "Shell and display settings",
+  },
+  {
+    id: "agent",
+    label: "Agent",
+    icon: <Cog className="w-4 h-4" />,
+    description: "Session and approval settings",
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    icon: <Shield className="w-4 h-4" />,
+    description: "Privacy and debug options",
+  },
+];
+
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [settings, setSettings] = useState<QbitSettings | null>(null);
-  const [activeTab, setActiveTab] = useState("ai");
+  const [activeSection, setActiveSection] = useState<SettingsSection>("ai");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -69,93 +100,115 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     []
   );
 
+  const renderContent = () => {
+    if (!settings) return null;
+
+    switch (activeSection) {
+      case "ai":
+        return (
+          <AiSettings
+            settings={settings.ai}
+            apiKeys={settings.api_keys}
+            sidecarSettings={settings.sidecar}
+            onChange={(ai) => updateSection("ai", ai)}
+            onApiKeysChange={(keys) => updateSection("api_keys", keys)}
+            onSidecarChange={(sidecar) => updateSection("sidecar", sidecar)}
+          />
+        );
+      case "terminal":
+        return (
+          <TerminalSettings
+            settings={settings.terminal}
+            onChange={(terminal) => updateSection("terminal", terminal)}
+          />
+        );
+      case "agent":
+        return (
+          <AgentSettings
+            settings={settings.agent}
+            onChange={(agent) => updateSection("agent", agent)}
+          />
+        );
+      case "advanced":
+        return (
+          <AdvancedSettings
+            settings={settings.advanced}
+            privacy={settings.privacy}
+            onChange={(advanced) => updateSection("advanced", advanced)}
+            onPrivacyChange={(privacy) => updateSection("privacy", privacy)}
+          />
+        );
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl h-[85vh] flex flex-col bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]">
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="text-[#c0caf5]">Settings</DialogTitle>
-        </DialogHeader>
+      <DialogContent
+        showCloseButton={false}
+        className="!max-w-none !top-0 !left-0 !right-0 !bottom-0 !translate-x-0 !translate-y-0 !w-full !h-full p-0 bg-[#1a1b26] border-0 rounded-none text-[#c0caf5] flex flex-col"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#3b4261] flex-shrink-0">
+          <h2 className="text-lg font-semibold text-[#c0caf5]">Settings</h2>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="p-1.5 rounded-md hover:bg-[#292e42] text-[#565f89] hover:text-[#c0caf5] transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center">
-            <span className="text-[#565f89]">Loading settings...</span>
+            <Loader2 className="w-6 h-6 text-[#565f89] animate-spin" />
           </div>
         ) : settings ? (
-          <Tabs
-            value={activeTab}
-            onValueChange={setActiveTab}
-            className="flex-1 flex flex-col min-h-0"
-          >
-            <TabsList className="flex-shrink-0 grid w-full grid-cols-4 bg-[#1f2335]">
-              <TabsTrigger
-                value="ai"
-                className="data-[state=active]:bg-[#3b4261] data-[state=active]:text-[#c0caf5]"
-              >
-                AI
-              </TabsTrigger>
-              <TabsTrigger
-                value="terminal"
-                className="data-[state=active]:bg-[#3b4261] data-[state=active]:text-[#c0caf5]"
-              >
-                Terminal
-              </TabsTrigger>
-              <TabsTrigger
-                value="agent"
-                className="data-[state=active]:bg-[#3b4261] data-[state=active]:text-[#c0caf5]"
-              >
-                Agent
-              </TabsTrigger>
-              <TabsTrigger
-                value="advanced"
-                className="data-[state=active]:bg-[#3b4261] data-[state=active]:text-[#c0caf5]"
-              >
-                Advanced
-              </TabsTrigger>
-            </TabsList>
+          <div className="flex-1 flex min-h-0">
+            {/* Sidebar Navigation */}
+            <nav className="w-64 border-r border-[#3b4261] flex flex-col flex-shrink-0">
+              <div className="flex-1 py-2">
+                {NAV_ITEMS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveSection(item.id)}
+                    className={cn(
+                      "w-full flex items-start gap-3 px-4 py-3 text-left transition-colors",
+                      activeSection === item.id
+                        ? "bg-[#292e42] text-[#c0caf5] border-l-2 border-[#7aa2f7]"
+                        : "text-[#565f89] hover:bg-[#1f2335] hover:text-[#c0caf5] border-l-2 border-transparent"
+                    )}
+                  >
+                    <span
+                      className={cn("mt-0.5", activeSection === item.id ? "text-[#7aa2f7]" : "")}
+                    >
+                      {item.icon}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium">{item.label}</div>
+                      <div className="text-xs text-[#565f89] mt-0.5">{item.description}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </nav>
 
-            <div className="flex-1 min-h-0 mt-4 overflow-hidden">
-              <ScrollArea className="h-full pr-4">
-                <TabsContent value="ai" className="mt-0">
-                  <AiSettings
-                    settings={settings.ai}
-                    apiKeys={settings.api_keys}
-                    onChange={(ai) => updateSection("ai", ai)}
-                    onApiKeysChange={(keys) => updateSection("api_keys", keys)}
-                  />
-                </TabsContent>
-
-                <TabsContent value="terminal" className="mt-0">
-                  <TerminalSettings
-                    settings={settings.terminal}
-                    onChange={(terminal) => updateSection("terminal", terminal)}
-                  />
-                </TabsContent>
-
-                <TabsContent value="agent" className="mt-0">
-                  <AgentSettings
-                    settings={settings.agent}
-                    onChange={(agent) => updateSection("agent", agent)}
-                  />
-                </TabsContent>
-
-                <TabsContent value="advanced" className="mt-0">
-                  <AdvancedSettings
-                    settings={settings.advanced}
-                    privacy={settings.privacy}
-                    onChange={(advanced) => updateSection("advanced", advanced)}
-                    onPrivacyChange={(privacy) => updateSection("privacy", privacy)}
-                  />
-                </TabsContent>
+            {/* Main Content */}
+            <div className="flex-1 flex flex-col min-w-0">
+              <ScrollArea className="flex-1">
+                <div className="p-6 max-w-3xl">{renderContent()}</div>
               </ScrollArea>
             </div>
-          </Tabs>
+          </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <span className="text-[#f7768e]">Failed to load settings</span>
           </div>
         )}
 
-        <DialogFooter className="flex-shrink-0 gap-2 pt-4 border-t border-[#3b4261]">
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#3b4261] flex-shrink-0">
           <Button
             variant="outline"
             onClick={handleCancel}
@@ -168,9 +221,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             disabled={!settings || isSaving}
             className="bg-[#7aa2f7] text-[#1a1b26] hover:bg-[#7aa2f7]/80"
           >
-            {isSaving ? "Saving..." : "Save"}
+            {isSaving ? "Saving..." : "Save Changes"}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

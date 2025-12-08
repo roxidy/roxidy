@@ -26,6 +26,7 @@ export interface QbitSettings {
   trust: TrustSettings;
   privacy: PrivacySettings;
   advanced: AdvancedSettings;
+  sidecar: SidecarSettings;
 }
 
 /**
@@ -152,6 +153,50 @@ export interface PrivacySettings {
 export interface AdvancedSettings {
   enable_experimental: boolean;
   log_level: "error" | "warn" | "info" | "debug" | "trace";
+}
+
+/**
+ * Sidecar context capture settings.
+ */
+export interface SidecarSettings {
+  enabled: boolean;
+  synthesis_enabled: boolean;
+  synthesis_backend: SynthesisBackendType;
+  synthesis_vertex: SynthesisVertexSettings;
+  synthesis_openai: SynthesisOpenAiSettings;
+  synthesis_grok: SynthesisGrokSettings;
+  retention_days: number;
+  capture_tool_calls: boolean;
+  capture_reasoning: boolean;
+}
+
+export type SynthesisBackendType = "local" | "vertex_anthropic" | "openai" | "grok" | "template";
+
+/**
+ * Vertex AI settings for sidecar synthesis.
+ */
+export interface SynthesisVertexSettings {
+  project_id: string | null;
+  location: string | null;
+  model: string;
+  credentials_path: string | null;
+}
+
+/**
+ * OpenAI settings for sidecar synthesis.
+ */
+export interface SynthesisOpenAiSettings {
+  api_key: string | null;
+  model: string;
+  base_url: string | null;
+}
+
+/**
+ * Grok settings for sidecar synthesis.
+ */
+export interface SynthesisGrokSettings {
+  api_key: string | null;
+  model: string;
 }
 
 // =============================================================================
@@ -282,5 +327,28 @@ export const DEFAULT_SETTINGS: QbitSettings = {
   advanced: {
     enable_experimental: false,
     log_level: "info",
+  },
+  sidecar: {
+    enabled: true,
+    synthesis_enabled: true,
+    synthesis_backend: "template",
+    synthesis_vertex: {
+      project_id: null,
+      location: null,
+      model: "claude-sonnet-4-5-20250514",
+      credentials_path: null,
+    },
+    synthesis_openai: {
+      api_key: null,
+      model: "gpt-4o-mini",
+      base_url: null,
+    },
+    synthesis_grok: {
+      api_key: null,
+      model: "grok-2",
+    },
+    retention_days: 30,
+    capture_tool_calls: true,
+    capture_reasoning: true,
   },
 };

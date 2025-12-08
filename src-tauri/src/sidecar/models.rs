@@ -12,17 +12,21 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+#[cfg(feature = "local-llm")]
 use mistralrs::{GgufModelBuilder, Model, TextMessageRole, TextMessages};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "local-llm")]
 use tokio::sync::OnceCell;
 
 use super::storage::EMBEDDING_DIM;
 
 /// Global mistral.rs model singleton (expensive to load, keep it alive)
+#[cfg(feature = "local-llm")]
 static MISTRAL_MODEL: OnceCell<Arc<Model>> = OnceCell::const_new();
 
 /// Default max tokens for generation
+#[cfg(feature = "local-llm")]
 const DEFAULT_MAX_TOKENS: usize = 512;
 
 /// Status of model availability
@@ -242,6 +246,7 @@ impl ModelManager {
     }
 
     /// Initialize the LLM model (async, lazy loading via mistral.rs)
+    #[cfg(feature = "local-llm")]
     pub async fn init_llm_model(&self) -> Result<()> {
         // Check if already initialized
         if *self.llm_initialized.read() {
@@ -286,6 +291,12 @@ impl ModelManager {
         Ok(())
     }
 
+    /// Initialize the LLM model (stub when local-llm feature is disabled)
+    #[cfg(not(feature = "local-llm"))]
+    pub async fn init_llm_model(&self) -> Result<()> {
+        anyhow::bail!("Local LLM support is not enabled. Build with --features local-llm or use a remote backend.")
+    }
+
     /// Generate embeddings for texts
     pub fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         // Initialize model if not already done
@@ -325,14 +336,22 @@ impl ModelManager {
 
     /// Generate text with LLM (async, uses chat API internally)
     /// For instruction-tuned models like Qwen, this automatically applies chat templates.
+    #[cfg(feature = "local-llm")]
     pub async fn generate(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         // For backwards compatibility, treat the prompt as a user message
         self.generate_chat("You are a helpful assistant.", prompt, max_tokens)
             .await
     }
 
+    /// Generate text with LLM (stub when local-llm feature is disabled)
+    #[cfg(not(feature = "local-llm"))]
+    pub async fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String> {
+        anyhow::bail!("Local LLM support is not enabled. Build with --features local-llm or use a remote backend.")
+    }
+
     /// Generate text with a chat template (for instruction-tuned models like Qwen)
     /// This is the preferred method for Qwen models as mistral.rs handles templates automatically.
+    #[cfg(feature = "local-llm")]
     pub async fn generate_chat(
         &self,
         system: &str,
@@ -388,6 +407,17 @@ impl ModelManager {
         );
 
         Ok(content.trim().to_string())
+    }
+
+    /// Generate text with a chat template (stub when local-llm feature is disabled)
+    #[cfg(not(feature = "local-llm"))]
+    pub async fn generate_chat(
+        &self,
+        _system: &str,
+        _user: &str,
+        _max_tokens: usize,
+    ) -> Result<String> {
+        anyhow::bail!("Local LLM support is not enabled. Build with --features local-llm or use a remote backend.")
     }
 
     /// Download embedding model (fastembed handles this automatically)

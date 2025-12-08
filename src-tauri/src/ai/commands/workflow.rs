@@ -555,10 +555,12 @@ pub async fn start_workflow(
     let session_id = uuid::Uuid::new_v4().to_string();
 
     // Create the LLM executor with full agent capabilities AND workflow context
+    // Use get_or_create_event_tx() to support both legacy and runtime paths
+    let event_tx = bridge.get_or_create_event_tx();
     let executor: Arc<dyn WorkflowLlmExecutor> =
         Arc::new(BridgeLlmExecutor::with_workflow_context(
             bridge.client.clone(),
-            bridge.event_tx.clone(),
+            event_tx,
             bridge.tool_registry.clone(),
             bridge.workspace.clone(),
             bridge.indexer_state.clone(),
@@ -610,7 +612,7 @@ pub async fn start_workflow(
         .insert(session_id.clone(), workflow_session);
 
     // Emit workflow started event
-    let _ = bridge.event_tx.send(AiEvent::WorkflowStarted {
+    bridge.emit_event(AiEvent::WorkflowStarted {
         workflow_id: session_id.clone(),
         workflow_name: workflow_name.clone(),
         session_id: session_id.clone(),
@@ -681,7 +683,7 @@ pub async fn run_workflow_to_completion(
     // Emit workflow completed event
     if let Ok(bridge_guard) = state.ai_state.bridge.try_read() {
         if let Some(bridge) = bridge_guard.as_ref() {
-            let _ = bridge.event_tx.send(AiEvent::WorkflowCompleted {
+            bridge.emit_event(AiEvent::WorkflowCompleted {
                 workflow_id: session_id.clone(),
                 final_output: result.clone(),
                 total_duration_ms: 0, // TODO: track duration
@@ -757,7 +759,7 @@ pub async fn cancel_workflow(state: State<'_, AppState>, session_id: String) -> 
     // Emit workflow error/cancelled event
     if let Ok(bridge_guard) = state.ai_state.bridge.try_read() {
         if let Some(bridge) = bridge_guard.as_ref() {
-            let _ = bridge.event_tx.send(AiEvent::WorkflowError {
+            bridge.emit_event(AiEvent::WorkflowError {
                 workflow_id: session_id.clone(),
                 step_name: None,
                 error: "Workflow cancelled by user".to_string(),
