@@ -1,4 +1,13 @@
-"""Pytest configuration and fixtures for CLI integration tests."""
+"""Pytest configuration and fixtures for CLI integration tests.
+
+Timeout Configuration:
+- pytest-timeout: 180s (configured in pyproject.toml)
+- CLI subprocess: 120s default (should be less than pytest timeout)
+- Batch operations: 300s (multiple prompts take longer)
+
+If a test hangs, the subprocess timeout fires first (120s), giving a
+clear timeout error. If that fails, pytest-timeout kills it at 180s.
+"""
 
 import json
 import os
@@ -11,6 +20,29 @@ from typing import Generator
 
 import pytest
 from deepeval.models import GPTModel
+
+# Load environment variables from .env file in project root
+# This is loaded early so API keys are available for fixtures
+try:
+    from dotenv import load_dotenv
+    # Try project root first, then evals directory
+    for env_path in [Path(__file__).parent.parent / ".env", Path(__file__).parent / ".env"]:
+        if env_path.exists():
+            load_dotenv(env_path)
+            break
+except ImportError:
+    pass  # python-dotenv not installed, skip
+
+
+# =============================================================================
+# Timeout Constants
+# =============================================================================
+
+# Default timeout for single CLI operations (2 minutes)
+CLI_TIMEOUT_DEFAULT = 120
+
+# Timeout for batch operations with multiple prompts (5 minutes)
+CLI_TIMEOUT_BATCH = 300
 
 
 # =============================================================================
@@ -116,8 +148,13 @@ def get_tool_events(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
 
 
 def get_tool_calls(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
-    """Extract only tool_call events."""
-    return [e for e in events if e.event == "tool_call"]
+    """Extract tool call events (both tool_call and tool_auto_approved).
+
+    When tools are auto-approved by policy or learned patterns, the CLI
+    emits tool_auto_approved instead of tool_call. Both represent actual
+    tool invocations.
+    """
+    return [e for e in events if e.event in ("tool_call", "tool_auto_approved")]
 
 
 def get_tool_results(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
@@ -144,7 +181,7 @@ class JsonRunResult:
 
     @property
     def tool_calls(self) -> list[CliJsonEvent]:
-        """Get all tool_call events."""
+        """Get all tool call events (tool_call and tool_auto_approved)."""
         return get_tool_calls(self.events)
 
     @property
@@ -270,7 +307,7 @@ class CliRunner:
     def run(
         self,
         *args: str,
-        timeout: int = 120,
+        timeout: int = CLI_TIMEOUT_DEFAULT,
         check: bool = False,
     ) -> subprocess.CompletedProcess:
         """Run the CLI with given arguments."""
@@ -301,7 +338,7 @@ class CliRunner:
         auto_approve: bool = True,
         quiet: bool = False,
         json_output: bool = False,
-        timeout: int = 120,
+        timeout: int = CLI_TIMEOUT_DEFAULT,
     ) -> subprocess.CompletedProcess:
         """Run a single prompt."""
         self._log(f"\n>>> PROMPT: {prompt}")
@@ -323,7 +360,7 @@ class CliRunner:
         self,
         prompt: str,
         auto_approve: bool = True,
-        timeout: int = 120,
+        timeout: int = CLI_TIMEOUT_DEFAULT,
     ) -> JsonRunResult:
         """Run a single prompt in JSON mode and return parsed results.
 
@@ -361,7 +398,7 @@ class CliRunner:
         prompts: list[str],
         auto_approve: bool = True,
         quiet: bool = False,
-        timeout: int = 300,
+        timeout: int = CLI_TIMEOUT_BATCH,
     ) -> subprocess.CompletedProcess:
         """Run multiple prompts from a temp file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:

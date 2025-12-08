@@ -38,6 +38,7 @@ use super::tool_executors::{execute_indexer_tool, execute_tavily_tool, execute_w
 use super::tool_executors::{execute_workflow_tool, WorkflowToolContext};
 use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyManager};
 use crate::indexer::IndexerState;
+use crate::runtime::QbitRuntime;
 use crate::sidecar::{CaptureContext, SidecarState};
 use crate::tavily::TavilyState;
 
@@ -70,6 +71,8 @@ pub struct AgenticLoopContext<'a> {
     pub tool_config: &'a ToolConfig,
     /// Sidecar state for context capture (optional)
     pub sidecar_state: Option<&'a Arc<SidecarState>>,
+    /// Runtime for auto-approve checks (optional for backward compatibility)
+    pub runtime: Option<&'a Arc<dyn QbitRuntime>>,
 }
 
 /// Result of a single tool execution.
@@ -223,6 +226,24 @@ pub async fn execute_with_hitl(
         );
 
         return execute_tool_direct(tool_name, &effective_args, context, model, ctx).await;
+    }
+
+    // Step 4.5: Check if runtime has auto-approve enabled (CLI --auto-approve flag)
+    if let Some(runtime) = ctx.runtime {
+        if runtime.auto_approve() {
+            emit_event(
+                ctx,
+                AiEvent::ToolAutoApproved {
+                    request_id: tool_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args: effective_args.clone(),
+                    reason: "Auto-approved via --auto-approve flag".to_string(),
+                    source: crate::ai::events::ToolSource::Main,
+                },
+            );
+
+            return execute_tool_direct(tool_name, &effective_args, context, model, ctx).await;
+        }
     }
 
     // Step 5: Need approval - create request with stats

@@ -5,6 +5,9 @@ description = "Integration tests for qbit-cli"
 requires-python = ">=3.10"
 dependencies = [
     "pytest>=7.0",
+    "pytest-timeout>=2.0",
+    "pytest-xdist>=3.0",  # Parallel test execution across workers
+    "python-dotenv>=1.0",
     "deepeval>=2.0",
 ]
 
@@ -13,3 +16,8 @@ testpaths = ["."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Default timeout for all tests (3 minutes)
+# Individual tests can override with @pytest.mark.timeout(seconds)
+timeout = 180
+# Use thread method for timeout (works better with subprocesses)
+timeout_method = "thread"

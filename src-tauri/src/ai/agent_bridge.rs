@@ -568,6 +568,7 @@ impl AgentBridge {
             loop_detector: &self.loop_detector,
             tool_config: &self.tool_config,
             sidecar_state: self.sidecar_state.as_ref(),
+            runtime: self.runtime.as_ref(),
         };
 
         // Run the agentic loop
