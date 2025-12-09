@@ -9,6 +9,245 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+// ============================================================================
+// Enums
+// ============================================================================
+
+/// Priority level for goals
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalPriority {
+    High,
+    #[default]
+    Medium,
+    Low,
+}
+
+/// Source of a goal
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalSource {
+    /// From the initial user prompt
+    InitialPrompt,
+    /// User clarified or added this goal
+    UserClarification,
+    /// Agent inferred this goal from context
+    Inferred,
+}
+
+/// Category of a decision
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionCategory {
+    /// Architectural decisions (e.g., choosing patterns, structure)
+    Architecture,
+    /// Library or dependency choices
+    Library,
+    /// General approach or methodology
+    #[default]
+    Approach,
+    /// Trade-off decisions between competing concerns
+    Tradeoff,
+    /// Fallback decisions when primary approach fails
+    Fallback,
+}
+
+/// Confidence level for a decision
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionConfidence {
+    /// Very confident this is the right choice
+    High,
+    /// Reasonably confident
+    #[default]
+    Medium,
+    /// Somewhat uncertain
+    Low,
+    /// Significant uncertainty
+    Uncertain,
+}
+
+/// How well the agent understands a file
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UnderstandingLevel {
+    /// Read and understood the entire file
+    Full,
+    /// Partially read or skimmed
+    #[default]
+    Partial,
+    /// Only aware of the file's existence/path
+    Surface,
+}
+
+/// Source of an open question
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionSource {
+    /// Extracted from agent reasoning
+    #[default]
+    FromReasoning,
+    /// Asked by the user
+    FromUser,
+    /// Inferred from an error condition
+    InferredFromError,
+}
+
+/// Priority of an open question
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionPriority {
+    /// Cannot proceed without an answer
+    Blocking,
+    /// Should address soon
+    #[default]
+    Important,
+    /// Nice to know but not urgent
+    Informational,
+}
+
+// ============================================================================
+// Supporting Structs
+// ============================================================================
+
+/// A timestamped progress note for a goal
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressNote {
+    /// When this note was added
+    pub timestamp: DateTime<Utc>,
+    /// The progress note content
+    pub note: String,
+}
+
+impl ProgressNote {
+    /// Create a new progress note
+    pub fn new(note: String) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            note,
+        }
+    }
+}
+
+/// An alternative that was considered but rejected
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alternative {
+    /// Description of the alternative
+    pub description: String,
+    /// Why it was rejected
+    pub rejection_reason: String,
+}
+
+impl Alternative {
+    /// Create a new alternative
+    pub fn new(description: String, rejection_reason: String) -> Self {
+        Self {
+            description,
+            rejection_reason,
+        }
+    }
+
+    /// Create from a simple description (for backward compatibility)
+    pub fn from_description(description: String) -> Self {
+        Self {
+            description,
+            rejection_reason: String::new(),
+        }
+    }
+}
+
+/// A change made to a file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileChange {
+    /// When the change was made
+    pub timestamp: DateTime<Utc>,
+    /// Summary of what changed
+    pub summary: String,
+    /// Preview of the diff (first 200 chars)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_preview: Option<String>,
+}
+
+impl FileChange {
+    /// Create a new file change record
+    pub fn new(summary: String, diff_preview: Option<String>) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            summary,
+            diff_preview,
+        }
+    }
+}
+
+/// An open question or ambiguity in the session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenQuestion {
+    /// Unique identifier
+    pub id: Uuid,
+    /// The question itself
+    pub question: String,
+    /// When the question was identified
+    pub created_at: DateTime<Utc>,
+    /// Where this question came from
+    #[serde(default)]
+    pub source: QuestionSource,
+    /// Context about what prompted this question
+    #[serde(default)]
+    pub context: String,
+    /// How important is answering this question
+    #[serde(default)]
+    pub priority: QuestionPriority,
+    /// When the question was answered (if answered)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<DateTime<Utc>>,
+    /// The answer (if answered)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+}
+
+impl OpenQuestion {
+    /// Create a new open question
+    pub fn new(question: String, source: QuestionSource, context: String) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            question,
+            created_at: Utc::now(),
+            source,
+            context,
+            priority: QuestionPriority::Important,
+            answered_at: None,
+            answer: None,
+        }
+    }
+
+    /// Create from just a question string (for backward compatibility)
+    pub fn from_string(question: String) -> Self {
+        Self::new(question, QuestionSource::FromReasoning, String::new())
+    }
+
+    /// Create a blocking question
+    pub fn blocking(question: String, context: String) -> Self {
+        let mut q = Self::new(question, QuestionSource::FromReasoning, context);
+        q.priority = QuestionPriority::Blocking;
+        q
+    }
+
+    /// Answer the question
+    pub fn answer(&mut self, answer: String) {
+        self.answer = Some(answer);
+        self.answered_at = Some(Utc::now());
+    }
+
+    /// Check if the question has been answered
+    pub fn is_answered(&self) -> bool {
+        self.answer.is_some()
+    }
+}
+
+// ============================================================================
+// Main State Structs
+// ============================================================================
+
 /// Root session state containing all interpreted information about a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
@@ -37,7 +276,7 @@ pub struct SessionState {
     pub errors: Vec<ErrorEntry>,
 
     /// Unresolved questions or ambiguities
-    pub open_questions: Vec<String>,
+    pub open_questions: Vec<OpenQuestion>,
 }
 
 impl SessionState {
@@ -149,18 +388,57 @@ impl SessionState {
         }
     }
 
-    /// Add an open question
+    /// Add an open question (from string, for backward compatibility)
     pub fn add_open_question(&mut self, question: String) {
-        if !self.open_questions.contains(&question) {
+        // Check if this question already exists
+        if !self.open_questions.iter().any(|q| q.question == question) {
+            self.open_questions
+                .push(OpenQuestion::from_string(question));
+            self.updated_at = Utc::now();
+        }
+    }
+
+    /// Add an open question with full details
+    pub fn add_open_question_full(&mut self, question: OpenQuestion) {
+        // Check if this question already exists
+        if !self
+            .open_questions
+            .iter()
+            .any(|q| q.question == question.question)
+        {
             self.open_questions.push(question);
             self.updated_at = Utc::now();
         }
     }
 
-    /// Remove an open question (answered)
+    /// Remove an open question (answered) - by question text
     pub fn answer_question(&mut self, question: &str) {
-        self.open_questions.retain(|q| q != question);
+        self.open_questions.retain(|q| q.question != question);
         self.updated_at = Utc::now();
+    }
+
+    /// Answer a question by ID with an answer string
+    pub fn answer_question_by_id(&mut self, question_id: Uuid, answer: String) {
+        if let Some(q) = self.open_questions.iter_mut().find(|q| q.id == question_id) {
+            q.answer(answer);
+            self.updated_at = Utc::now();
+        }
+    }
+
+    /// Get unanswered questions
+    pub fn unanswered_questions(&self) -> Vec<&OpenQuestion> {
+        self.open_questions
+            .iter()
+            .filter(|q| !q.is_answered())
+            .collect()
+    }
+
+    /// Get blocking questions
+    pub fn blocking_questions(&self) -> Vec<&OpenQuestion> {
+        self.open_questions
+            .iter()
+            .filter(|q| q.priority == QuestionPriority::Blocking && !q.is_answered())
+            .collect()
     }
 
     /// Get the current primary goal (top of stack that isn't completed)
@@ -219,6 +497,19 @@ pub struct Goal {
 
     /// Sub-goals nested under this goal
     pub sub_goals: Vec<Goal>,
+
+    // === New fields (with defaults for backward compatibility) ===
+    /// Priority of this goal
+    #[serde(default)]
+    pub priority: GoalPriority,
+
+    /// What's blocking this goal (if anything)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_by: Option<String>,
+
+    /// Timestamped progress notes
+    #[serde(default)]
+    pub progress_notes: Vec<ProgressNote>,
 }
 
 impl Goal {
@@ -232,7 +523,17 @@ impl Goal {
             completed: false,
             completed_at: None,
             sub_goals: Vec::new(),
+            priority: GoalPriority::Medium,
+            blocked_by: None,
+            progress_notes: Vec::new(),
         }
+    }
+
+    /// Create a new goal with priority
+    pub fn with_priority(description: String, source: GoalSource, priority: GoalPriority) -> Self {
+        let mut goal = Self::new(description, source);
+        goal.priority = priority;
+        goal
     }
 
     /// Create a goal with a specific ID (for testing/deserialization)
@@ -245,6 +546,9 @@ impl Goal {
             completed: false,
             completed_at: None,
             sub_goals: Vec::new(),
+            priority: GoalPriority::Medium,
+            blocked_by: None,
+            progress_notes: Vec::new(),
         }
     }
 
@@ -264,18 +568,26 @@ impl Goal {
         let completed = self.sub_goals.iter().filter(|g| g.completed).count();
         (completed, self.sub_goals.len())
     }
-}
 
-/// Source of a goal
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum GoalSource {
-    /// From the initial user prompt
-    InitialPrompt,
-    /// User clarified or added this goal
-    UserClarification,
-    /// Agent inferred this goal from context
-    Inferred,
+    /// Add a progress note
+    pub fn add_progress_note(&mut self, note: String) {
+        self.progress_notes.push(ProgressNote::new(note));
+    }
+
+    /// Set what's blocking this goal
+    pub fn set_blocked_by(&mut self, blocker: String) {
+        self.blocked_by = Some(blocker);
+    }
+
+    /// Clear the blocker
+    pub fn clear_blocked(&mut self) {
+        self.blocked_by = None;
+    }
+
+    /// Check if the goal is blocked
+    pub fn is_blocked(&self) -> bool {
+        self.blocked_by.is_some()
+    }
 }
 
 /// A decision made by the agent
@@ -293,15 +605,43 @@ pub struct Decision {
     /// Why this choice was made
     pub rationale: String,
 
-    /// Alternatives that were considered but rejected
+    /// Alternatives that were considered but rejected (legacy: Vec<String>)
+    /// For new code, prefer using `alternatives` field with full Alternative structs
+    #[serde(default)]
     pub alternatives_rejected: Vec<String>,
 
     /// ID of the event that triggered this decision
     pub triggering_event_id: Uuid,
+
+    // === New fields (with defaults for backward compatibility) ===
+    /// Alternatives with rejection reasons
+    #[serde(default)]
+    pub alternatives: Vec<Alternative>,
+
+    /// Category of this decision
+    #[serde(default)]
+    pub category: DecisionCategory,
+
+    /// How confident the agent is in this decision
+    #[serde(default)]
+    pub confidence: DecisionConfidence,
+
+    /// Whether this decision can be easily reversed
+    #[serde(default = "default_true")]
+    pub reversible: bool,
+
+    /// Files affected by this decision
+    #[serde(default)]
+    pub related_files: Vec<PathBuf>,
+}
+
+/// Default value for reversible field
+fn default_true() -> bool {
+    true
 }
 
 impl Decision {
-    /// Create a new decision
+    /// Create a new decision (backward compatible)
     pub fn new(
         choice: String,
         rationale: String,
@@ -315,7 +655,59 @@ impl Decision {
             rationale,
             alternatives_rejected: alternatives,
             triggering_event_id: event_id,
+            alternatives: Vec::new(),
+            category: DecisionCategory::Approach,
+            confidence: DecisionConfidence::Medium,
+            reversible: true,
+            related_files: Vec::new(),
         }
+    }
+
+    /// Create a new decision with full details
+    pub fn new_full(
+        choice: String,
+        rationale: String,
+        alternatives: Vec<Alternative>,
+        event_id: Uuid,
+        category: DecisionCategory,
+        confidence: DecisionConfidence,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            choice,
+            rationale,
+            alternatives_rejected: Vec::new(),
+            triggering_event_id: event_id,
+            alternatives,
+            category,
+            confidence,
+            reversible: true,
+            related_files: Vec::new(),
+        }
+    }
+
+    /// Mark this decision as non-reversible
+    pub fn set_irreversible(&mut self) {
+        self.reversible = false;
+    }
+
+    /// Add a related file
+    pub fn add_related_file(&mut self, path: PathBuf) {
+        if !self.related_files.contains(&path) {
+            self.related_files.push(path);
+        }
+    }
+
+    /// Get all alternatives (combining legacy and new format)
+    pub fn all_alternatives(&self) -> Vec<Alternative> {
+        let mut alts = self.alternatives.clone();
+        for desc in &self.alternatives_rejected {
+            if !alts.iter().any(|a| a.description == *desc) {
+                alts.push(Alternative::from_description(desc.clone()));
+            }
+        }
+        alts
     }
 }
 
@@ -338,6 +730,27 @@ pub struct FileContext {
 
     /// Why this file matters to the current goal
     pub relevance: String,
+
+    // === New fields (with defaults for backward compatibility) ===
+    /// How well the agent understands this file
+    #[serde(default)]
+    pub understanding_level: UnderstandingLevel,
+
+    /// Key exports (functions, types, classes) from this file
+    #[serde(default)]
+    pub key_exports: Vec<String>,
+
+    /// Other files this file depends on
+    #[serde(default)]
+    pub dependencies: Vec<PathBuf>,
+
+    /// History of changes made to this file
+    #[serde(default)]
+    pub change_history: Vec<FileChange>,
+
+    /// Agent's notes about this file
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 impl FileContext {
@@ -349,7 +762,20 @@ impl FileContext {
             last_read_at: None,
             last_modified_at: None,
             relevance,
+            understanding_level: UnderstandingLevel::Surface,
+            key_exports: Vec::new(),
+            dependencies: Vec::new(),
+            change_history: Vec::new(),
+            notes: Vec::new(),
         }
+    }
+
+    /// Create with full understanding (file was fully read)
+    pub fn with_full_understanding(path: PathBuf, summary: String, relevance: String) -> Self {
+        let mut ctx = Self::new(path, summary, relevance);
+        ctx.understanding_level = UnderstandingLevel::Full;
+        ctx.mark_read();
+        ctx
     }
 
     /// Record that the file was read
@@ -357,14 +783,51 @@ impl FileContext {
         self.last_read_at = Some(Utc::now());
     }
 
+    /// Record that the file was read fully
+    pub fn mark_fully_read(&mut self) {
+        self.last_read_at = Some(Utc::now());
+        self.understanding_level = UnderstandingLevel::Full;
+    }
+
     /// Record that the file was modified
     pub fn mark_modified(&mut self) {
         self.last_modified_at = Some(Utc::now());
     }
 
+    /// Record a modification with details
+    pub fn record_modification(&mut self, summary: String, diff_preview: Option<String>) {
+        self.mark_modified();
+        self.change_history
+            .push(FileChange::new(summary, diff_preview));
+    }
+
     /// Update the summary
     pub fn update_summary(&mut self, summary: String) {
         self.summary = summary;
+    }
+
+    /// Add a key export
+    pub fn add_export(&mut self, export: String) {
+        if !self.key_exports.contains(&export) {
+            self.key_exports.push(export);
+        }
+    }
+
+    /// Add a dependency
+    pub fn add_dependency(&mut self, dep: PathBuf) {
+        if !self.dependencies.contains(&dep) {
+            self.dependencies.push(dep);
+        }
+    }
+
+    /// Add a note
+    pub fn add_note(&mut self, note: String) {
+        self.notes.push(note);
+    }
+
+    /// Get the number of changes made to this file
+    pub fn change_count(&self) -> usize {
+        self.change_history.len()
     }
 }
 

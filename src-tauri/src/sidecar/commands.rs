@@ -30,11 +30,21 @@ pub async fn sidecar_initialize(
     state: State<'_, AppState>,
     workspace_path: String,
 ) -> Result<(), String> {
+    // Initialize main sidecar storage
     state
         .sidecar_state
         .initialize(PathBuf::from(workspace_path))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Initialize Layer1 processor for session state tracking
+    state.sidecar_state.initialize_layer1().await.map_err(|e| {
+        tracing::warn!("Failed to initialize Layer1 processor: {}", e);
+        e.to_string()
+    })?;
+
+    tracing::info!("[sidecar] Initialization complete (storage + Layer1)");
+    Ok(())
 }
 
 /// Start a new capture session
@@ -90,7 +100,10 @@ pub async fn sidecar_generate_commit(
     state: State<'_, AppState>,
     session_id: Option<String>,
 ) -> Result<CommitDraft, String> {
-    tracing::info!("[sidecar-cmd] generate_commit called with session_id: {:?}", session_id);
+    tracing::info!(
+        "[sidecar-cmd] generate_commit called with session_id: {:?}",
+        session_id
+    );
 
     // Create synthesizer - need storage first
     let storage = state
@@ -122,13 +135,19 @@ pub async fn sidecar_generate_commit(
     let model_manager = Arc::new(super::models::ModelManager::new(config.models_dir.clone()));
 
     // Create the LLM backend based on config
-    let llm = match synthesis_llm::create_synthesis_llm(&config.synthesis_backend, model_manager.clone()).await {
-        Ok(llm) => llm,
-        Err(e) => {
-            tracing::warn!("[sidecar-cmd] Failed to create LLM backend, falling back to template: {}", e);
-            Arc::new(synthesis_llm::TemplateLlm) as Arc<dyn synthesis_llm::SynthesisLlm>
-        }
-    };
+    let llm =
+        match synthesis_llm::create_synthesis_llm(&config.synthesis_backend, model_manager.clone())
+            .await
+        {
+            Ok(llm) => llm,
+            Err(e) => {
+                tracing::warn!(
+                    "[sidecar-cmd] Failed to create LLM backend, falling back to template: {}",
+                    e
+                );
+                Arc::new(synthesis_llm::TemplateLlm) as Arc<dyn synthesis_llm::SynthesisLlm>
+            }
+        };
 
     let llm_enabled = config.synthesis_enabled && llm.is_available();
     tracing::info!(
@@ -138,14 +157,12 @@ pub async fn sidecar_generate_commit(
         llm_enabled
     );
 
-    let synthesizer = super::synthesis::Synthesizer::new(
-        storage,
-        model_manager,
-        llm,
-        llm_enabled,
-    );
+    let synthesizer = super::synthesis::Synthesizer::new(storage, model_manager, llm, llm_enabled);
 
-    tracing::info!("[sidecar-cmd] Synthesizing commit for session: {}", session_id);
+    tracing::info!(
+        "[sidecar-cmd] Synthesizing commit for session: {}",
+        session_id
+    );
     let result = synthesizer
         .synthesize_commit(session_id)
         .await
@@ -189,13 +206,16 @@ pub async fn sidecar_generate_summary(
     let config = state.sidecar_state.config();
     let model_manager = Arc::new(super::models::ModelManager::new(config.models_dir.clone()));
 
-    let llm = match synthesis_llm::create_synthesis_llm(&config.synthesis_backend, model_manager.clone()).await {
-        Ok(llm) => llm,
-        Err(e) => {
-            tracing::warn!("[sidecar-cmd] Failed to create LLM backend: {}", e);
-            Arc::new(synthesis_llm::TemplateLlm) as Arc<dyn synthesis_llm::SynthesisLlm>
-        }
-    };
+    let llm =
+        match synthesis_llm::create_synthesis_llm(&config.synthesis_backend, model_manager.clone())
+            .await
+        {
+            Ok(llm) => llm,
+            Err(e) => {
+                tracing::warn!("[sidecar-cmd] Failed to create LLM backend: {}", e);
+                Arc::new(synthesis_llm::TemplateLlm) as Arc<dyn synthesis_llm::SynthesisLlm>
+            }
+        };
 
     let synthesizer = super::synthesis::Synthesizer::new(
         storage,
@@ -225,13 +245,16 @@ pub async fn sidecar_query_history(
     let config = state.sidecar_state.config();
     let model_manager = Arc::new(super::models::ModelManager::new(config.models_dir.clone()));
 
-    let llm = match synthesis_llm::create_synthesis_llm(&config.synthesis_backend, model_manager.clone()).await {
-        Ok(llm) => llm,
-        Err(e) => {
-            tracing::warn!("[sidecar-cmd] Failed to create LLM backend: {}", e);
-            Arc::new(synthesis_llm::TemplateLlm) as Arc<dyn synthesis_llm::SynthesisLlm>
-        }
-    };
+    let llm =
+        match synthesis_llm::create_synthesis_llm(&config.synthesis_backend, model_manager.clone())
+            .await
+        {
+            Ok(llm) => llm,
+            Err(e) => {
+                tracing::warn!("[sidecar-cmd] Failed to create LLM backend: {}", e);
+                Arc::new(synthesis_llm::TemplateLlm) as Arc<dyn synthesis_llm::SynthesisLlm>
+            }
+        };
 
     let synthesizer = super::synthesis::Synthesizer::new(
         storage,
@@ -393,7 +416,10 @@ pub async fn sidecar_set_backend(
         .await
         .map_err(|e| format!("Failed to create backend: {}", e))?;
 
-    tracing::info!("[sidecar-cmd] Switched synthesis backend to: {}", llm.description());
+    tracing::info!(
+        "[sidecar-cmd] Switched synthesis backend to: {}",
+        llm.description()
+    );
     Ok(llm.description())
 }
 
@@ -594,6 +620,191 @@ pub async fn sidecar_create_indexes(state: State<'_, AppState>) -> Result<IndexS
     }
 
     Ok(status)
+}
+
+/// Get the current Layer 1 session state
+#[tauri::command]
+pub async fn sidecar_get_session_state(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Option<super::layer1::SessionState>, String> {
+    // Get session_id from param or current session
+    let session_uuid = if let Some(id) = session_id {
+        Uuid::parse_str(&id).map_err(|e| e.to_string())?
+    } else {
+        state
+            .sidecar_state
+            .current_session_id()
+            .ok_or_else(|| "No active session".to_string())?
+    };
+
+    // Call sidecar_state.get_layer1_state(uuid)
+    state
+        .sidecar_state
+        .get_layer1_state(session_uuid)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get injectable context string for debugging/preview
+#[tauri::command]
+pub async fn sidecar_get_injectable_context(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Get the session state first
+    let session_state = sidecar_get_session_state(session_id, state).await?;
+
+    match session_state {
+        Some(state) => Ok(super::layer1::api::get_injectable_context(&state)),
+        None => Ok(String::new()),
+    }
+}
+
+/// Get current goal stack
+#[tauri::command]
+pub async fn sidecar_get_goals(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<super::layer1::Goal>, String> {
+    let session_state = sidecar_get_session_state(session_id, state).await?;
+
+    match session_state {
+        Some(state) => Ok(state.goal_stack),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Get file context map
+#[tauri::command]
+pub async fn sidecar_get_file_contexts(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, super::layer1::FileContext>, String> {
+    let session_state = sidecar_get_session_state(session_id, state).await?;
+
+    match session_state {
+        Some(state) => {
+            // Convert PathBuf keys to String for JSON serialization
+            let mut result = std::collections::HashMap::new();
+            for (path, context) in state.file_contexts {
+                result.insert(path.display().to_string(), context);
+            }
+            Ok(result)
+        }
+        None => Ok(std::collections::HashMap::new()),
+    }
+}
+
+/// Get decision log
+#[tauri::command]
+pub async fn sidecar_get_decisions(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<super::layer1::Decision>, String> {
+    let session_state = sidecar_get_session_state(session_id, state).await?;
+
+    match session_state {
+        Some(state) => Ok(state.decisions),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Get error journal
+#[tauri::command]
+pub async fn sidecar_get_errors(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<super::layer1::ErrorEntry>, String> {
+    let session_state = sidecar_get_session_state(session_id, state).await?;
+
+    match session_state {
+        Some(state) => Ok(state.errors),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Get open questions
+#[tauri::command]
+pub async fn sidecar_get_open_questions(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<super::layer1::OpenQuestion>, String> {
+    let session_state = sidecar_get_session_state(session_id, state).await?;
+
+    match session_state {
+        Some(state) => Ok(state.open_questions),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Answer an open question
+#[tauri::command]
+pub async fn sidecar_answer_question(
+    question_id: String,
+    answer: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Parse question_id as UUID
+    let question_uuid = Uuid::parse_str(&question_id).map_err(|e| e.to_string())?;
+
+    // Get the current session's state
+    let session_id = state
+        .sidecar_state
+        .current_session_id()
+        .ok_or_else(|| "No active session".to_string())?;
+
+    // Get the layer1 storage
+    let mut session_state = state
+        .sidecar_state
+        .get_layer1_state(session_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Session state not found".to_string())?;
+
+    // Answer the question
+    session_state.answer_question_by_id(question_uuid, answer);
+
+    // Note: The state is updated in-memory. For persistence, we would need to
+    // save it back to storage, but that requires access to Layer1Storage which
+    // isn't exposed in the current SidecarState API. This will be handled by
+    // the Layer1Processor when it processes events.
+
+    Ok(())
+}
+
+/// Mark a goal as completed manually
+#[tauri::command]
+pub async fn sidecar_complete_goal(
+    goal_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Parse goal_id as UUID
+    let goal_uuid = Uuid::parse_str(&goal_id).map_err(|e| e.to_string())?;
+
+    // Get the current session's state
+    let session_id = state
+        .sidecar_state
+        .current_session_id()
+        .ok_or_else(|| "No active session".to_string())?;
+
+    // Get the layer1 storage
+    let mut session_state = state
+        .sidecar_state
+        .get_layer1_state(session_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Session state not found".to_string())?;
+
+    // Complete the goal
+    session_state.complete_goal(goal_uuid);
+
+    // Note: The state is updated in-memory. For persistence, we would need to
+    // save it back to storage, but that requires access to Layer1Storage which
+    // isn't exposed in the current SidecarState API. This will be handled by
+    // the Layer1Processor when it processes events.
+
+    Ok(())
 }
 
 /// Truncate a string to a maximum length

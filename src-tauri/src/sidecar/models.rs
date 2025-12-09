@@ -6,6 +6,7 @@
 //! Models:
 //! - Embeddings: fastembed with AllMiniLM-L6-V2 (~30MB, 384 dimensions)
 //! - LLM: Qwen 2.5 0.5B Instruct Q4_K_M (~400MB) via mistral.rs
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -190,7 +191,8 @@ impl ModelManager {
     /// Get the path to the embedding model (fastembed cache directory)
     pub fn embedding_model_path(&self) -> PathBuf {
         // fastembed caches models with this naming convention
-        self.models_dir.join("models--Qdrant--all-MiniLM-L6-v2-onnx")
+        self.models_dir
+            .join("models--Qdrant--all-MiniLM-L6-v2-onnx")
     }
 
     /// Get the path to the LLM model
@@ -363,10 +365,7 @@ impl ModelManager {
             self.init_llm_model().await?;
         }
 
-        let model = MISTRAL_MODEL
-            .get()
-            .context("LLM not initialized")?
-            .clone();
+        let model = MISTRAL_MODEL.get().context("LLM not initialized")?.clone();
 
         let max_tokens = if max_tokens == 0 {
             DEFAULT_MAX_TOKENS

@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use crate::error::{QbitError, Result};
 use parking_lot::Mutex;
-use portable_pty::{Child, MasterPty, PtySize};
 #[cfg(feature = "tauri")]
 use portable_pty::{native_pty_system, CommandBuilder};
+use portable_pty::{Child, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(feature = "tauri")]

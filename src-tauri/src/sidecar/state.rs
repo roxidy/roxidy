@@ -4,6 +4,7 @@
 //! - Active session tracking
 //! - Event buffering
 //! - Coordination with the async processor
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,7 +18,8 @@ use super::config::SidecarConfig;
 use super::events::{
     Checkpoint, CommitBoundaryDetector, CommitBoundaryInfo, EventType, SessionEvent, SidecarSession,
 };
-use super::processor::{ProcessorHandle, ProcessorTask, SidecarProcessor};
+use super::layer1::{Layer1Config, Layer1Processor, Layer1Storage, Layer1Task, SessionState};
+use super::processor::{ProcessorTask, SidecarProcessor};
 use super::storage::SidecarStorage;
 
 /// Status of the sidecar system
@@ -78,6 +80,12 @@ pub struct SidecarState {
 
     /// Commit boundary detector
     commit_boundary_detector: RwLock<CommitBoundaryDetector>,
+
+    /// Layer 1 processor task sender
+    layer1_tx: RwLock<Option<mpsc::UnboundedSender<Layer1Task>>>,
+
+    /// Layer 1 storage
+    layer1_storage: RwLock<Option<Arc<Layer1Storage>>>,
 }
 
 impl SidecarState {
@@ -96,6 +104,8 @@ impl SidecarState {
             embeddings_ready: RwLock::new(false),
             llm_ready: RwLock::new(false),
             commit_boundary_detector: RwLock::new(CommitBoundaryDetector::new()),
+            layer1_tx: RwLock::new(None),
+            layer1_storage: RwLock::new(None),
         }
     }
 
@@ -115,6 +125,8 @@ impl SidecarState {
             embeddings_ready: RwLock::new(false),
             llm_ready: RwLock::new(false),
             commit_boundary_detector: RwLock::new(CommitBoundaryDetector::new()),
+            layer1_tx: RwLock::new(None),
+            layer1_storage: RwLock::new(None),
         }
     }
 
@@ -159,6 +171,51 @@ impl SidecarState {
             "[sidecar] Initialized successfully for workspace: {:?}",
             workspace_path
         );
+        Ok(())
+    }
+
+    /// Initialize Layer 1 processor for session state tracking
+    pub async fn initialize_layer1(&self) -> anyhow::Result<()> {
+        tracing::info!("[sidecar] Initializing Layer 1 processor...");
+
+        // Get storage - must be initialized first
+        let sidecar_storage =
+            self.storage.read().clone().ok_or_else(|| {
+                anyhow::anyhow!("Storage not initialized - call initialize() first")
+            })?;
+
+        // Create Layer1 storage from sidecar storage
+        let layer1_storage = Arc::new(Layer1Storage::from_sidecar_storage(&sidecar_storage).await?);
+        *self.layer1_storage.write() = Some(layer1_storage.clone());
+
+        // Create model manager for LLM
+        let (models_dir, synthesis_backend) = {
+            let config = self.config.read();
+            (config.models_dir.clone(), config.synthesis_backend.clone())
+        };
+
+        let model_manager = Arc::new(super::models::ModelManager::new(models_dir));
+
+        // Create synthesis LLM
+        let llm =
+            super::synthesis_llm::create_synthesis_llm(&synthesis_backend, model_manager.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "[sidecar] Failed to create LLM for Layer1, using template: {}",
+                        e
+                    );
+                    Arc::new(super::synthesis_llm::TemplateLlm)
+                });
+
+        // Create Layer1 config
+        let layer1_config = Layer1Config::default();
+
+        // Spawn the Layer1 processor
+        let tx = Layer1Processor::spawn(layer1_storage, llm, layer1_config);
+        *self.layer1_tx.write() = Some(tx);
+
+        tracing::info!("[sidecar] Layer 1 processor initialized successfully");
         Ok(())
     }
 
@@ -300,6 +357,14 @@ impl SidecarState {
                 session.event_count,
                 session.files_touched.len()
             );
+        }
+
+        // Forward to Layer 1 processor for session state tracking
+        // This captures user_prompt events that don't go through CaptureContext
+        if let Some(tx) = self.layer1_tx() {
+            if let Err(e) = tx.send(Layer1Task::ProcessEvent(Box::new(event.clone()))) {
+                tracing::trace!("[sidecar] Failed to forward event to Layer1: {}", e);
+            }
         }
 
         // Add to buffer
@@ -538,6 +603,22 @@ impl SidecarState {
         self.commit_boundary_detector.write().check_boundary(event)
     }
 
+    /// Get the Layer1 state for a session
+    pub async fn get_layer1_state(&self, session_id: Uuid) -> anyhow::Result<Option<SessionState>> {
+        let storage = self
+            .layer1_storage
+            .read()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Layer1 not initialized"))?;
+
+        storage.get_latest_state(session_id).await
+    }
+
+    /// Get the Layer1 task sender (for internal use by capture)
+    pub(super) fn layer1_tx(&self) -> Option<mpsc::UnboundedSender<Layer1Task>> {
+        self.layer1_tx.read().clone()
+    }
+
     /// Shutdown the sidecar synchronously (deprecated, use shutdown_async for graceful shutdown)
     pub fn shutdown(&self) {
         tracing::info!("Shutting down sidecar (sync)");
@@ -550,9 +631,15 @@ impl SidecarState {
             let _ = tx.send(ProcessorTask::Shutdown);
         }
 
+        // Send shutdown signal to Layer1 processor (but don't wait)
+        if let Some(tx) = self.layer1_tx.write().take() {
+            let _ = tx.send(Layer1Task::Shutdown);
+        }
+
         // Clear state
         *self.storage.write() = None;
         *self.workspace_root.write() = None;
+        *self.layer1_storage.write() = None;
     }
 
     /// Gracefully shutdown the sidecar, waiting for the processor to complete.
@@ -567,6 +654,11 @@ impl SidecarState {
         // Send shutdown signal to processor
         if let Some(tx) = self.processor_tx.write().take() {
             let _ = tx.send(ProcessorTask::Shutdown);
+        }
+
+        // Send shutdown signal to Layer1 processor
+        if let Some(tx) = self.layer1_tx.write().take() {
+            let _ = tx.send(Layer1Task::Shutdown);
         }
 
         // Wait for processor to complete (with timeout)
@@ -587,6 +679,7 @@ impl SidecarState {
         // Clear state
         *self.storage.write() = None;
         *self.workspace_root.write() = None;
+        *self.layer1_storage.write() = None;
 
         tracing::info!("Sidecar shutdown complete");
     }

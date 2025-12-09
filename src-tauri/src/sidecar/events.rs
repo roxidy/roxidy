@@ -2,6 +2,7 @@
 //!
 //! These types represent the semantic information extracted from agent interactions
 //! that we want to persist and query later.
+#![allow(dead_code)]
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -369,6 +370,7 @@ impl SessionEvent {
     /// Create a tool call event with full capture data
     ///
     /// This is the enhanced version that captures tool output, accessed files, and diffs.
+    #[allow(clippy::too_many_arguments)]
     pub fn tool_call_with_output(
         session_id: Uuid,
         tool_name: &str,
@@ -1108,7 +1110,8 @@ message without cwd"#;
     #[test]
     fn test_tool_call_with_output_edit() {
         let session_id = Uuid::new_v4();
-        let diff = "--- src/lib.rs\n+++ src/lib.rs\n@@ -1,1 +1,2 @@\n-old line\n+new line\n+added line";
+        let diff =
+            "--- src/lib.rs\n+++ src/lib.rs\n@@ -1,1 +1,2 @@\n-old line\n+new line\n+added line";
         let event = SessionEvent::tool_call_with_output(
             session_id,
             "edit_file",
@@ -1145,7 +1148,11 @@ message without cwd"#;
         // Should be truncated to ~2000 chars (use char count, not byte len due to ellipsis)
         assert!(event.tool_output.is_some());
         let char_count = event.tool_output.as_ref().unwrap().chars().count();
-        assert!(char_count <= 2000, "Expected <= 2000 chars, got {}", char_count);
+        assert!(
+            char_count <= 2000,
+            "Expected <= 2000 chars, got {}",
+            char_count
+        );
     }
 
     #[test]
@@ -1167,7 +1174,11 @@ message without cwd"#;
         // Should be truncated to ~4000 chars (use char count, not byte len due to ellipsis)
         assert!(event.diff.is_some());
         let char_count = event.diff.as_ref().unwrap().chars().count();
-        assert!(char_count <= 4000, "Expected <= 4000 chars, got {}", char_count);
+        assert!(
+            char_count <= 4000,
+            "Expected <= 4000 chars, got {}",
+            char_count
+        );
     }
 
     #[test]
@@ -1213,10 +1224,7 @@ message without cwd"#;
         assert_eq!(extract_xml_tag("<other>value</other>", "tag"), None);
 
         // Empty value
-        assert_eq!(
-            extract_xml_tag("<tag></tag>", "tag"),
-            Some("".to_string())
-        );
+        assert_eq!(extract_xml_tag("<tag></tag>", "tag"), Some("".to_string()));
     }
 
     #[test]
@@ -1428,7 +1436,10 @@ message without cwd"#;
             FileOperation::Modify,
             None,
         );
-        assert!(!file_edit.should_embed(), "file_edit should NOT be embedded");
+        assert!(
+            !file_edit.should_embed(),
+            "file_edit should NOT be embedded"
+        );
 
         // Regular tool calls should NOT be embedded
         let tool_call = SessionEvent::tool_call_with_output(
@@ -1441,7 +1452,10 @@ message without cwd"#;
             vec![PathBuf::from("test.rs")],
             None,
         );
-        assert!(!tool_call.should_embed(), "write tool should NOT be embedded");
+        assert!(
+            !tool_call.should_embed(),
+            "write tool should NOT be embedded"
+        );
 
         // Read tool calls WITH output SHOULD be embedded
         let read_tool = SessionEvent::tool_call_with_output(
@@ -1454,7 +1468,10 @@ message without cwd"#;
             vec![],
             None,
         );
-        assert!(read_tool.should_embed(), "read_file with output should be embedded");
+        assert!(
+            read_tool.should_embed(),
+            "read_file with output should be embedded"
+        );
 
         // Read tool without output should NOT be embedded
         let read_no_output = SessionEvent::tool_call_with_output(
@@ -1467,7 +1484,10 @@ message without cwd"#;
             vec![],
             None,
         );
-        assert!(!read_no_output.should_embed(), "read_file without output should NOT be embedded");
+        assert!(
+            !read_no_output.should_embed(),
+            "read_file without output should NOT be embedded"
+        );
 
         // Grep tool with output should be embedded
         let grep_tool = SessionEvent::tool_call_with_output(
@@ -1480,6 +1500,9 @@ message without cwd"#;
             vec![],
             None,
         );
-        assert!(grep_tool.should_embed(), "grep with output should be embedded");
+        assert!(
+            grep_tool.should_embed(),
+            "grep with output should be embedded"
+        );
     }
 }

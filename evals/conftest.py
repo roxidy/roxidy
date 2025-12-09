@@ -79,28 +79,35 @@ class CliJsonEvent:
         return self.data.get(key, default)
 
 
-def parse_json_output(stdout: str) -> list[CliJsonEvent]:
+def parse_json_output(stdout: str, strict: bool = False) -> list[CliJsonEvent]:
     """Parse JSONL output from CLI into structured events.
 
     Args:
         stdout: Raw stdout from CLI with --json flag
+        strict: If True, raise on invalid JSON lines. If False, skip them.
 
     Returns:
         List of CliJsonEvent objects in order received
 
     Raises:
-        ValueError: If any line contains invalid JSON
+        ValueError: If strict=True and any line contains invalid JSON
     """
     events = []
     for line in stdout.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
+        # Skip lines that don't look like JSON (don't start with '{')
+        if not line.startswith("{"):
+            continue
         try:
             data = json.loads(line)
             events.append(CliJsonEvent.from_dict(data))
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in CLI output: {line!r}") from e
+            if strict:
+                raise ValueError(f"Invalid JSON in CLI output: {line!r}") from e
+            # Non-strict mode: skip invalid JSON lines (e.g., log messages)
+            continue
     return events
 
 

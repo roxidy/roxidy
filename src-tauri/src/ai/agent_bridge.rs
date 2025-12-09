@@ -13,6 +13,7 @@
 //! - `bridge_hitl` - HITL approval handling
 //! - `bridge_policy` - Tool policies and loop protection
 //! - `bridge_context` - Context window management
+#![allow(dead_code)]
 //!
 //! Core execution logic is in:
 //! - `agentic_loop` - Main tool execution loop
@@ -316,7 +317,7 @@ impl AgentBridge {
 
         // Emit through runtime abstraction if available
         if let Some(ref rt) = self.runtime {
-            if let Err(e) = rt.emit(RuntimeEvent::Ai(event)) {
+            if let Err(e) = rt.emit(RuntimeEvent::Ai(Box::new(event))) {
                 tracing::warn!("Failed to emit event through runtime: {}", e);
             }
         }
@@ -344,7 +345,7 @@ impl AgentBridge {
 
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
-                if let Err(e) = runtime.emit(RuntimeEvent::Ai(event)) {
+                if let Err(e) = runtime.emit(RuntimeEvent::Ai(Box::new(event))) {
                     tracing::warn!("Failed to forward event to runtime: {}", e);
                 }
             }
@@ -499,8 +500,20 @@ impl AgentBridge {
     ) -> Result<String> {
         // Build system prompt
         let workspace_path = self.workspace.read().await;
-        let system_prompt = build_system_prompt(&workspace_path);
+        let mut system_prompt = build_system_prompt(&workspace_path);
         drop(workspace_path);
+
+        // Inject Layer 1 session context if available
+        if let Some(session_context) = self.get_session_context().await {
+            if !session_context.is_empty() {
+                tracing::debug!(
+                    "[agent] Injecting Layer 1 session context ({} chars)",
+                    session_context.len()
+                );
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&session_context);
+            }
+        }
 
         // Start session for persistence
         self.start_session().await;
@@ -647,5 +660,17 @@ impl AgentBridge {
             .into_iter()
             .map(|name| serde_json::json!({ "name": name }))
             .collect()
+    }
+
+    /// Get Layer 1 session context for injection into agent prompt
+    pub async fn get_session_context(&self) -> Option<String> {
+        let sidecar = self.sidecar_state.as_ref()?;
+        let session_id = sidecar.current_session_id()?;
+
+        // Use the get_layer1_state method
+        let state = sidecar.get_layer1_state(session_id).await.ok()??;
+
+        // Use the existing get_injectable_context function from layer1::api
+        Some(crate::sidecar::layer1::get_injectable_context(&state))
     }
 }

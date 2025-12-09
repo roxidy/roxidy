@@ -54,7 +54,7 @@ function extractSessionTitle(initialRequest: string | undefined): string {
 
   // Truncate if too long
   if (cleaned.length > 80) {
-    return cleaned.slice(0, 77) + "...";
+    return `${cleaned.slice(0, 77)}...`;
   }
 
   return cleaned;
@@ -178,9 +178,9 @@ export function SessionHistory({ className, onSelectSession }: SessionHistoryPro
   const truncatePath = (path: string, maxLength: number = 30) => {
     if (path.length <= maxLength) return path;
     const parts = path.split("/");
-    if (parts.length <= 2) return "..." + path.slice(-maxLength);
+    if (parts.length <= 2) return `...${path.slice(-maxLength)}`;
     // Keep the last two parts of the path
-    return ".../" + parts.slice(-2).join("/");
+    return `.../${parts.slice(-2).join("/")}`;
   };
 
   const getEventIcon = (event: SessionEvent) => {

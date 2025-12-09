@@ -67,10 +67,7 @@ impl Args {
         })?;
 
         if !canonical.is_dir() {
-            anyhow::bail!(
-                "Workspace '{}' is not a directory",
-                canonical.display()
-            );
+            anyhow::bail!("Workspace '{}' is not a directory", canonical.display());
         }
 
         Ok(canonical)

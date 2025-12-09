@@ -52,15 +52,17 @@ use settings::{
 };
 #[cfg(feature = "tauri")]
 use sidecar::{
-    sidecar_available_backends, sidecar_cleanup, sidecar_clear_commit_boundary,
-    sidecar_create_indexes, sidecar_current_session, sidecar_download_models, sidecar_end_session,
-    sidecar_export_session, sidecar_export_session_to_file, sidecar_generate_commit,
-    sidecar_generate_summary, sidecar_get_config, sidecar_get_session_checkpoints,
-    sidecar_get_session_events, sidecar_import_session, sidecar_import_session_from_file,
-    sidecar_index_status, sidecar_initialize, sidecar_list_sessions, sidecar_models_status,
-    sidecar_pending_files, sidecar_query_history, sidecar_search_events, sidecar_set_backend,
-    sidecar_set_config, sidecar_shutdown, sidecar_start_session, sidecar_status,
-    sidecar_storage_stats,
+    sidecar_answer_question, sidecar_available_backends, sidecar_cleanup,
+    sidecar_clear_commit_boundary, sidecar_complete_goal, sidecar_create_indexes,
+    sidecar_current_session, sidecar_download_models, sidecar_end_session, sidecar_export_session,
+    sidecar_export_session_to_file, sidecar_generate_commit, sidecar_generate_summary,
+    sidecar_get_config, sidecar_get_decisions, sidecar_get_errors, sidecar_get_file_contexts,
+    sidecar_get_goals, sidecar_get_injectable_context, sidecar_get_open_questions,
+    sidecar_get_session_checkpoints, sidecar_get_session_events, sidecar_get_session_state,
+    sidecar_import_session, sidecar_import_session_from_file, sidecar_index_status,
+    sidecar_initialize, sidecar_list_sessions, sidecar_models_status, sidecar_pending_files,
+    sidecar_query_history, sidecar_search_events, sidecar_set_backend, sidecar_set_config,
+    sidecar_shutdown, sidecar_start_session, sidecar_status, sidecar_storage_stats,
 };
 #[cfg(feature = "tauri")]
 use state::AppState;
@@ -250,6 +252,16 @@ pub fn run() {
             sidecar_create_indexes,
             sidecar_set_backend,
             sidecar_available_backends,
+            // Layer 1 commands
+            sidecar_get_session_state,
+            sidecar_get_injectable_context,
+            sidecar_get_goals,
+            sidecar_get_file_contexts,
+            sidecar_get_decisions,
+            sidecar_get_errors,
+            sidecar_get_open_questions,
+            sidecar_answer_question,
+            sidecar_complete_goal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

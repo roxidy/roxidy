@@ -28,6 +28,18 @@ pub struct Layer1Config {
     pub snapshot_interval: usize,
     /// Maximum snapshots to keep per session
     pub max_snapshots_per_session: usize,
+
+    // === Update frequency controls ===
+    /// Events between narrative updates (0 = update on every significant event)
+    pub narrative_update_interval: usize,
+    /// Maximum file contexts to track per session
+    pub max_file_contexts: usize,
+    /// Maximum decisions to store per session
+    pub max_decisions: usize,
+    /// Maximum error entries to store per session
+    pub max_errors: usize,
+    /// Maximum open questions to track per session
+    pub max_open_questions: usize,
 }
 
 impl Default for Layer1Config {
@@ -36,14 +48,26 @@ impl Default for Layer1Config {
             use_llm: true,
             snapshot_interval: 10,
             max_snapshots_per_session: 50,
+            narrative_update_interval: 5,
+            max_file_contexts: 100,
+            max_decisions: 50,
+            max_errors: 30,
+            max_open_questions: 20,
         }
     }
+}
+
+/// Per-session tracking for update frequency
+#[derive(Debug, Default)]
+struct SessionUpdateTracker {
+    /// Events since last narrative update
+    events_since_narrative: usize,
 }
 
 /// Tasks that the Layer 1 processor can handle
 pub enum Layer1Task {
     /// Process a new event
-    ProcessEvent(SessionEvent),
+    ProcessEvent(Box<SessionEvent>),
     /// Take a snapshot of the current state
     TakeSnapshot { session_id: Uuid, reason: String },
     /// Initialize state for a new session
@@ -69,6 +93,8 @@ pub struct Layer1Processor {
     config: Layer1Config,
     /// Events processed since last snapshot (per session)
     events_since_snapshot: Arc<RwLock<HashMap<Uuid, usize>>>,
+    /// Per-session update tracking
+    update_trackers: Arc<RwLock<HashMap<Uuid, SessionUpdateTracker>>>,
 }
 
 impl Layer1Processor {
@@ -84,6 +110,7 @@ impl Layer1Processor {
             llm,
             config,
             events_since_snapshot: Arc::new(RwLock::new(HashMap::new())),
+            update_trackers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -110,7 +137,7 @@ impl Layer1Processor {
         while let Some(task) = rx.recv().await {
             match task {
                 Layer1Task::ProcessEvent(event) => {
-                    self.handle_event(event).await;
+                    self.handle_event(*event).await;
                 }
                 Layer1Task::TakeSnapshot { session_id, reason } => {
                     self.handle_snapshot(session_id, &reason).await;
@@ -175,7 +202,10 @@ impl Layer1Processor {
             self.process_with_rules(&state, &event)
         };
 
-        if let Some(new_state) = updated_state {
+        if let Some(mut new_state) = updated_state {
+            // Enforce limits on collections
+            self.enforce_limits(&mut new_state);
+
             // Log changes
             if !changes.is_empty() {
                 tracing::debug!(
@@ -335,14 +365,13 @@ impl Layer1Processor {
 
                 // Check for completion signals
                 let lower = content.to_lowercase();
-                if lower.contains("done")
+                if (lower.contains("done")
                     || lower.contains("complete")
-                    || lower.contains("finished")
+                    || lower.contains("finished"))
+                    && new_state.current_goal().is_some()
                 {
-                    if new_state.current_goal().is_some() {
-                        new_state.complete_current_goal();
-                        changes.push("Marked current goal as complete".to_string());
-                    }
+                    new_state.complete_current_goal();
+                    changes.push("Marked current goal as complete".to_string());
                 }
 
                 // Check for questions/uncertainties
@@ -512,7 +541,10 @@ impl Layer1Processor {
         if changes.iter().any(|c| c.contains("decision")) {
             return snapshot_reasons::DECISION_RECORDED.to_string();
         }
-        if changes.iter().any(|c| c.contains("error") && c.contains("resolved")) {
+        if changes
+            .iter()
+            .any(|c| c.contains("error") && c.contains("resolved"))
+        {
             return snapshot_reasons::ERROR_RESOLVED.to_string();
         }
         if changes.iter().any(|c| c.contains("error")) {
@@ -529,7 +561,11 @@ impl Layer1Processor {
             if let Err(e) = self.storage.save_snapshot(&state, reason).await {
                 tracing::warn!("[layer1] Failed to save snapshot: {}", e);
             } else {
-                tracing::debug!("[layer1] Saved snapshot for session {} ({})", session_id, reason);
+                tracing::debug!(
+                    "[layer1] Saved snapshot for session {} ({})",
+                    session_id,
+                    reason
+                );
             }
 
             // Cleanup old snapshots
@@ -549,6 +585,9 @@ impl Layer1Processor {
 
         self.states.write().insert(session_id, state.clone());
         self.events_since_snapshot.write().insert(session_id, 0);
+        self.update_trackers
+            .write()
+            .insert(session_id, SessionUpdateTracker::default());
 
         if let Err(e) = self
             .storage
@@ -583,6 +622,7 @@ impl Layer1Processor {
         // Remove from in-memory state
         self.states.write().remove(&session_id);
         self.events_since_snapshot.write().remove(&session_id);
+        self.update_trackers.write().remove(&session_id);
 
         tracing::info!("[layer1] Ended session {}", session_id);
     }
@@ -595,6 +635,87 @@ impl Layer1Processor {
     /// Get all active session IDs
     pub fn active_sessions(&self) -> Vec<Uuid> {
         self.states.read().keys().copied().collect()
+    }
+
+    /// Enforce configured limits on state collections
+    /// This removes the oldest items when limits are exceeded
+    fn enforce_limits(&self, state: &mut SessionState) {
+        // Limit file contexts (remove oldest by last_read_at or last_modified_at)
+        if state.file_contexts.len() > self.config.max_file_contexts {
+            let mut contexts: Vec<_> = state.file_contexts.drain().collect();
+            contexts.sort_by(|(_, a), (_, b)| {
+                let a_time = a.last_modified_at.or(a.last_read_at);
+                let b_time = b.last_modified_at.or(b.last_read_at);
+                b_time.cmp(&a_time) // Most recent first
+            });
+            contexts.truncate(self.config.max_file_contexts);
+            state.file_contexts = contexts.into_iter().collect();
+        }
+
+        // Limit decisions (keep most recent)
+        if state.decisions.len() > self.config.max_decisions {
+            let excess = state.decisions.len() - self.config.max_decisions;
+            state.decisions.drain(0..excess);
+        }
+
+        // Limit errors (keep most recent)
+        if state.errors.len() > self.config.max_errors {
+            let excess = state.errors.len() - self.config.max_errors;
+            state.errors.drain(0..excess);
+        }
+
+        // Limit open questions (keep unanswered ones, oldest first)
+        if state.open_questions.len() > self.config.max_open_questions {
+            // Partition into answered and unanswered
+            let (answered, mut unanswered): (Vec<_>, Vec<_>) = state
+                .open_questions
+                .drain(..)
+                .partition(|q| q.is_answered());
+
+            // Keep most recent unanswered questions
+            if unanswered.len() > self.config.max_open_questions {
+                unanswered.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                unanswered.truncate(self.config.max_open_questions);
+            }
+
+            // Add back answered questions only if we have room
+            let remaining = self
+                .config
+                .max_open_questions
+                .saturating_sub(unanswered.len());
+            let mut answered_to_keep: Vec<_> = answered.into_iter().take(remaining).collect();
+
+            state.open_questions = unanswered;
+            state.open_questions.append(&mut answered_to_keep);
+        }
+    }
+
+    /// Check if narrative should be updated based on event count
+    #[allow(dead_code)]
+    fn should_update_narrative(&self, session_id: Uuid) -> bool {
+        if self.config.narrative_update_interval == 0 {
+            return true;
+        }
+
+        let mut trackers = self.update_trackers.write();
+        let tracker = trackers.entry(session_id).or_default();
+        tracker.events_since_narrative += 1;
+
+        if tracker.events_since_narrative >= self.config.narrative_update_interval {
+            tracker.events_since_narrative = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reset narrative update counter (call when narrative is updated)
+    #[allow(dead_code)]
+    fn reset_narrative_counter(&self, session_id: Uuid) {
+        let mut trackers = self.update_trackers.write();
+        if let Some(tracker) = trackers.get_mut(&session_id) {
+            tracker.events_since_narrative = 0;
+        }
     }
 }
 
@@ -631,6 +752,11 @@ mod tests {
             use_llm: false, // Use rule-based for tests
             snapshot_interval: 5,
             max_snapshots_per_session: 10,
+            narrative_update_interval: 5,
+            max_file_contexts: 100,
+            max_decisions: 50,
+            max_errors: 30,
+            max_open_questions: 20,
         };
 
         let processor = Layer1Processor::new(storage, llm, config);
@@ -673,7 +799,9 @@ mod tests {
         processor.handle_event(edit).await;
 
         let state = processor.get_current_state(session_id).unwrap();
-        assert!(state.file_contexts.contains_key(&PathBuf::from("src/lib.rs")));
+        assert!(state
+            .file_contexts
+            .contains_key(&PathBuf::from("src/lib.rs")));
     }
 
     #[tokio::test]
@@ -711,11 +839,8 @@ mod tests {
         assert!(!processor.get_current_state(session_id).unwrap().goal_stack[0].completed);
 
         // Add completion signal
-        let reasoning = SessionEvent::reasoning(
-            session_id,
-            "The feature is now complete and working",
-            None,
-        );
+        let reasoning =
+            SessionEvent::reasoning(session_id, "The feature is now complete and working", None);
         processor.handle_event(reasoning).await;
 
         let state = processor.get_current_state(session_id).unwrap();
@@ -729,9 +854,7 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         // Init
-        processor
-            .handle_init_session(session_id, "Test task")
-            .await;
+        processor.handle_init_session(session_id, "Test task").await;
         assert!(processor.get_current_state(session_id).is_some());
 
         // End

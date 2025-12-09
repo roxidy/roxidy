@@ -34,9 +34,8 @@ pub async fn execute_once(ctx: &mut CliContext, prompt: &str) -> Result<()> {
     let json_mode = ctx.args.json;
     let quiet_mode = ctx.args.quiet;
 
-    let output_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
-        run_event_loop(event_rx, json_mode, quiet_mode).await
-    });
+    let output_handle: JoinHandle<Result<()>> =
+        tokio::spawn(async move { run_event_loop(event_rx, json_mode, quiet_mode).await });
 
     // Execute the prompt via the agent bridge
     let result = {
@@ -86,12 +85,21 @@ pub async fn execute_batch(ctx: &mut CliContext, file_path: &Path) -> Result<()>
 
     let total = prompts.len();
     if !ctx.args.quiet {
-        eprintln!("[batch] Executing {} prompt(s) from {}", total, file_path.display());
+        eprintln!(
+            "[batch] Executing {} prompt(s) from {}",
+            total,
+            file_path.display()
+        );
     }
 
     for (i, prompt) in prompts.iter().enumerate() {
         if !ctx.args.quiet {
-            eprintln!("\n[batch] [{}/{}] Executing: {}", i + 1, total, truncate(prompt, 50));
+            eprintln!(
+                "\n[batch] [{}/{}] Executing: {}",
+                i + 1,
+                total,
+                truncate(prompt, 50)
+            );
         }
 
         // execute_once handles creating fresh event channels internally

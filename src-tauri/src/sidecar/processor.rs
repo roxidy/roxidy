@@ -238,8 +238,7 @@ impl SidecarProcessor {
         }
 
         // Generate checkpoint summary
-        let summary = if self.config.synthesis_enabled && self.model_manager.llm_available()
-        {
+        let summary = if self.config.synthesis_enabled && self.model_manager.llm_available() {
             // Try LLM-based summary
             match self.generate_llm_summary(&events).await {
                 Ok(summary) => {

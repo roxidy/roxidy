@@ -474,7 +474,7 @@ pub async fn run_event_loop(
     while let Some(event) = event_rx.recv().await {
         match event {
             RuntimeEvent::Ai(ai_event) => {
-                let should_break = handle_ai_event(&ai_event, json_mode, quiet_mode)?;
+                let should_break = handle_ai_event(&*ai_event, json_mode, quiet_mode)?;
                 if should_break {
                     break;
                 }
@@ -608,7 +608,11 @@ fn handle_ai_event_terminal(event: &AiEvent) -> Result<()> {
             success,
             ..
         } => {
-            let icon = if *success { "\x1b[32m+\x1b[0m" } else { "\x1b[31m!\x1b[0m" };
+            let icon = if *success {
+                "\x1b[32m+\x1b[0m"
+            } else {
+                "\x1b[31m!\x1b[0m"
+            };
             eprintln!();
             eprintln!("\x1b[2m{}\x1b[0m {} {}", BOX_TOP, icon, tool_name);
             eprintln!("\x1b[2m{}\x1b[0m output:", BOX_MID);
@@ -654,7 +658,11 @@ fn handle_ai_event_terminal(event: &AiEvent) -> Result<()> {
         AiEvent::SubAgentStarted {
             agent_name, task, ..
         } => {
-            eprintln!("[sub-agent] {} starting: {}", agent_name, truncate(task, 80));
+            eprintln!(
+                "[sub-agent] {} starting: {}",
+                agent_name,
+                truncate(task, 80)
+            );
         }
         AiEvent::SubAgentCompleted {
             agent_id: _,

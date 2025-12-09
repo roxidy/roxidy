@@ -1,9 +1,12 @@
 //! Configuration for the sidecar system.
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::settings::schema::{SidecarSettings, SynthesisVertexSettings, SynthesisOpenAiSettings, SynthesisGrokSettings};
+use crate::settings::schema::{
+    SidecarSettings, SynthesisGrokSettings, SynthesisOpenAiSettings, SynthesisVertexSettings,
+};
 
 /// LLM provider configuration for remote backends
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -77,7 +80,7 @@ impl LlmProvider {
 }
 
 /// Synthesis backend configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(tag = "backend")]
 pub enum SynthesisBackend {
     /// Local LLM via mistral.rs (Qwen, etc.)
@@ -85,21 +88,8 @@ pub enum SynthesisBackend {
     /// Remote LLM provider
     Remote { provider: LlmProvider },
     /// Template-only mode (no LLM)
+    #[default]
     Template,
-}
-
-impl Default for SynthesisBackend {
-    fn default() -> Self {
-        // Default to Local if the feature is enabled, otherwise Template
-        #[cfg(feature = "local-llm")]
-        {
-            SynthesisBackend::Local
-        }
-        #[cfg(not(feature = "local-llm"))]
-        {
-            SynthesisBackend::Template
-        }
-    }
 }
 
 impl SynthesisBackend {
@@ -258,7 +248,8 @@ impl SidecarConfig {
     /// Get the path to the embedding model (fastembed cache directory)
     pub fn embedding_model_path(&self) -> PathBuf {
         // fastembed caches models with this naming convention
-        self.models_dir.join("models--Qdrant--all-MiniLM-L6-v2-onnx")
+        self.models_dir
+            .join("models--Qdrant--all-MiniLM-L6-v2-onnx")
     }
 
     /// Get the path to the LLM model
@@ -284,7 +275,10 @@ impl SidecarConfig {
     }
 
     /// Create a SidecarConfig from QbitSettings sidecar section
-    pub fn from_qbit_settings(settings: &SidecarSettings, ai_vertex: Option<&crate::settings::schema::VertexAiSettings>) -> Self {
+    pub fn from_qbit_settings(
+        settings: &SidecarSettings,
+        ai_vertex: Option<&crate::settings::schema::VertexAiSettings>,
+    ) -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let qbit_dir = home.join(".qbit");
 
@@ -294,13 +288,22 @@ impl SidecarConfig {
             "template" => SynthesisBackend::Template,
             "vertex_anthropic" => {
                 // Get project_id and location from sidecar settings or fall back to AI settings
-                let project_id = settings.synthesis_vertex.project_id.clone()
+                let project_id = settings
+                    .synthesis_vertex
+                    .project_id
+                    .clone()
                     .or_else(|| ai_vertex.and_then(|v| v.project_id.clone()))
                     .unwrap_or_default();
-                let location = settings.synthesis_vertex.location.clone()
+                let location = settings
+                    .synthesis_vertex
+                    .location
+                    .clone()
                     .or_else(|| ai_vertex.and_then(|v| v.location.clone()))
                     .unwrap_or_else(|| "us-east5".to_string());
-                let credentials_path = settings.synthesis_vertex.credentials_path.clone()
+                let credentials_path = settings
+                    .synthesis_vertex
+                    .credentials_path
+                    .clone()
                     .or_else(|| ai_vertex.and_then(|v| v.credentials_path.clone()));
 
                 SynthesisBackend::Remote {
@@ -346,62 +349,76 @@ impl SidecarConfig {
 
     /// Update QbitSettings sidecar section from this config
     pub fn to_qbit_settings(&self) -> SidecarSettings {
-        let (synthesis_backend, synthesis_vertex, synthesis_openai, synthesis_grok) = match &self.synthesis_backend {
-            SynthesisBackend::Local => (
-                "local".to_string(),
-                SynthesisVertexSettings::default(),
-                SynthesisOpenAiSettings::default(),
-                SynthesisGrokSettings::default(),
-            ),
-            SynthesisBackend::Template => (
-                "template".to_string(),
-                SynthesisVertexSettings::default(),
-                SynthesisOpenAiSettings::default(),
-                SynthesisGrokSettings::default(),
-            ),
-            SynthesisBackend::Remote { provider } => match provider {
-                LlmProvider::VertexAnthropic { project_id, location, model, credentials_path } => (
-                    "vertex_anthropic".to_string(),
-                    SynthesisVertexSettings {
-                        project_id: Some(project_id.clone()),
-                        location: Some(location.clone()),
-                        model: model.clone(),
-                        credentials_path: credentials_path.clone(),
-                    },
+        let (synthesis_backend, synthesis_vertex, synthesis_openai, synthesis_grok) =
+            match &self.synthesis_backend {
+                SynthesisBackend::Local => (
+                    "local".to_string(),
+                    SynthesisVertexSettings::default(),
+                    SynthesisOpenAiSettings::default(),
+                    SynthesisGrokSettings::default(),
+                ),
+                SynthesisBackend::Template => (
+                    "template".to_string(),
+                    SynthesisVertexSettings::default(),
                     SynthesisOpenAiSettings::default(),
                     SynthesisGrokSettings::default(),
                 ),
-                LlmProvider::OpenAI { model, api_key, base_url } => (
-                    "openai".to_string(),
-                    SynthesisVertexSettings::default(),
-                    SynthesisOpenAiSettings {
-                        api_key: api_key.clone(),
-                        model: model.clone(),
-                        base_url: base_url.clone(),
-                    },
-                    SynthesisGrokSettings::default(),
-                ),
-                LlmProvider::Grok { model, api_key } => (
-                    "grok".to_string(),
-                    SynthesisVertexSettings::default(),
-                    SynthesisOpenAiSettings::default(),
-                    SynthesisGrokSettings {
-                        api_key: api_key.clone(),
-                        model: model.clone(),
-                    },
-                ),
-                LlmProvider::OpenAICompatible { model, base_url, api_key } => (
-                    "openai".to_string(),
-                    SynthesisVertexSettings::default(),
-                    SynthesisOpenAiSettings {
-                        api_key: api_key.clone(),
-                        model: model.clone(),
-                        base_url: Some(base_url.clone()),
-                    },
-                    SynthesisGrokSettings::default(),
-                ),
-            },
-        };
+                SynthesisBackend::Remote { provider } => match provider {
+                    LlmProvider::VertexAnthropic {
+                        project_id,
+                        location,
+                        model,
+                        credentials_path,
+                    } => (
+                        "vertex_anthropic".to_string(),
+                        SynthesisVertexSettings {
+                            project_id: Some(project_id.clone()),
+                            location: Some(location.clone()),
+                            model: model.clone(),
+                            credentials_path: credentials_path.clone(),
+                        },
+                        SynthesisOpenAiSettings::default(),
+                        SynthesisGrokSettings::default(),
+                    ),
+                    LlmProvider::OpenAI {
+                        model,
+                        api_key,
+                        base_url,
+                    } => (
+                        "openai".to_string(),
+                        SynthesisVertexSettings::default(),
+                        SynthesisOpenAiSettings {
+                            api_key: api_key.clone(),
+                            model: model.clone(),
+                            base_url: base_url.clone(),
+                        },
+                        SynthesisGrokSettings::default(),
+                    ),
+                    LlmProvider::Grok { model, api_key } => (
+                        "grok".to_string(),
+                        SynthesisVertexSettings::default(),
+                        SynthesisOpenAiSettings::default(),
+                        SynthesisGrokSettings {
+                            api_key: api_key.clone(),
+                            model: model.clone(),
+                        },
+                    ),
+                    LlmProvider::OpenAICompatible {
+                        model,
+                        base_url,
+                        api_key,
+                    } => (
+                        "openai".to_string(),
+                        SynthesisVertexSettings::default(),
+                        SynthesisOpenAiSettings {
+                            api_key: api_key.clone(),
+                            model: model.clone(),
+                            base_url: Some(base_url.clone()),
+                        },
+                        SynthesisGrokSettings::default(),
+                    ),
+                },
+            };
 
         SidecarSettings {
             enabled: true, // Always enabled if we have a config

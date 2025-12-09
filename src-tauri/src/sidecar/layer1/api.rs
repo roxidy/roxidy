@@ -93,13 +93,17 @@ pub fn get_injectable_context(state: &SessionState) -> String {
         ));
     }
 
-    // Open Questions
-    if !state.open_questions.is_empty() {
-        let questions: Vec<String> = state
-            .open_questions
+    // Open Questions (unanswered only)
+    let unanswered: Vec<_> = state
+        .open_questions
+        .iter()
+        .filter(|q| !q.is_answered())
+        .collect();
+    if !unanswered.is_empty() {
+        let questions: Vec<String> = unanswered
             .iter()
             .take(3)
-            .map(|q| format!("- {}", q))
+            .map(|q| format!("- {}", q.question))
             .collect();
 
         sections.push(format!("**Open Questions:**\n{}", questions.join("\n")));
@@ -203,7 +207,8 @@ mod tests {
 
     fn create_test_state() -> SessionState {
         let session_id = Uuid::new_v4();
-        let mut state = SessionState::with_initial_goal(session_id, "Implement user authentication");
+        let mut state =
+            SessionState::with_initial_goal(session_id, "Implement user authentication");
 
         // Add sub-goals
         state.add_sub_goal("Create User model".to_string(), GoalSource::Inferred);

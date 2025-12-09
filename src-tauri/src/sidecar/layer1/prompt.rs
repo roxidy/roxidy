@@ -16,6 +16,16 @@ Your job is to analyze incoming events and update the session state to reflect t
    - Add sub-goals when the agent breaks down work
    - Goals can be inferred from context (source: inferred)
 
+   **New fields**:
+   - `priority`: Set to high/medium/low based on user emphasis (e.g., "urgent", "critical", "when you have time")
+     * high: User uses urgent language or this is blocking other work
+     * medium: Normal priority (default)
+     * low: Nice-to-have or future improvements
+   - `blocked_by`: Note what's blocking progress (if anything), e.g., "waiting for user input on auth approach"
+   - `progress_notes`: Add timestamped notes when significant progress occurs on a goal
+     * Use for milestones like "completed data model design" or "all tests passing"
+     * Don't add trivial notes for every small step
+
 2. **Narrative**: 2-3 sentence summary of session progress
    - Update when significant progress occurs
    - Focus on what has been accomplished and what's in progress
@@ -26,10 +36,51 @@ Your job is to analyze incoming events and update the session state to reflect t
    - List alternatives that were rejected
    - Only record meaningful architectural/design decisions
 
+   **New fields**:
+   - `category`: Classify the decision type
+     * architecture: Structural/design patterns (e.g., "use microservices vs monolith")
+     * library: Dependency choices (e.g., "use tokio vs async-std")
+     * approach: General methodology (e.g., "TDD vs implementation-first")
+     * tradeoff: Competing concerns (e.g., "optimize for speed vs memory")
+     * fallback: When primary approach fails (e.g., "use polling since websockets not available")
+   - `confidence`: How certain is the agent about this decision?
+     * high: Strong evidence, clear best choice
+     * medium: Good reasoning, but some uncertainty (default)
+     * low: Uncertain but proceeding with best guess
+     * uncertain: Significant doubts, may need revision
+   - `reversible`: Can this decision be easily changed later?
+     * true: Easy to undo (e.g., config changes, feature flags) - default
+     * false: Hard to reverse (e.g., database schema migrations, API contracts)
+   - `alternatives`: Now includes `rejection_reason` for each alternative
+     * Provide specific reasons why alternatives were rejected
+     * Example: {"description": "Use sessions", "rejection_reason": "Requires server-side state management"}
+   - `related_files`: List files affected by this decision
+     * Include files that were created or modified as a result
+     * Helps trace the impact of decisions
+
 4. **File Contexts**: Track understanding of files
    - Add when a file is read or modified
    - Include a brief summary of the file's purpose
    - Note why the file is relevant to current goals
+
+   **New fields**:
+   - `understanding_level`: How well does the agent understand this file?
+     * full: Read and understood the entire file (e.g., after Read tool with careful analysis)
+     * partial: Skimmed or read portions (e.g., quick grep, read specific functions)
+     * surface: Just aware of the file's existence/path (e.g., from file listings)
+   - `key_exports`: Main functions/types/classes exported by this file
+     * Example: ["authenticate_user", "TokenValidator", "AuthConfig"]
+     * Helps quickly recall what this file provides
+   - `dependencies`: Other files this file imports/depends on
+     * Track relationships between files
+     * Example: ["/src/config.rs", "/src/database.rs"]
+   - `change_history`: Track modifications made to this file
+     * Each entry includes: timestamp, summary, diff_preview (first ~200 chars)
+     * Example: {"summary": "Added JWT validation function", "diff_preview": "+fn validate_token(...)"}
+     * Helps understand the evolution of the file during the session
+   - `notes`: Agent's observations about this file
+     * Freeform notes like "This file needs refactoring" or "Contains legacy auth code"
+     * Use for insights that don't fit other fields
 
 5. **Errors**: Track problems encountered
    - Add when errors occur
@@ -37,8 +88,24 @@ Your job is to analyze incoming events and update the session state to reflect t
    - Include context about what was being attempted
 
 6. **Open Questions**: Track unresolved ambiguities
-   - Add when the agent expresses uncertainty
-   - Remove when questions are answered
+   - Now a structured object instead of just a string
+
+   **Fields**:
+   - `id`: Unique identifier (auto-generated)
+   - `question`: The question text
+   - `source`: Where did this question come from?
+     * from_reasoning: Agent expressed uncertainty in its reasoning
+     * from_user: User explicitly asked a question
+     * inferred_from_error: Question arose from an error/failure
+   - `context`: What situation prompted this question?
+     * Example: "While implementing authentication, encountered multiple auth libraries"
+   - `priority`: How important is answering this question?
+     * blocking: Cannot proceed without an answer (agent should pause and ask user)
+     * important: Should address soon but can continue (default)
+     * informational: Nice to know but not urgent
+   - `answer`: The answer text (if question has been answered)
+     * Set this when the agent or user provides an answer
+     * Also set `answered_at` timestamp
 
 ## Response Format
 
@@ -46,7 +113,35 @@ Return a JSON object with:
 - "updated_state": The full updated SessionState (or null if no changes)
 - "changes": Array of human-readable change descriptions
 
-Only update fields that have actually changed. If no updates are needed, return null for updated_state and an empty changes array."#;
+Only update fields that have actually changed. If no updates are needed, return null for updated_state and an empty changes array.
+
+## Guidelines for New Fields
+
+**Goal Priority**: Look for urgency indicators in user language:
+- "urgent", "asap", "critical", "blocking" → high
+- "when you get a chance", "nice to have", "eventually" → low
+- Default to medium if no indicators
+
+**Decision Confidence**: Base on the strength of reasoning and available information:
+- Clear requirements + obvious best choice → high
+- Good reasoning but some unknowns → medium
+- Guessing or insufficient information → low/uncertain
+
+**File Understanding Level**: Be honest about comprehension:
+- Only set to "full" if the file was actually read completely
+- Use "partial" for grep/search results or skimming
+- Use "surface" for files mentioned but not examined
+
+**Progress Notes**: Only add for significant milestones:
+- Completion of major sub-tasks
+- Important discoveries or insights
+- Successful resolution of blockers
+- Don't add notes for every small action
+
+**Open Question Priority**:
+- Set to "blocking" only if the agent genuinely cannot proceed
+- Use "important" for questions that affect the approach but aren't blockers
+- Use "informational" for curiosity or future improvements"#;
 
 /// Format the interpretation prompt for a specific event
 pub fn format_interpretation_prompt(state: &SessionState, event: &SessionEvent) -> String {
@@ -179,7 +274,9 @@ fn format_event_summary(event: &SessionEvent) -> String {
         EventType::SessionStart { initial_request } => {
             summary.push_str(&format!("Initial: {}\n", truncate(initial_request, 300)));
         }
-        EventType::SessionEnd { summary: end_summary } => {
+        EventType::SessionEnd {
+            summary: end_summary,
+        } => {
             if let Some(s) = end_summary {
                 summary.push_str(&format!("Summary: {}\n", s));
             }
@@ -224,7 +321,8 @@ pub fn parse_interpreter_response(response: &str) -> Result<InterpreterResponse,
     // Try to find JSON in the response (handle markdown code blocks)
     let json_str = extract_json(response);
 
-    serde_json::from_str(json_str).map_err(|e| format!("Failed to parse interpreter response: {}", e))
+    serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse interpreter response: {}", e))
 }
 
 /// Extract JSON from a response that might contain markdown code blocks

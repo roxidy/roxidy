@@ -2,6 +2,7 @@
 //
 // This module provides Tauri command handlers for the AI agent system,
 // organized into logical submodules for maintainability.
+#![allow(dead_code)]
 
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -99,7 +100,7 @@ pub fn spawn_event_forwarder_runtime(
 
     tokio::spawn(async move {
         while let Some(ai_event) = event_rx.recv().await {
-            if let Err(e) = runtime.emit(RuntimeEvent::Ai(ai_event)) {
+            if let Err(e) = runtime.emit(RuntimeEvent::Ai(Box::new(ai_event))) {
                 tracing::warn!("Failed to emit event: {}", e);
             }
         }

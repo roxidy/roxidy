@@ -86,7 +86,7 @@ impl QbitRuntime for TauriRuntime {
         };
 
         // Emit approval request to frontend
-        self.emit(RuntimeEvent::Ai(AiEvent::ToolApprovalRequest {
+        self.emit(RuntimeEvent::Ai(Box::new(AiEvent::ToolApprovalRequest {
             request_id: request_id.clone(),
             tool_name,
             args,
@@ -95,7 +95,7 @@ impl QbitRuntime for TauriRuntime {
             can_learn: true,
             suggestion: None,
             source: Default::default(),
-        }))?;
+        })))?;
 
         // Wait for response with 5-minute timeout
         match tokio::time::timeout(Duration::from_secs(300), rx).await {

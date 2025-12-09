@@ -51,8 +51,4 @@ mod schema_verification_test;
 pub use capture::CaptureContext;
 #[cfg(feature = "tauri")]
 pub use commands::*;
-pub use layer1::{
-    get_injectable_context, get_session_state, Decision, ErrorEntry, FileContext, Goal,
-    GoalSource, Layer1Processor, Layer1Storage, SessionState,
-};
 pub use state::SidecarState;

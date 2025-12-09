@@ -226,7 +226,8 @@ impl SidecarStorage {
             .collect();
         let contents: Vec<String> = events.iter().map(|e| e.content.clone()).collect();
         let cwds: Vec<Option<String>> = events.iter().map(|e| e.cwd.clone()).collect();
-        let tool_outputs: Vec<Option<String>> = events.iter().map(|e| e.tool_output.clone()).collect();
+        let tool_outputs: Vec<Option<String>> =
+            events.iter().map(|e| e.tool_output.clone()).collect();
         let files_accessed: Vec<Option<String>> = events
             .iter()
             .map(|e| {
@@ -1459,7 +1460,10 @@ list files in current dir"#;
 
         assert_eq!(retrieved.len(), 1);
         assert_eq!(retrieved[0].diff, Some(diff.to_string()));
-        assert_eq!(retrieved[0].files_modified, vec![PathBuf::from("src/lib.rs")]);
+        assert_eq!(
+            retrieved[0].files_modified,
+            vec![PathBuf::from("src/lib.rs")]
+        );
     }
 
     #[tokio::test]
@@ -1506,7 +1510,7 @@ list files in current dir"#;
             true,
             Some("Applied 3 changes".to_string()),
             Some(vec![PathBuf::from("src/api.rs")]), // Read before edit
-            vec![PathBuf::from("src/api.rs")],      // Modified after edit
+            vec![PathBuf::from("src/api.rs")],       // Modified after edit
             Some("--- src/api.rs\n+++ src/api.rs\n@@ @@\n-old\n+new".to_string()),
         );
         event.cwd = Some("/workspace/project".to_string());
@@ -1537,10 +1541,10 @@ list files in current dir"#;
             "bash",
             "cmd=echo hello",
             true,
-            None, // No output
-            None, // No files accessed
+            None,   // No output
+            None,   // No files accessed
             vec![], // No files modified
-            None, // No diff
+            None,   // No diff
         );
 
         storage.save_events(&[event.clone()]).await.unwrap();
@@ -1593,7 +1597,10 @@ edit the config file"#;
             Some("--- config.toml\n+++ config.toml".to_string()),
         );
 
-        storage.save_events(&[event1.clone(), event2.clone(), event3.clone()]).await.unwrap();
+        storage
+            .save_events(&[event1.clone(), event2.clone(), event3.clone()])
+            .await
+            .unwrap();
         let retrieved = storage.get_session_events(session_id).await.unwrap();
 
         assert_eq!(retrieved.len(), 3);
@@ -1611,7 +1618,10 @@ edit the config file"#;
 
         // Check event3 (edit)
         assert!(retrieved[2].diff.is_some());
-        assert_eq!(retrieved[2].files_modified, vec![PathBuf::from("config.toml")]);
+        assert_eq!(
+            retrieved[2].files_modified,
+            vec![PathBuf::from("config.toml")]
+        );
     }
 }
 

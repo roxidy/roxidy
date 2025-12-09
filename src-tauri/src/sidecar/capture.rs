@@ -11,6 +11,7 @@ use tracing::{debug, trace};
 use crate::ai::events::AiEvent;
 
 use super::events::{DecisionType, FeedbackType, FileOperation, SessionEvent};
+use super::layer1::Layer1Task;
 use super::state::SidecarState;
 
 /// Maximum length for tool output storage
@@ -51,6 +52,10 @@ impl CaptureContext {
                 return;
             }
         };
+
+        // Forward to Layer1 processor for session state tracking
+        // This is done before event processing to ensure Layer1 sees all events
+        self.forward_to_layer1(event, session_id);
 
         match event {
             AiEvent::ToolRequest {
@@ -272,21 +277,14 @@ impl CaptureContext {
     }
 
     /// Generate a unified diff for an edit operation
-    fn generate_diff(
-        &self,
-        tool_name: &str,
-        args: &Option<serde_json::Value>,
-    ) -> Option<String> {
+    fn generate_diff(&self, tool_name: &str, args: &Option<serde_json::Value>) -> Option<String> {
         let args = args.as_ref()?;
 
         match tool_name {
             "write" | "create_file" => {
                 // For new files, show the full content as additions
                 let path = extract_path_from_args(args)?;
-                let new_content = args
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let new_content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
                 let diff = format!(
                     "--- /dev/null\n+++ {}\n@@ -0,0 +1,{} @@\n{}",
@@ -366,6 +364,79 @@ impl CaptureContext {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Forward captured events to Layer1 processor
+    fn forward_to_layer1(&self, ai_event: &AiEvent, session_id: uuid::Uuid) {
+        // Convert AiEvent to SessionEvent where appropriate
+        let session_event = match ai_event {
+            AiEvent::ToolResult {
+                tool_name,
+                result,
+                success,
+                ..
+            } => {
+                let tool_output = extract_tool_output(result);
+                let files_accessed = if is_read_tool(tool_name) {
+                    extract_files_from_result(tool_name, &self.last_tool_args, result)
+                } else {
+                    None
+                };
+                let files_modified = if is_write_tool(tool_name) && *success {
+                    extract_files_modified(tool_name, self.last_tool_args.as_ref())
+                } else {
+                    vec![]
+                };
+                let diff = if is_edit_tool(tool_name) && *success {
+                    self.generate_diff(tool_name, &self.last_tool_args)
+                } else {
+                    None
+                };
+                let args_summary = self
+                    .last_tool_args
+                    .as_ref()
+                    .map(summarize_args)
+                    .unwrap_or_else(|| "{}".to_string());
+
+                Some(SessionEvent::tool_call_with_output(
+                    session_id,
+                    tool_name,
+                    &args_summary,
+                    *success,
+                    tool_output,
+                    files_accessed,
+                    files_modified,
+                    diff,
+                ))
+            }
+            AiEvent::Reasoning { content } => {
+                let decision_type = infer_decision_type(content);
+                Some(SessionEvent::reasoning(session_id, content, decision_type))
+            }
+            AiEvent::Completed {
+                response,
+                duration_ms,
+                ..
+            } if !response.is_empty() => Some(SessionEvent::ai_response(
+                session_id,
+                response,
+                *duration_ms,
+            )),
+            AiEvent::Error { message, .. } => {
+                Some(SessionEvent::error(session_id, message, None, false))
+            }
+            // Skip other events - they're not high-signal for Layer1
+            _ => None,
+        };
+
+        // Send to Layer1 if we have an event
+        if let Some(event) = session_event {
+            if let Some(tx) = self.sidecar.layer1_tx() {
+                if let Err(e) = tx.send(Layer1Task::ProcessEvent(Box::new(event))) {
+                    trace!("[sidecar-capture] Failed to forward event to Layer1: {}", e);
+                }
+            }
         }
     }
 }
@@ -559,7 +630,6 @@ fn generate_unified_diff(path: &str, old: &str, new: &str) -> String {
     // Find changes using a simple approach
     let max_len = old_lines.len().max(new_lines.len());
     let mut in_hunk = false;
-    let mut hunk_start = 0;
 
     for i in 0..max_len {
         let old_line = old_lines.get(i);
@@ -576,7 +646,7 @@ fn generate_unified_diff(path: &str, old: &str, new: &str) -> String {
                 // Lines differ
                 if !in_hunk {
                     in_hunk = true;
-                    hunk_start = i + 1;
+                    let hunk_start = i + 1;
                     diff_lines.push(format!("@@ -{},{} +{},{} @@", hunk_start, 1, hunk_start, 1));
                 }
                 diff_lines.push(format!("-{}", o));
@@ -586,7 +656,7 @@ fn generate_unified_diff(path: &str, old: &str, new: &str) -> String {
                 // Old line removed
                 if !in_hunk {
                     in_hunk = true;
-                    hunk_start = i + 1;
+                    let hunk_start = i + 1;
                     diff_lines.push(format!("@@ -{} @@", hunk_start));
                 }
                 diff_lines.push(format!("-{}", o));
@@ -595,7 +665,6 @@ fn generate_unified_diff(path: &str, old: &str, new: &str) -> String {
                 // New line added
                 if !in_hunk {
                     in_hunk = true;
-                    hunk_start = old_lines.len() + 1;
                     diff_lines.push(format!("@@ +{} @@", i + 1));
                 }
                 diff_lines.push(format!("+{}", n));
@@ -869,7 +938,12 @@ mod tests {
         assert!(output.is_some());
         // Use char count, not byte len (ellipsis is 3 bytes)
         let char_count = output.unwrap().chars().count();
-        assert!(char_count <= MAX_TOOL_OUTPUT_LEN, "Expected <= {} chars, got {}", MAX_TOOL_OUTPUT_LEN, char_count);
+        assert!(
+            char_count <= MAX_TOOL_OUTPUT_LEN,
+            "Expected <= {} chars, got {}",
+            MAX_TOOL_OUTPUT_LEN,
+            char_count
+        );
     }
 
     #[test]
@@ -914,7 +988,8 @@ mod tests {
     #[test]
     fn test_extract_files_from_result_grep() {
         let args = Some(serde_json::json!({"pattern": "fn main"}));
-        let result = serde_json::json!("src/main.rs:10: fn main() {\nsrc/bin/app.rs:5: fn main() {");
+        let result =
+            serde_json::json!("src/main.rs:10: fn main() {\nsrc/bin/app.rs:5: fn main() {");
         let files = extract_files_from_result("grep", &args, &result);
         assert!(files.is_some());
         let files = files.unwrap();

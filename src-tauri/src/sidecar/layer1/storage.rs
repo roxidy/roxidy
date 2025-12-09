@@ -173,7 +173,11 @@ impl Layer1Storage {
                 let timestamp = timestamps.value(i);
                 let state_json = state_jsons.value(i);
 
-                if latest_state.as_ref().map(|(t, _)| timestamp > *t).unwrap_or(true) {
+                if latest_state
+                    .as_ref()
+                    .map(|(t, _)| timestamp > *t)
+                    .unwrap_or(true)
+                {
                     let state: SessionState = serde_json::from_str(state_json)
                         .context("Failed to deserialize session state")?;
                     latest_state = Some((timestamp, state));
@@ -257,7 +261,11 @@ impl Layer1Storage {
     }
 
     /// Delete old snapshots for a session (keep only the last N)
-    pub async fn cleanup_old_snapshots(&self, session_id: Uuid, keep_count: usize) -> Result<usize> {
+    pub async fn cleanup_old_snapshots(
+        &self,
+        session_id: Uuid,
+        keep_count: usize,
+    ) -> Result<usize> {
         let snapshots = self.get_state_history(session_id).await?;
 
         if snapshots.len() <= keep_count {

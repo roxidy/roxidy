@@ -170,6 +170,129 @@ export type BackendOption =
   | "template";
 
 // ============================================================================
+// Layer 1 Session State Types
+// ============================================================================
+
+/** Goal source types */
+export type GoalSource = "initial_prompt" | "user_clarification" | "inferred";
+
+/** Goal priority levels */
+export type GoalPriority = "high" | "medium" | "low";
+
+/** Progress note for a goal */
+export interface ProgressNote {
+  timestamp: string;
+  note: string;
+}
+
+/** Goal in the goal stack */
+export interface Goal {
+  id: string;
+  description: string;
+  source: GoalSource;
+  created_at: string;
+  completed: boolean;
+  completed_at?: string;
+  sub_goals: Goal[];
+  priority: GoalPriority;
+  blocked_by?: string;
+  progress_notes: ProgressNote[];
+}
+
+/** Decision category types */
+export type DecisionCategory = "architecture" | "library" | "approach" | "tradeoff" | "fallback";
+
+/** Decision confidence levels */
+export type DecisionConfidence = "high" | "medium" | "low" | "uncertain";
+
+/** Alternative option that was rejected */
+export interface Alternative {
+  description: string;
+  rejection_reason: string;
+}
+
+/** Decision made during a session */
+export interface Decision {
+  id: string;
+  timestamp: string;
+  choice: string;
+  rationale: string;
+  alternatives_rejected: string[];
+  triggering_event_id: string;
+  alternatives: Alternative[];
+  category: DecisionCategory;
+  confidence: DecisionConfidence;
+  reversible: boolean;
+  related_files: string[];
+}
+
+/** File understanding levels */
+export type UnderstandingLevel = "full" | "partial" | "surface";
+
+/** File change history entry */
+export interface FileChange {
+  timestamp: string;
+  summary: string;
+  diff_preview?: string;
+}
+
+/** Context about a file */
+export interface FileContext {
+  path: string;
+  summary: string;
+  last_read_at?: string;
+  last_modified_at?: string;
+  relevance: string;
+  understanding_level: UnderstandingLevel;
+  key_exports: string[];
+  dependencies: string[];
+  change_history: FileChange[];
+  notes: string[];
+}
+
+/** Error entry */
+export interface ErrorEntry {
+  id: string;
+  timestamp: string;
+  error: string;
+  context: string;
+  resolution?: string;
+  resolved: boolean;
+  resolved_at?: string;
+}
+
+/** Open question source types */
+export type QuestionSource = "from_reasoning" | "from_user" | "inferred_from_error";
+
+/** Open question priority levels */
+export type QuestionPriority = "blocking" | "important" | "informational";
+
+/** Open question */
+export interface OpenQuestion {
+  id: string;
+  question: string;
+  created_at: string;
+  source: QuestionSource;
+  context: string;
+  priority: QuestionPriority;
+  answered_at?: string;
+  answer?: string;
+}
+
+/** Complete session state */
+export interface SessionState {
+  session_id: string;
+  updated_at: string;
+  goal_stack: Goal[];
+  narrative: string;
+  narrative_updated_at: string;
+  decisions: Decision[];
+  file_contexts: Record<string, FileContext>;
+  errors: ErrorEntry[];
+  open_questions: OpenQuestion[];
+}
+
+// ============================================================================
 // API Functions
 // ============================================================================
 
@@ -297,3 +420,147 @@ export async function setBackend(backend: SynthesisBackend): Promise<string> {
 export async function getAvailableBackends(): Promise<BackendOption[]> {
   return invoke<BackendOption[]>("sidecar_available_backends");
 }
+
+// ============================================================================
+// Layer 1 API Functions
+// ============================================================================
+
+/** Get the complete session state */
+export async function getSessionState(sessionId?: string): Promise<SessionState | null> {
+  return invoke<SessionState | null>("sidecar_get_session_state", { session_id: sessionId });
+}
+
+/** Get injectable context string for LLM prompts */
+export async function getInjectableContext(sessionId?: string): Promise<string> {
+  return invoke<string>("sidecar_get_injectable_context", { session_id: sessionId });
+}
+
+/** Get all goals for a session */
+export async function getGoals(sessionId?: string): Promise<Goal[]> {
+  return invoke<Goal[]>("sidecar_get_goals", { session_id: sessionId });
+}
+
+/** Get all file contexts for a session */
+export async function getFileContexts(sessionId?: string): Promise<Record<string, FileContext>> {
+  return invoke<Record<string, FileContext>>("sidecar_get_file_contexts", {
+    session_id: sessionId,
+  });
+}
+
+/** Get all decisions for a session */
+export async function getDecisions(sessionId?: string): Promise<Decision[]> {
+  return invoke<Decision[]>("sidecar_get_decisions", { session_id: sessionId });
+}
+
+/** Get all errors for a session */
+export async function getErrors(sessionId?: string): Promise<ErrorEntry[]> {
+  return invoke<ErrorEntry[]>("sidecar_get_errors", { session_id: sessionId });
+}
+
+/** Get all open questions for a session */
+export async function getOpenQuestions(sessionId?: string): Promise<OpenQuestion[]> {
+  return invoke<OpenQuestion[]>("sidecar_get_open_questions", { session_id: sessionId });
+}
+
+/** Answer an open question */
+export async function answerQuestion(questionId: string, answer: string): Promise<void> {
+  return invoke<void>("sidecar_answer_question", { question_id: questionId, answer });
+}
+
+/** Mark a goal as completed */
+export async function completeGoal(goalId: string): Promise<void> {
+  return invoke<void>("sidecar_complete_goal", { goal_id: goalId });
+}
+
+// ============================================================================
+// Layer 1 Event Types
+// ============================================================================
+
+/** Layer 1 event type discriminators */
+export type Layer1EventType =
+  | "state_updated"
+  | "goal_added"
+  | "goal_completed"
+  | "narrative_updated"
+  | "decision_recorded"
+  | "error_updated"
+  | "question_added"
+  | "question_answered"
+  | "file_context_updated";
+
+/** Session state was updated */
+export interface Layer1EventStateUpdated {
+  type: "state_updated";
+  session_id: string;
+  changes: string[];
+}
+
+/** A goal was added */
+export interface Layer1EventGoalAdded {
+  type: "goal_added";
+  session_id: string;
+  goal: Goal;
+}
+
+/** A goal was completed */
+export interface Layer1EventGoalCompleted {
+  type: "goal_completed";
+  session_id: string;
+  goal_id: string;
+}
+
+/** Narrative was updated */
+export interface Layer1EventNarrativeUpdated {
+  type: "narrative_updated";
+  session_id: string;
+  narrative: string;
+}
+
+/** A decision was recorded */
+export interface Layer1EventDecisionRecorded {
+  type: "decision_recorded";
+  session_id: string;
+  decision: Decision;
+}
+
+/** An error was added or resolved */
+export interface Layer1EventErrorUpdated {
+  type: "error_updated";
+  session_id: string;
+  error: ErrorEntry;
+}
+
+/** An open question was added */
+export interface Layer1EventQuestionAdded {
+  type: "question_added";
+  session_id: string;
+  question: OpenQuestion;
+}
+
+/** A question was answered */
+export interface Layer1EventQuestionAnswered {
+  type: "question_answered";
+  session_id: string;
+  question_id: string;
+  answer: string;
+}
+
+/** File context was updated */
+export interface Layer1EventFileContextUpdated {
+  type: "file_context_updated";
+  session_id: string;
+  path: string;
+  context: FileContext;
+}
+
+/** Union type for all Layer 1 events */
+export type Layer1Event =
+  | Layer1EventStateUpdated
+  | Layer1EventGoalAdded
+  | Layer1EventGoalCompleted
+  | Layer1EventNarrativeUpdated
+  | Layer1EventDecisionRecorded
+  | Layer1EventErrorUpdated
+  | Layer1EventQuestionAdded
+  | Layer1EventQuestionAnswered
+  | Layer1EventFileContextUpdated;

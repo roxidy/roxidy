@@ -27,13 +27,15 @@ use super::loop_detection::{LoopDetectionResult, LoopDetector};
 use super::sub_agent::{SubAgentContext, SubAgentRegistry, MAX_AGENT_DEPTH};
 use super::sub_agent_executor::{execute_sub_agent, SubAgentExecutorContext};
 use super::token_budget::TokenAlertLevel;
+#[cfg(feature = "tauri")]
+use super::tool_definitions::get_workflow_tool_definitions;
 use super::tool_definitions::{
     get_all_tool_definitions_with_config, get_sub_agent_tool_definitions,
     get_tavily_tool_definitions, ToolConfig,
 };
-#[cfg(feature = "tauri")]
-use super::tool_definitions::get_workflow_tool_definitions;
-use super::tool_executors::{execute_indexer_tool, execute_tavily_tool, execute_web_fetch_tool, normalize_run_pty_cmd_args};
+use super::tool_executors::{
+    execute_indexer_tool, execute_tavily_tool, execute_web_fetch_tool, normalize_run_pty_cmd_args,
+};
 #[cfg(feature = "tauri")]
 use super::tool_executors::{execute_workflow_tool, WorkflowToolContext};
 use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyManager};

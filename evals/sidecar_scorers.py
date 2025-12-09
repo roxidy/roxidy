@@ -328,3 +328,485 @@ def verify_event_sequence(expected_sequence: list[str]) -> Scorer:
             return (False, f"Error checking event sequence: {e}")
 
     return scorer
+
+
+# =============================================================================
+# Layer 1 Session State Scorers
+# =============================================================================
+
+from sidecar_utils import (
+    get_layer1_state,
+    get_layer1_goals,
+    get_layer1_decisions,
+    get_layer1_file_contexts,
+    get_layer1_errors,
+    get_layer1_open_questions,
+    get_layer1_narrative,
+    get_layer1_state_count,
+)
+
+
+def verify_layer1_has_goal() -> Scorer:
+    """
+    Create a scorer that verifies the Layer 1 state has at least one goal.
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+
+    Example:
+        >>> scorer = verify_layer1_has_goal()
+        >>> passed, reason = scorer("session-abc-123")
+        >>> # Returns: (True, "Layer 1 has 2 goal(s): 'Implement user auth', 'Add tests'")
+        >>> # Or: (False, "Layer 1 state has no goals")
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            goals = get_layer1_goals(state)
+            if not goals:
+                return (False, "Layer 1 state has no goals")
+
+            goal_descriptions = [g.get("description", "?")[:50] for g in goals]
+            return (
+                True,
+                f"Layer 1 has {len(goals)} goal(s): {', '.join(repr(d) for d in goal_descriptions)}",
+            )
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 goals: {e}")
+
+    return scorer
+
+
+def verify_layer1_goal_contains(keyword: str) -> Scorer:
+    """
+    Create a scorer that verifies at least one goal contains a specific keyword.
+
+    Args:
+        keyword: Keyword to search for in goal descriptions (case-insensitive)
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+
+    Example:
+        >>> scorer = verify_layer1_goal_contains("authentication")
+        >>> passed, reason = scorer("session-abc-123")
+        >>> # Returns: (True, "Goal #1 contains 'authentication': 'Implement user authentication'")
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            goals = get_layer1_goals(state)
+            keyword_lower = keyword.lower()
+
+            for idx, goal in enumerate(goals, start=1):
+                description = goal.get("description", "")
+                if keyword_lower in description.lower():
+                    return (
+                        True,
+                        f"Goal #{idx} contains '{keyword}': '{description[:60]}'",
+                    )
+
+            return (False, f"No goal contains keyword '{keyword}'")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 goal content: {e}")
+
+    return scorer
+
+
+def verify_layer1_has_decisions(min_count: int = 1) -> Scorer:
+    """
+    Create a scorer that verifies the Layer 1 state has at least N decisions.
+
+    Args:
+        min_count: Minimum number of decisions required (default: 1)
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+
+    Example:
+        >>> scorer = verify_layer1_has_decisions(2)
+        >>> passed, reason = scorer("session-abc-123")
+        >>> # Returns: (True, "Layer 1 has 3 decision(s) (expected ≥2)")
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            decisions = get_layer1_decisions(state)
+            count = len(decisions)
+
+            if count >= min_count:
+                return (True, f"Layer 1 has {count} decision(s) (expected ≥{min_count})")
+            else:
+                return (False, f"Layer 1 has {count} decision(s) (expected ≥{min_count})")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 decisions: {e}")
+
+    return scorer
+
+
+def verify_layer1_decision_contains(keyword: str) -> Scorer:
+    """
+    Create a scorer that verifies at least one decision contains a specific keyword.
+
+    Searches in both 'choice' and 'rationale' fields (case-insensitive).
+
+    Args:
+        keyword: Keyword to search for in decisions
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            decisions = get_layer1_decisions(state)
+            keyword_lower = keyword.lower()
+
+            for idx, decision in enumerate(decisions, start=1):
+                choice = decision.get("choice", "")
+                rationale = decision.get("rationale", "")
+                combined = f"{choice} {rationale}"
+
+                if keyword_lower in combined.lower():
+                    return (
+                        True,
+                        f"Decision #{idx} contains '{keyword}': choice='{choice[:40]}'",
+                    )
+
+            return (False, f"No decision contains keyword '{keyword}'")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 decision content: {e}")
+
+    return scorer
+
+
+def verify_layer1_has_file_context(file_pattern: str) -> Scorer:
+    """
+    Create a scorer that verifies a specific file is tracked in file_contexts.
+
+    Args:
+        file_pattern: Filename or pattern to search for in tracked file paths
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+
+    Example:
+        >>> scorer = verify_layer1_has_file_context("main.rs")
+        >>> passed, reason = scorer("session-abc-123")
+        >>> # Returns: (True, "File 'main.rs' tracked: '/path/to/main.rs'")
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            file_contexts = get_layer1_file_contexts(state)
+            if not file_contexts:
+                return (False, "Layer 1 state has no file contexts")
+
+            # Search for the file pattern in tracked paths
+            for path in file_contexts.keys():
+                if file_pattern in str(path):
+                    return (True, f"File '{file_pattern}' tracked: '{path}'")
+
+            tracked = list(file_contexts.keys())[:5]
+            return (
+                False,
+                f"File '{file_pattern}' not found. Tracked: {tracked}",
+            )
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 file context: {e}")
+
+    return scorer
+
+
+def verify_layer1_file_count(min_count: int = 1) -> Scorer:
+    """
+    Create a scorer that verifies at least N files are tracked.
+
+    Args:
+        min_count: Minimum number of tracked files required
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            file_contexts = get_layer1_file_contexts(state)
+            count = len(file_contexts)
+
+            if count >= min_count:
+                return (True, f"Layer 1 tracks {count} file(s) (expected ≥{min_count})")
+            else:
+                return (False, f"Layer 1 tracks {count} file(s) (expected ≥{min_count})")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 file count: {e}")
+
+    return scorer
+
+
+def verify_layer1_has_narrative() -> Scorer:
+    """
+    Create a scorer that verifies the Layer 1 state has a non-empty narrative.
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+
+    Example:
+        >>> scorer = verify_layer1_has_narrative()
+        >>> passed, reason = scorer("session-abc-123")
+        >>> # Returns: (True, "Layer 1 has narrative (142 chars): 'Working on...'")
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            narrative = get_layer1_narrative(state)
+            if narrative and narrative.strip():
+                preview = narrative[:60] + "..." if len(narrative) > 60 else narrative
+                return (
+                    True,
+                    f"Layer 1 has narrative ({len(narrative)} chars): '{preview}'",
+                )
+            else:
+                return (False, "Layer 1 state has no narrative")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 narrative: {e}")
+
+    return scorer
+
+
+def verify_layer1_narrative_contains(keyword: str) -> Scorer:
+    """
+    Create a scorer that verifies the narrative contains a specific keyword.
+
+    Args:
+        keyword: Keyword to search for in the narrative (case-insensitive)
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            narrative = get_layer1_narrative(state)
+            if not narrative:
+                return (False, "Layer 1 state has no narrative")
+
+            if keyword.lower() in narrative.lower():
+                return (True, f"Narrative contains '{keyword}'")
+            else:
+                return (False, f"Narrative does not contain '{keyword}'")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 narrative content: {e}")
+
+    return scorer
+
+
+def verify_layer1_has_errors(min_count: int = 1) -> Scorer:
+    """
+    Create a scorer that verifies at least N errors are recorded.
+
+    Args:
+        min_count: Minimum number of errors required
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            errors = get_layer1_errors(state)
+            count = len(errors)
+
+            if count >= min_count:
+                return (True, f"Layer 1 has {count} error(s) (expected ≥{min_count})")
+            else:
+                return (False, f"Layer 1 has {count} error(s) (expected ≥{min_count})")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 errors: {e}")
+
+    return scorer
+
+
+def verify_layer1_has_open_questions(min_count: int = 1) -> Scorer:
+    """
+    Create a scorer that verifies at least N open questions are recorded.
+
+    Args:
+        min_count: Minimum number of open questions required
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            questions = get_layer1_open_questions(state)
+            count = len(questions)
+
+            if count >= min_count:
+                return (True, f"Layer 1 has {count} open question(s) (expected ≥{min_count})")
+            else:
+                return (False, f"Layer 1 has {count} open question(s) (expected ≥{min_count})")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 open questions: {e}")
+
+    return scorer
+
+
+def verify_layer1_question_contains(keyword: str) -> Scorer:
+    """
+    Create a scorer that verifies at least one open question contains a keyword.
+
+    Args:
+        keyword: Keyword to search for in questions (case-insensitive)
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is None:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+            questions = get_layer1_open_questions(state)
+            keyword_lower = keyword.lower()
+
+            for idx, q in enumerate(questions, start=1):
+                question_text = q.get("question", "")
+                if keyword_lower in question_text.lower():
+                    return (
+                        True,
+                        f"Question #{idx} contains '{keyword}': '{question_text[:50]}'",
+                    )
+
+            return (False, f"No open question contains keyword '{keyword}'")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 question content: {e}")
+
+    return scorer
+
+
+def verify_layer1_state_exists() -> Scorer:
+    """
+    Create a scorer that verifies a Layer 1 state exists for the session.
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            state = get_layer1_state(db, session_id)
+
+            if state is not None:
+                return (True, f"Layer 1 state exists for session {session_id}")
+            else:
+                return (False, f"No Layer 1 state found for session {session_id}")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 state existence: {e}")
+
+    return scorer
+
+
+def verify_layer1_snapshots(min_count: int = 1) -> Scorer:
+    """
+    Create a scorer that verifies at least N state snapshots exist for the session.
+
+    Args:
+        min_count: Minimum number of snapshots required
+
+    Returns:
+        Scorer function that takes session_id and returns (passed, reason)
+    """
+
+    def scorer(session_id: str) -> tuple[bool, str]:
+        try:
+            db = connect_sidecar_db()
+            count = get_layer1_state_count(db, session_id)
+
+            if count >= min_count:
+                return (True, f"Layer 1 has {count} snapshot(s) (expected ≥{min_count})")
+            else:
+                return (False, f"Layer 1 has {count} snapshot(s) (expected ≥{min_count})")
+
+        except Exception as e:
+            return (False, f"Error checking Layer 1 snapshot count: {e}")
+
+    return scorer
