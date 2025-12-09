@@ -27,9 +27,13 @@ pub async fn sidecar_status(state: State<'_, AppState>) -> Result<SidecarStatus,
 /// Initialize the sidecar for a workspace
 #[tauri::command]
 pub async fn sidecar_initialize(
+    app: AppHandle,
     state: State<'_, AppState>,
     workspace_path: String,
 ) -> Result<(), String> {
+    // Set the app handle for event emission to frontend
+    state.sidecar_state.set_app_handle(app);
+
     // Initialize main sidecar storage
     state
         .sidecar_state

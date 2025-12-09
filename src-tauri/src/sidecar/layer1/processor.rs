@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use super::events::Layer1Event;
 use super::prompt::{
     format_interpretation_prompt, parse_interpreter_response, STATE_INTERPRETER_SYSTEM,
 };
@@ -95,6 +96,8 @@ pub struct Layer1Processor {
     events_since_snapshot: Arc<RwLock<HashMap<Uuid, usize>>>,
     /// Per-session update tracking
     update_trackers: Arc<RwLock<HashMap<Uuid, SessionUpdateTracker>>>,
+    /// Channel to emit Layer1 events to subscribers (e.g., frontend)
+    event_tx: Option<mpsc::UnboundedSender<Layer1Event>>,
 }
 
 impl Layer1Processor {
@@ -103,6 +106,7 @@ impl Layer1Processor {
         storage: Arc<Layer1Storage>,
         llm: Arc<dyn SynthesisLlm>,
         config: Layer1Config,
+        event_tx: Option<mpsc::UnboundedSender<Layer1Event>>,
     ) -> Self {
         Self {
             states: Arc::new(RwLock::new(HashMap::new())),
@@ -111,44 +115,57 @@ impl Layer1Processor {
             config,
             events_since_snapshot: Arc::new(RwLock::new(HashMap::new())),
             update_trackers: Arc::new(RwLock::new(HashMap::new())),
+            event_tx,
         }
     }
 
-    /// Spawn the processor as a tokio task
+    /// Spawn the processor as a tokio task.
+    /// Returns a tuple of (task_sender, event_receiver).
+    /// - task_sender: Send Layer1Task messages to control the processor
+    /// - event_receiver: Receive Layer1Event updates when state changes
     pub fn spawn(
         storage: Arc<Layer1Storage>,
         llm: Arc<dyn SynthesisLlm>,
         config: Layer1Config,
-    ) -> mpsc::UnboundedSender<Layer1Task> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let processor = Self::new(storage, llm, config);
+    ) -> (
+        mpsc::UnboundedSender<Layer1Task>,
+        mpsc::UnboundedReceiver<Layer1Event>,
+    ) {
+        let (task_tx, task_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let processor = Self::new(storage, llm, config, Some(event_tx));
 
         tokio::spawn(async move {
-            processor.run(rx).await;
+            processor.run(task_rx).await;
         });
 
-        tx
+        (task_tx, event_rx)
     }
 
     /// Main processing loop
     async fn run(self, mut rx: mpsc::UnboundedReceiver<Layer1Task>) {
-        tracing::info!("[layer1] Processor started");
+        tracing::info!("[layer1] Processor started (use_llm={}, snapshot_interval={})",
+            self.config.use_llm, self.config.snapshot_interval);
 
         while let Some(task) = rx.recv().await {
             match task {
                 Layer1Task::ProcessEvent(event) => {
+                    tracing::debug!("[layer1] Received ProcessEvent task for session {}", event.session_id);
                     self.handle_event(*event).await;
                 }
                 Layer1Task::TakeSnapshot { session_id, reason } => {
+                    tracing::debug!("[layer1] Received TakeSnapshot task for session {} (reason: {})", session_id, reason);
                     self.handle_snapshot(session_id, &reason).await;
                 }
                 Layer1Task::InitSession {
                     session_id,
                     initial_request,
                 } => {
+                    tracing::debug!("[layer1] Received InitSession task for session {}", session_id);
                     self.handle_init_session(session_id, &initial_request).await;
                 }
                 Layer1Task::EndSession { session_id } => {
+                    tracing::debug!("[layer1] Received EndSession task for session {}", session_id);
                     self.handle_end_session(session_id).await;
                 }
                 Layer1Task::Shutdown => {
@@ -162,6 +179,14 @@ impl Layer1Processor {
     /// Handle a new event
     pub async fn handle_event(&self, event: SessionEvent) {
         let session_id = event.session_id;
+        let event_type_name = event.event_type.name();
+
+        tracing::debug!(
+            "[layer1] Processing event: session={}, type={}, id={}",
+            session_id,
+            event_type_name,
+            event.id
+        );
 
         // Get or create state for this session
         let state = {
@@ -170,16 +195,44 @@ impl Layer1Processor {
         };
 
         let state = match state {
-            Some(s) => s,
+            Some(s) => {
+                tracing::debug!(
+                    "[layer1] Using existing in-memory state for session {} (goals={}, files={}, decisions={})",
+                    session_id,
+                    s.goal_stack.len(),
+                    s.file_contexts.len(),
+                    s.decisions.len()
+                );
+                s
+            }
             None => {
+                tracing::debug!("[layer1] No in-memory state for session {}, checking storage...", session_id);
                 // Try to recover from storage
                 match self.storage.get_latest_state(session_id).await {
-                    Ok(Some(s)) => s,
+                    Ok(Some(s)) => {
+                        tracing::debug!(
+                            "[layer1] Recovered state from storage for session {} (goals={}, files={}, decisions={})",
+                            session_id,
+                            s.goal_stack.len(),
+                            s.file_contexts.len(),
+                            s.decisions.len()
+                        );
+                        s
+                    }
                     Ok(None) => {
                         // Create new state based on event type
                         if let EventType::UserPrompt { intent } = &event.event_type {
+                            tracing::debug!(
+                                "[layer1] Creating new state with initial goal for session {}: {}",
+                                session_id,
+                                truncate(intent, 50)
+                            );
                             SessionState::with_initial_goal(session_id, intent)
                         } else {
+                            tracing::debug!(
+                                "[layer1] Creating empty new state for session {}",
+                                session_id
+                            );
                             SessionState::new(session_id)
                         }
                     }
@@ -196,9 +249,19 @@ impl Layer1Processor {
         };
 
         // Process the event
-        let (updated_state, changes) = if self.config.use_llm && self.llm.is_available() {
+        let llm_available = self.llm.is_available();
+        tracing::debug!(
+            "[layer1] Processing strategy: use_llm={}, llm_available={}, will_use_llm={}",
+            self.config.use_llm,
+            llm_available,
+            self.config.use_llm && llm_available
+        );
+
+        let (updated_state, changes) = if self.config.use_llm && llm_available {
+            tracing::debug!("[layer1] Using LLM-based processing for event {}", event.id);
             self.process_with_llm(&state, &event).await
         } else {
+            tracing::debug!("[layer1] Using rule-based processing for event {}", event.id);
             self.process_with_rules(&state, &event)
         };
 
@@ -209,21 +272,51 @@ impl Layer1Processor {
             // Log changes
             if !changes.is_empty() {
                 tracing::debug!(
-                    "[layer1] Session {} updated: {}",
+                    "[layer1] Session {} updated with {} change(s): {}",
                     session_id,
+                    changes.len(),
                     changes.join(", ")
+                );
+            } else {
+                tracing::debug!(
+                    "[layer1] Session {} state updated but no tracked changes",
+                    session_id
                 );
             }
 
             // Update in-memory state
             self.states.write().insert(session_id, new_state.clone());
+            tracing::debug!(
+                "[layer1] Updated in-memory state for session {} (goals={}, files={}, decisions={}, errors={})",
+                session_id,
+                new_state.goal_stack.len(),
+                new_state.file_contexts.len(),
+                new_state.decisions.len(),
+                new_state.errors.len()
+            );
+
+            // Emit events for changes
+            let mut events_emitted = 0;
+            for change in &changes {
+                if let Some(l1_event) = self.change_to_event(session_id, &new_state, change) {
+                    tracing::debug!("[layer1] Emitting event for change: {}", change);
+                    self.emit_event(l1_event);
+                    events_emitted += 1;
+                }
+            }
+            if events_emitted > 0 {
+                tracing::debug!("[layer1] Emitted {} Layer1Event(s) for session {}", events_emitted, session_id);
+            }
 
             // Check if we should take a snapshot
             let should_snapshot = self.check_snapshot_trigger(&event, &changes, session_id);
             if should_snapshot {
                 let reason = self.determine_snapshot_reason(&event, &changes);
+                tracing::debug!("[layer1] Taking snapshot for session {} (reason: {})", session_id, reason);
                 if let Err(e) = self.storage.save_snapshot(&new_state, &reason).await {
                     tracing::warn!("[layer1] Failed to save snapshot: {}", e);
+                } else {
+                    tracing::debug!("[layer1] Snapshot saved successfully for session {}", session_id);
                 }
                 self.events_since_snapshot.write().insert(session_id, 0);
             } else {
@@ -231,7 +324,18 @@ impl Layer1Processor {
                 let mut counts = self.events_since_snapshot.write();
                 let count = counts.entry(session_id).or_insert(0);
                 *count += 1;
+                tracing::debug!(
+                    "[layer1] Events since last snapshot for session {}: {}",
+                    session_id,
+                    *count
+                );
             }
+        } else {
+            tracing::debug!(
+                "[layer1] Event {} did not result in state changes for session {}",
+                event.id,
+                session_id
+            );
         }
     }
 
@@ -242,28 +346,51 @@ impl Layer1Processor {
         event: &SessionEvent,
     ) -> (Option<SessionState>, Vec<String>) {
         let prompt = format_interpretation_prompt(state, event);
+        tracing::debug!(
+            "[layer1] LLM prompt generated ({} chars) for event {}",
+            prompt.len(),
+            event.id
+        );
 
         match self
             .llm
             .generate_chat(STATE_INTERPRETER_SYSTEM, &prompt, 1500)
             .await
         {
-            Ok(response) => match parse_interpreter_response(&response) {
-                Ok(parsed) => {
-                    if parsed.has_changes() {
-                        (parsed.updated_state, parsed.changes)
-                    } else {
-                        (None, vec![])
+            Ok(response) => {
+                tracing::debug!(
+                    "[layer1] LLM response received ({} chars) for event {}",
+                    response.len(),
+                    event.id
+                );
+                match parse_interpreter_response(&response) {
+                    Ok(parsed) => {
+                        if parsed.has_changes() {
+                            tracing::debug!(
+                                "[layer1] LLM identified {} change(s) for event {}",
+                                parsed.changes.len(),
+                                event.id
+                            );
+                            (parsed.updated_state, parsed.changes)
+                        } else {
+                            tracing::debug!(
+                                "[layer1] LLM determined no changes needed for event {}",
+                                event.id
+                            );
+                            (None, vec![])
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[layer1] Failed to parse LLM response: {}", e);
+                        tracing::debug!("[layer1] Falling back to rule-based processing for event {}", event.id);
+                        // Fall back to rule-based processing
+                        self.process_with_rules(state, event)
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("[layer1] Failed to parse LLM response: {}", e);
-                    // Fall back to rule-based processing
-                    self.process_with_rules(state, event)
-                }
-            },
+            }
             Err(e) => {
                 tracing::warn!("[layer1] LLM interpretation failed: {}", e);
+                tracing::debug!("[layer1] Falling back to rule-based processing for event {}", event.id);
                 // Fall back to rule-based processing
                 self.process_with_rules(state, event)
             }
@@ -278,9 +405,16 @@ impl Layer1Processor {
     ) -> (Option<SessionState>, Vec<String>) {
         let mut new_state = state.clone();
         let mut changes = Vec::new();
+        let event_type_name = event.event_type.name();
+
+        tracing::debug!(
+            "[layer1] Rule-based processing for event type: {}",
+            event_type_name
+        );
 
         match &event.event_type {
             EventType::UserPrompt { intent } => {
+                tracing::debug!("[layer1] Processing UserPrompt: {}", truncate(intent, 80));
                 // Add as a new goal or update narrative
                 if new_state.goal_stack.is_empty() {
                     new_state.push_goal(intent.clone(), GoalSource::InitialPrompt);
@@ -296,6 +430,7 @@ impl Layer1Processor {
                 }
             }
             EventType::FileEdit { path, summary, .. } => {
+                tracing::debug!("[layer1] Processing FileEdit: {}", path.display());
                 let file_summary = summary.clone().unwrap_or_else(|| "Modified".to_string());
                 let mut context = FileContext::new(
                     path.clone(),
@@ -312,9 +447,16 @@ impl Layer1Processor {
                 reasoning,
                 ..
             } => {
+                tracing::debug!(
+                    "[layer1] Processing ToolCall: tool={}, success={}, files_accessed={}",
+                    tool_name,
+                    success,
+                    event.files_accessed.as_ref().map(|f| f.len()).unwrap_or(0)
+                );
                 // Track file reads
                 if let Some(files) = &event.files_accessed {
                     for path in files {
+                        tracing::debug!("[layer1] Tracking file access: {}", path.display());
                         let mut context = new_state
                             .file_contexts
                             .get(path)
@@ -339,6 +481,7 @@ impl Layer1Processor {
 
                 // Track tool failures as errors
                 if !success {
+                    tracing::debug!("[layer1] Recording tool failure: {}", tool_name);
                     let error = ErrorEntry::new(
                         format!("Tool {} failed", tool_name),
                         reasoning.clone().unwrap_or_default(),
@@ -351,8 +494,14 @@ impl Layer1Processor {
                 content,
                 decision_type,
             } => {
+                tracing::debug!(
+                    "[layer1] Processing AgentReasoning: decision_type={:?}, content_len={}",
+                    decision_type,
+                    content.len()
+                );
                 // Extract decisions if present
                 if decision_type.is_some() || content.to_lowercase().contains("because") {
+                    tracing::debug!("[layer1] Extracting decision from reasoning");
                     let decision = Decision::new(
                         truncate(content, 200),
                         "Extracted from reasoning".to_string(),
@@ -370,6 +519,7 @@ impl Layer1Processor {
                     || lower.contains("finished"))
                     && new_state.current_goal().is_some()
                 {
+                    tracing::debug!("[layer1] Detected completion signal in reasoning");
                     new_state.complete_current_goal();
                     changes.push("Marked current goal as complete".to_string());
                 }
@@ -377,6 +527,7 @@ impl Layer1Processor {
                 // Check for questions/uncertainties
                 if content.contains('?') || lower.contains("should we") || lower.contains("unclear")
                 {
+                    tracing::debug!("[layer1] Detected question/uncertainty in reasoning");
                     // Extract question-like phrases (simplified)
                     for sentence in content.split('.') {
                         if sentence.contains('?') {
@@ -393,10 +544,16 @@ impl Layer1Processor {
                 ..
             } => {
                 use crate::sidecar::events::FeedbackType;
+                tracing::debug!(
+                    "[layer1] Processing UserFeedback: type={:?}, has_comment={}",
+                    feedback_type,
+                    comment.is_some()
+                );
 
                 match feedback_type {
                     FeedbackType::Deny => {
                         if let Some(c) = comment {
+                            tracing::debug!("[layer1] Recording user denial");
                             let decision = Decision::new(
                                 format!("User denied: {}", truncate(c, 100)),
                                 "User feedback".to_string(),
@@ -408,16 +565,19 @@ impl Layer1Processor {
                         }
                     }
                     FeedbackType::Approve => {
+                        tracing::debug!("[layer1] User approved (no state change)");
                         // Could indicate goal progress
                     }
                     FeedbackType::Modify => {
                         if let Some(c) = comment {
+                            tracing::debug!("[layer1] Adding goal from user modification");
                             new_state.push_goal(c.clone(), GoalSource::UserClarification);
                             changes.push("Added goal from user modification".to_string());
                         }
                     }
                     FeedbackType::Annotate => {
                         if let Some(c) = comment {
+                            tracing::debug!("[layer1] Adding user annotation to narrative");
                             new_state.update_narrative(format!(
                                 "{}. User note: {}",
                                 new_state.narrative,
@@ -433,6 +593,11 @@ impl Layer1Processor {
                 recovery_action,
                 resolved,
             } => {
+                tracing::debug!(
+                    "[layer1] Processing ErrorRecovery: resolved={}, error={}",
+                    resolved,
+                    truncate(error_message, 50)
+                );
                 // Find or create error entry
                 let existing_error = new_state
                     .errors
@@ -442,11 +607,13 @@ impl Layer1Processor {
                 if let Some(idx) = existing_error {
                     if *resolved {
                         if let Some(action) = recovery_action {
+                            tracing::debug!("[layer1] Marking existing error as resolved");
                             new_state.errors[idx].resolve(action.clone());
                             changes.push("Marked error as resolved".to_string());
                         }
                     }
                 } else if !resolved {
+                    tracing::debug!("[layer1] Recording new error");
                     let error = ErrorEntry::new(
                         error_message.clone(),
                         recovery_action.clone().unwrap_or_default(),
@@ -456,28 +623,49 @@ impl Layer1Processor {
                 }
             }
             EventType::AiResponse { content, .. } => {
+                tracing::debug!(
+                    "[layer1] Processing AiResponse: content_len={}",
+                    content.len()
+                );
                 // Update narrative with response summary
                 if content.len() > 50 {
                     // Only update for substantial responses
+                    tracing::debug!("[layer1] Updating narrative from AI response");
                     new_state.update_narrative(truncate(content, 200));
                     changes.push("Updated narrative from AI response".to_string());
+                } else {
+                    tracing::debug!("[layer1] AI response too short to update narrative ({} chars)", content.len());
                 }
             }
             EventType::SessionEnd { summary } => {
+                tracing::debug!(
+                    "[layer1] Processing SessionEnd: has_summary={}",
+                    summary.is_some()
+                );
                 // Mark all goals as completed or abandoned
                 if let Some(s) = summary {
                     new_state.update_narrative(s.clone());
                 }
                 changes.push("Session ended".to_string());
             }
-            _ => {}
+            _ => {
+                tracing::debug!(
+                    "[layer1] No specific handler for event type: {}",
+                    event_type_name
+                );
+            }
         }
 
         // Update timestamp
         if !changes.is_empty() {
             new_state.updated_at = Utc::now();
+            tracing::debug!(
+                "[layer1] Rule-based processing completed: {} change(s) detected",
+                changes.len()
+            );
             (Some(new_state), changes)
         } else {
+            tracing::debug!("[layer1] Rule-based processing completed: no changes detected");
             (None, vec![])
         }
     }
@@ -588,6 +776,14 @@ impl Layer1Processor {
         self.update_trackers
             .write()
             .insert(session_id, SessionUpdateTracker::default());
+
+        // Emit event for the initial goal
+        if let Some(goal) = state.goal_stack.first() {
+            self.emit_event(Layer1Event::GoalAdded {
+                session_id,
+                goal: goal.clone(),
+            });
+        }
 
         if let Err(e) = self
             .storage
@@ -717,6 +913,105 @@ impl Layer1Processor {
             tracker.events_since_narrative = 0;
         }
     }
+
+    /// Emit a Layer1Event to subscribers
+    fn emit_event(&self, event: Layer1Event) {
+        if let Some(ref tx) = self.event_tx {
+            if tx.send(event).is_err() {
+                tracing::trace!("[layer1] Event receiver dropped, event not sent");
+            }
+        }
+    }
+
+    /// Convert a change description to a Layer1Event
+    fn change_to_event(
+        &self,
+        session_id: Uuid,
+        state: &SessionState,
+        change: &str,
+    ) -> Option<Layer1Event> {
+        let lower = change.to_lowercase();
+
+        if lower.contains("goal") && (lower.contains("added") || lower.contains("initial")) {
+            state.goal_stack.last().map(|g| Layer1Event::GoalAdded {
+                session_id,
+                goal: g.clone(),
+            })
+        } else if lower.contains("goal") && lower.contains("complete") {
+            state
+                .goal_stack
+                .iter()
+                .find(|g| g.completed)
+                .map(|g| Layer1Event::GoalCompleted {
+                    session_id,
+                    goal_id: g.id,
+                })
+        } else if lower.contains("narrative") {
+            Some(Layer1Event::NarrativeUpdated {
+                session_id,
+                narrative: state.narrative.clone(),
+            })
+        } else if lower.contains("decision") {
+            state
+                .decisions
+                .last()
+                .map(|d| Layer1Event::DecisionRecorded {
+                    session_id,
+                    decision: d.clone(),
+                })
+        } else if lower.contains("error") && !lower.contains("resolved") {
+            state.errors.last().map(|e| Layer1Event::ErrorUpdated {
+                session_id,
+                error: e.clone(),
+            })
+        } else if lower.contains("question") && !lower.contains("answered") {
+            state
+                .open_questions
+                .last()
+                .map(|q| Layer1Event::QuestionAdded {
+                    session_id,
+                    question: q.clone(),
+                })
+        } else if lower.contains("question") && lower.contains("answered") {
+            // Find most recently answered question
+            state
+                .open_questions
+                .iter()
+                .filter(|q| q.is_answered())
+                .max_by_key(|q| q.answered_at)
+                .map(|q| Layer1Event::QuestionAnswered {
+                    session_id,
+                    question_id: q.id,
+                    answer: q.answer.clone().unwrap_or_default(),
+                })
+        } else if lower.contains("file context") || lower.contains("file access") {
+            // Extract path from change message patterns:
+            // "Updated file context: {path}"
+            // "Tracked N file access(es)"
+            if let Some(path_str) = change.strip_prefix("Updated file context: ") {
+                let path = std::path::PathBuf::from(path_str);
+                state
+                    .file_contexts
+                    .get(&path)
+                    .map(|ctx| Layer1Event::FileContextUpdated {
+                        session_id,
+                        path,
+                        context: ctx.clone(),
+                    })
+            } else {
+                // For batch file access, emit the most recent file context
+                state.file_contexts.iter().next().map(|(path, ctx)| {
+                    Layer1Event::FileContextUpdated {
+                        session_id,
+                        path: path.clone(),
+                        context: ctx.clone(),
+                    }
+                })
+            }
+        } else {
+            None
+        }
+    }
 }
 
 /// Truncate a string to a maximum length
@@ -759,7 +1054,7 @@ mod tests {
             max_open_questions: 20,
         };
 
-        let processor = Layer1Processor::new(storage, llm, config);
+        let processor = Layer1Processor::new(storage, llm, config, None);
         (temp_dir, processor)
     }
 

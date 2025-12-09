@@ -4,10 +4,82 @@
 //! derived from L0 raw events.
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
+
+// ============================================================================
+// Serde helpers for LLM response flexibility
+// ============================================================================
+
+/// Deserialize a field that LLM might return as either a string or an array of strings.
+/// If a string is provided, it's wrapped into a single-element Vec.
+fn string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, SeqAccess, Visitor};
+
+    struct StringOrVec;
+
+    impl<'de> Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or a sequence of strings")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Vec<String>, E>
+        where
+            E: de::Error,
+        {
+            if value.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![value.to_owned()])
+            }
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Vec<String>, E>
+        where
+            E: de::Error,
+        {
+            if value.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![value])
+            }
+        }
+
+        fn visit_seq<S>(self, mut seq: S) -> Result<Vec<String>, S::Error>
+        where
+            S: SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(elem) = seq.next_element()? {
+                vec.push(elem);
+            }
+            Ok(vec)
+        }
+
+        fn visit_none<E>(self) -> Result<Vec<String>, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_unit<E>(self) -> Result<Vec<String>, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
+}
 
 // ============================================================================
 // Enums
@@ -737,7 +809,7 @@ pub struct FileContext {
     pub understanding_level: UnderstandingLevel,
 
     /// Key exports (functions, types, classes) from this file
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_vec")]
     pub key_exports: Vec<String>,
 
     /// Other files this file depends on
@@ -749,7 +821,7 @@ pub struct FileContext {
     pub change_history: Vec<FileChange>,
 
     /// Agent's notes about this file
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_vec")]
     pub notes: Vec<String>,
 }
 

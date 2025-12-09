@@ -254,7 +254,7 @@ mod tests {
             max_open_questions: 20,
         };
 
-        let processor = Layer1Processor::new(storage.clone(), llm, config);
+        let processor = Layer1Processor::new(storage.clone(), llm, config, None);
         (temp_dir, processor, storage)
     }
 
@@ -593,7 +593,7 @@ mod tests {
                 max_open_questions: 20,
             };
 
-            let processor = Layer1Processor::new(storage.clone(), llm, config);
+            let processor = Layer1Processor::new(storage.clone(), llm, config, None);
 
             // Add a goal (should trigger snapshot)
             processor

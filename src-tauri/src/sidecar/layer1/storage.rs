@@ -130,6 +130,7 @@ impl Layer1Storage {
 
     /// Get the latest state snapshot for a session
     pub async fn get_latest_state(&self, session_id: Uuid) -> Result<Option<SessionState>> {
+        tracing::debug!("[layer1-storage] Getting latest state for session {}", session_id);
         let table = self
             .states_table
             .as_ref()
@@ -148,8 +149,10 @@ impl Layer1Storage {
             .await?;
 
         if results.is_empty() {
+            tracing::debug!("[layer1-storage] No snapshots found for session {}", session_id);
             return Ok(None);
         }
+        tracing::debug!("[layer1-storage] Found {} batch(es) for session {}", results.len(), session_id);
 
         // Find the most recent snapshot
         let mut latest_state: Option<(i64, SessionState)> = None;

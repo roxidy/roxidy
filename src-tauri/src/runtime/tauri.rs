@@ -3,12 +3,19 @@ use crate::ai::events::AiEvent;
 use crate::ai::hitl::RiskLevel;
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use serde::Serialize;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
+
+#[derive(Debug, Clone, Serialize)]
+struct TerminalOutputEvent {
+    session_id: String,
+    data: String,
+}
 
 pub struct TauriRuntime {
     app_handle: AppHandle,
@@ -53,9 +60,45 @@ impl TauriRuntime {
 #[async_trait]
 impl QbitRuntime for TauriRuntime {
     fn emit(&self, event: RuntimeEvent) -> Result<(), RuntimeError> {
-        self.app_handle
-            .emit("qbit-event", &event)
-            .map_err(|e| RuntimeError::EmitFailed(e.to_string()))?;
+        // Emit with appropriate event name based on the RuntimeEvent variant
+        match &event {
+            RuntimeEvent::Ai(ai_event) => {
+                // AI events go to ai-event channel
+                self.app_handle
+                    .emit("ai-event", ai_event)
+                    .map_err(|e| RuntimeError::EmitFailed(e.to_string()))?;
+            }
+            RuntimeEvent::TerminalOutput { session_id, data } => {
+                // Terminal output goes to terminal_output channel
+                let output_str = String::from_utf8_lossy(data).to_string();
+                self.app_handle
+                    .emit(
+                        "terminal_output",
+                        TerminalOutputEvent {
+                            session_id: session_id.clone(),
+                            data: output_str,
+                        },
+                    )
+                    .map_err(|e| RuntimeError::EmitFailed(e.to_string()))?;
+            }
+            RuntimeEvent::TerminalExit { session_id, .. } => {
+                // Session ended goes to session_ended channel
+                self.app_handle
+                    .emit(
+                        "session_ended",
+                        serde_json::json!({
+                            "sessionId": session_id
+                        }),
+                    )
+                    .map_err(|e| RuntimeError::EmitFailed(e.to_string()))?;
+            }
+            RuntimeEvent::Custom { name, payload } => {
+                // Custom events use the specified name
+                self.app_handle
+                    .emit(name, payload)
+                    .map_err(|e| RuntimeError::EmitFailed(e.to_string()))?;
+            }
+        }
         Ok(())
     }
 

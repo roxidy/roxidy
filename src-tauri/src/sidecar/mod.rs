@@ -51,4 +51,5 @@ mod schema_verification_test;
 pub use capture::CaptureContext;
 #[cfg(feature = "tauri")]
 pub use commands::*;
+pub use config::SidecarConfig;
 pub use state::SidecarState;

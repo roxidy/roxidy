@@ -66,6 +66,8 @@ use sidecar::{
 };
 #[cfg(feature = "tauri")]
 use state::AppState;
+#[cfg(feature = "tauri")]
+use tauri::Manager;
 
 /// Tauri application entry point (only available with tauri feature)
 #[cfg(feature = "tauri")]
@@ -108,6 +110,47 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(app_state)
+        .setup(|app| {
+            // Auto-initialize sidecar and Layer1 at startup
+            let state = app.state::<AppState>();
+            let settings_manager = state.settings_manager.clone();
+            let sidecar_state = state.sidecar_state.clone();
+            let app_handle = app.handle().clone();
+
+            // Spawn async initialization (settings access is async)
+            tauri::async_runtime::spawn(async move {
+                let settings = settings_manager.get().await;
+
+                if !settings.sidecar.enabled {
+                    tracing::debug!("[tauri-setup] Sidecar disabled in settings, skipping initialization");
+                    return;
+                }
+
+                // Set app handle for Layer1 event emission to frontend
+                sidecar_state.set_app_handle(app_handle);
+
+                // Get workspace path (default to home directory)
+                let workspace = std::env::current_dir()
+                    .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default());
+
+                tracing::info!("[tauri-setup] Initializing sidecar for workspace: {:?}", workspace);
+
+                // Initialize sidecar storage
+                if let Err(e) = sidecar_state.initialize(workspace).await {
+                    tracing::warn!("[tauri-setup] Failed to initialize sidecar: {}", e);
+                    return;
+                }
+
+                // Initialize Layer1 processor
+                if let Err(e) = sidecar_state.initialize_layer1().await {
+                    tracing::warn!("[tauri-setup] Failed to initialize Layer1 processor: {}", e);
+                } else {
+                    tracing::info!("[tauri-setup] Sidecar and Layer1 initialized successfully");
+                }
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // PTY commands
             pty_create,

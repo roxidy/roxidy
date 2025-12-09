@@ -33,6 +33,7 @@ pub mod storage;
 mod verification_tests;
 
 pub use api::*;
+pub use events::Layer1Event;
 pub use processor::{Layer1Config, Layer1Processor, Layer1Task};
 pub use state::{
     // Main state types
