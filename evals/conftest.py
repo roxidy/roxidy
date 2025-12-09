@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -491,6 +492,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_api: mark test as requiring API credentials"
     )
+    # Add new sidecar marker
+    config.addinivalue_line(
+        "markers", "requires_sidecar: mark test as requiring sidecar database"
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -500,3 +505,39 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "requires_api" in item.keywords:
                 item.add_marker(skip_api)
+
+
+# =============================================================================
+# Sidecar Fixtures
+# =============================================================================
+
+
+@pytest.fixture(scope="function")
+def sidecar_db():
+    """Connection to sidecar LanceDB database.
+
+    Waits briefly for async flush to complete before connecting.
+    Returns None if database doesn't exist (tests should handle this).
+    """
+    # Small delay to ensure async flush completes from previous CLI run
+    time.sleep(0.3)
+    try:
+        from sidecar_utils import connect_sidecar_db
+        return connect_sidecar_db()
+    except (FileNotFoundError, ImportError):
+        return None
+
+
+@pytest.fixture(scope="function")
+def sidecar_session_before(sidecar_db):
+    """Capture last session state before test runs.
+
+    Useful for comparing session counts before/after a test.
+    """
+    if sidecar_db is None:
+        return None
+    try:
+        from sidecar_utils import get_last_session
+        return get_last_session(sidecar_db)
+    except Exception:
+        return None

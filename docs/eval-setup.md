@@ -1,4 +1,4 @@
-# DeepEval Setup Guide
+# Evaluation Setup Guide
 
 This guide explains how to configure and run the LLM-based evaluation tests for qbit-cli.
 
@@ -11,85 +11,144 @@ The integration tests use [DeepEval](https://deepeval.com/) to evaluate agent re
 ### Python Environment
 
 ```bash
-cd src-tauri/tests/integration
+cd evals
 
 # Create virtual environment (if not exists)
 uv venv .venv
+source .venv/bin/activate
 
 # Install dependencies
 uv pip install -e .
-# or
-uv pip install pytest deepeval
 ```
 
-### OpenAI API Key
+### API Keys
 
+**OpenAI API Key** (for evaluation model):
 Get an API key from https://platform.openai.com/api-keys
 
-Configure it in one of two ways:
-
-**Option 1: Environment variable**
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-**Option 2: settings.toml**
-```toml
-[eval]
-model = "gpt-4o-mini"
-api_key = "sk-..."
-```
+**Vertex AI / Anthropic** (for qbit-cli agent):
+Configure in `~/.qbit/settings.toml` as described in CLAUDE.md
 
 ## Configuration
 
-Edit `settings.toml` to configure the eval model:
+### Evaluator Model (OpenAI)
+
+The evaluator model judges agent responses. Configure in `~/.qbit/settings.toml`:
 
 ```toml
 [eval]
-model = "gpt-4o-mini"    # OpenAI model to use
+model = "gpt-4o-mini"    # OpenAI model for evaluation
 temperature = 0          # Lower = more deterministic
 # api_key = "sk-..."     # Optional, can use OPENAI_API_KEY env var
 ```
 
-### Available Models
+Or use environment variable:
+```bash
+export OPENAI_API_KEY=sk-...
+```
+
+### Agent Model (qbit-cli)
+
+Override the agent model used during tests:
+
+```bash
+# Via environment variable (highest priority)
+QBIT_EVAL_MODEL="claude-haiku-4-5@20251001" pytest test_cli.py -v
+
+# Or in settings.toml
+[eval]
+agent_model = "claude-haiku-4-5@20251001"
+```
+
+### Available Evaluator Models
 
 | Model | Cost | Notes |
 |-------|------|-------|
 | `gpt-4o-mini` | Low | Recommended for routine testing |
 | `gpt-4o` | Medium | More capable, use for complex evals |
-| `gpt-4-turbo` | Medium | Previous generation |
+
+## Test Files
+
+| File | Description | API Required |
+|------|-------------|--------------|
+| `test_cli.py` | CLI behavior and response quality tests | Yes (most tests) |
+| `test_sidecar.py` | Sidecar event capture and storage tests | Yes (most tests) |
 
 ## Running Tests
 
-### Basic CLI Tests (No LLM Required)
+### Basic CLI Tests (No API Required)
 
 ```bash
+cd evals
 pytest test_cli.py -v -k "TestCliBasics"
 ```
 
 These tests verify CLI argument parsing and don't require any API credentials.
 
-### Full Test Suite (Requires OpenAI)
+### Full CLI Test Suite
 
 ```bash
-# Run all tests including LLM evaluations
+# Run all CLI tests
 RUN_API_TESTS=1 pytest test_cli.py -v
 
-# Run with verbose output
+# With verbose CLI output
 RUN_API_TESTS=1 VERBOSE=1 pytest test_cli.py -v
+
+# With specific agent model
+QBIT_EVAL_MODEL="claude-haiku-4-5@20251001" RUN_API_TESTS=1 pytest test_cli.py -v
 ```
 
-### Specific Test Categories
+### Sidecar Tests
+
+The sidecar tests verify event capture, session management, and search functionality:
 
 ```bash
-# Session continuity tests
-RUN_API_TESTS=1 pytest test_cli.py -v -k "TestSessionContinuity"
+# Run all sidecar tests
+RUN_API_TESTS=1 pytest test_sidecar.py -v
 
-# Tool execution tests
-RUN_API_TESTS=1 pytest test_cli.py -v -k "TestToolExecution"
+# Storage integrity tests only (no API needed, but requires existing sidecar DB)
+pytest test_sidecar.py -v -k "TestStorageIntegrity"
+```
 
-# Edge case tests
-RUN_API_TESTS=1 pytest test_cli.py -v -k "TestEdgeCases"
+### Test Categories
+
+**CLI Tests (`test_cli.py`):**
+```bash
+# Basic CLI behavior (no API)
+pytest test_cli.py -v -k "TestCliBasics"
+
+# CLI behavior with API (no DeepEval)
+RUN_API_TESTS=1 pytest test_cli.py -v -k "TestCliBehavior"
+
+# Memory and state recall
+RUN_API_TESTS=1 pytest test_cli.py -v -k "TestMemoryAndState"
+
+# Response quality
+RUN_API_TESTS=1 pytest test_cli.py -v -k "TestResponseQuality"
+
+# Character handling (unicode, special chars)
+RUN_API_TESTS=1 pytest test_cli.py -v -k "TestCharacterHandling"
+
+# Tool usage
+RUN_API_TESTS=1 pytest test_cli.py -v -k "TestToolUsage"
+```
+
+**Sidecar Tests (`test_sidecar.py`):**
+```bash
+# Event capture
+RUN_API_TESTS=1 pytest test_sidecar.py -v -k "TestEventCapture"
+
+# Session lifecycle
+RUN_API_TESTS=1 pytest test_sidecar.py -v -k "TestSessionLifecycle"
+
+# Search functionality
+RUN_API_TESTS=1 pytest test_sidecar.py -v -k "TestSearchFunctionality"
+
+# Synthesis quality (DeepEval)
+RUN_API_TESTS=1 pytest test_sidecar.py -v -k "TestSynthesisQuality"
+
+# Storage integrity (no API needed)
+pytest test_sidecar.py -v -k "TestStorageIntegrity"
 ```
 
 ## How Evaluation Works
@@ -141,11 +200,11 @@ test_case = LLMTestCase(
 
 ```python
 def test_my_feature(self, cli: CliRunner, eval_model):
-    result = cli.run_prompt("Your prompt here", quiet=True)
+    result = cli.run_prompt_json("Your prompt here")
 
     test_case = LLMTestCase(
         input="Your prompt here",
-        actual_output=result.stdout.strip(),
+        actual_output=result.response,
         expected_output="Expected response",
     )
 
@@ -158,7 +217,7 @@ def test_my_feature(self, cli: CliRunner, eval_model):
     )
 
     results = evaluate([test_case], [my_metric])
-    assert all(r.success for r in results.test_results)
+    assert results.test_results[0].success
 ```
 
 ### Adjusting Thresholds
@@ -166,6 +225,46 @@ def test_my_feature(self, cli: CliRunner, eval_model):
 - `0.9+` - Strict matching (exact recall, arithmetic)
 - `0.7-0.8` - Moderate matching (comprehension, summarization)
 - `0.5-0.6` - Lenient matching (creative tasks, partial matches)
+
+## Sidecar Testing
+
+### Prerequisites
+
+The sidecar tests require:
+1. A running qbit instance that has created the sidecar database
+2. The database at `~/.qbit/sidecar/sidecar.lance`
+
+### Sidecar Utilities
+
+The `sidecar_utils.py` module provides helpers for querying the sidecar database:
+
+```python
+from sidecar_utils import (
+    connect_sidecar_db,
+    get_last_session,
+    get_session_events,
+    search_events_keyword,
+    get_storage_stats,
+    list_sessions,
+)
+
+# Connect to database
+db = connect_sidecar_db()
+
+# Get recent session
+session = get_last_session(db)
+
+# Get events for a session
+events = get_session_events(db, session["id"])
+
+# Search events by keyword
+matches = search_events_keyword(db, "my search term", limit=10)
+```
+
+### Known Limitations
+
+- **Batch mode event capture**: Batch mode (`run_batch`) may only capture events from the last prompt. Use single prompts (`run_prompt_json`) for reliable event capture testing.
+- **Async flush delay**: Events are flushed asynchronously. Tests use `wait_for_sidecar_flush()` to allow time for writes.
 
 ## Troubleshooting
 
@@ -189,9 +288,17 @@ The API tests are disabled by default. Enable them:
 RUN_API_TESTS=1 pytest test_cli.py -v
 ```
 
+### "Sidecar database not found"
+
+Run qbit at least once to initialize the sidecar database:
+```bash
+./target/debug/qbit-cli -e "hello" --auto-approve
+```
+
 ### Slow Tests
 
 - Use `gpt-4o-mini` for faster, cheaper evaluations
+- Use `claude-haiku-4-5@20251001` as agent model for faster CLI responses
 - Run specific test categories instead of full suite
 
 ## Cost Considerations

@@ -9,6 +9,8 @@ dependencies = [
     "pytest-xdist>=3.0",  # Parallel test execution across workers
     "python-dotenv>=1.0",
     "deepeval>=2.0",
+    "lancedb>=0.3.0",  # Sidecar database queries
+    "pandas>=2.0",  # DataFrame operations for sidecar queries
 ]
 
 [tool.pytest.ini_options]
