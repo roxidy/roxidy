@@ -27,13 +27,15 @@ use super::loop_detection::{LoopDetectionResult, LoopDetector};
 use super::sub_agent::{SubAgentContext, SubAgentRegistry, MAX_AGENT_DEPTH};
 use super::sub_agent_executor::{execute_sub_agent, SubAgentExecutorContext};
 use super::token_budget::TokenAlertLevel;
+#[cfg(feature = "tauri")]
+use super::tool_definitions::get_workflow_tool_definitions;
 use super::tool_definitions::{
     get_all_tool_definitions_with_config, get_sub_agent_tool_definitions,
     get_tavily_tool_definitions, ToolConfig,
 };
-#[cfg(feature = "tauri")]
-use super::tool_definitions::get_workflow_tool_definitions;
-use super::tool_executors::{execute_indexer_tool, execute_tavily_tool, execute_web_fetch_tool, normalize_run_pty_cmd_args};
+use super::tool_executors::{
+    execute_indexer_tool, execute_tavily_tool, execute_web_fetch_tool, normalize_run_pty_cmd_args,
+};
 #[cfg(feature = "tauri")]
 use super::tool_executors::{execute_workflow_tool, WorkflowToolContext};
 use super::tool_policy::{PolicyConstraintResult, ToolPolicy, ToolPolicyManager};
@@ -73,6 +75,13 @@ pub struct AgenticLoopContext<'a> {
     pub sidecar_state: Option<&'a Arc<SidecarState>>,
     /// Runtime for auto-approve checks (optional for backward compatibility)
     pub runtime: Option<&'a Arc<dyn QbitRuntime>>,
+    /// Cancellation token for graceful shutdown (server feature only)
+    ///
+    /// When provided, the agentic loop will check this token at each iteration
+    /// and exit early if cancelled. This enables graceful shutdown for HTTP
+    /// server timeouts and client disconnections.
+    #[cfg(feature = "server")]
+    pub cancel_token: Option<&'a tokio_util::sync::CancellationToken>,
 }
 
 /// Result of a single tool execution.
@@ -603,6 +612,18 @@ pub async fn run_agentic_loop(
                 error_type: "max_iterations".to_string(),
             });
             break;
+        }
+
+        // Check for cancellation at each iteration (server feature only)
+        #[cfg(feature = "server")]
+        if let Some(cancel_token) = ctx.cancel_token {
+            if cancel_token.is_cancelled() {
+                let _ = ctx.event_tx.send(AiEvent::Error {
+                    message: "Agentic loop cancelled".to_string(),
+                    error_type: "cancelled".to_string(),
+                });
+                return Err(anyhow::anyhow!("Agentic loop cancelled"));
+            }
         }
 
         // Build request

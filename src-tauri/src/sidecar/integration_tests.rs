@@ -764,10 +764,7 @@ async fn test_empty_session() {
 
     // Should have session_end event (session_start is no longer emitted)
     let events = state.get_session_events(session_id).await.unwrap();
-    assert!(
-        events.len() >= 1,
-        "Should have at least session_end event"
-    );
+    assert!(events.len() >= 1, "Should have at least session_end event");
 
     println!("✓ Empty session test passed");
 }

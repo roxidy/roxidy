@@ -73,6 +73,7 @@ agent_model = "claude-haiku-4-5@20251001"
 |------|-------------|--------------|
 | `test_cli.py` | CLI behavior and response quality tests | Yes (most tests) |
 | `test_sidecar.py` | Sidecar event capture and storage tests | Yes (most tests) |
+| `test_layer1.py` | Layer 1 session state tests | Yes (most tests) |
 
 ## Running Tests
 
@@ -265,6 +266,122 @@ matches = search_events_keyword(db, "my search term", limit=10)
 
 - **Batch mode event capture**: Batch mode (`run_batch`) may only capture events from the last prompt. Use single prompts (`run_prompt_json`) for reliable event capture testing.
 - **Async flush delay**: Events are flushed asynchronously. Tests use `wait_for_sidecar_flush()` to allow time for writes.
+
+## Layer 1 Session State Testing
+
+Layer 1 maintains a continuously-updated session state model that includes:
+- **Goal Stack**: What the agent is trying to accomplish
+- **Narrative**: Human-readable "what's happening and why"
+- **Decision Log**: Choices made, alternatives rejected, rationale
+- **File Context Map**: Per-file summary of agent's understanding
+- **Error Journal**: What went wrong, how resolved
+- **Open Questions**: Unresolved ambiguities
+
+### Running Layer 1 Tests
+
+```bash
+# Storage tests (no API needed, requires session_states table)
+pytest test_layer1.py -v -k "TestLayer1Storage"
+
+# All Layer 1 tests
+RUN_API_TESTS=1 pytest test_layer1.py -v
+
+# Specific test classes
+RUN_API_TESTS=1 pytest test_layer1.py -v -k "TestLayer1GoalCapture"
+RUN_API_TESTS=1 pytest test_layer1.py -v -k "TestLayer1FileContext"
+RUN_API_TESTS=1 pytest test_layer1.py -v -k "TestLayer1Decisions"
+RUN_API_TESTS=1 pytest test_layer1.py -v -k "TestLayer1Quality"
+```
+
+### Initializing the Layer 1 Table
+
+Before running storage tests, initialize the `session_states` table:
+
+```bash
+cd evals
+
+# Create table only
+python init_layer1_table.py
+
+# Create table and seed with test data
+python init_layer1_table.py --seed
+
+# Force recreate if table exists
+python init_layer1_table.py --seed --force
+```
+
+### Layer 1 Utilities
+
+The `sidecar_utils.py` module provides helpers for querying Layer 1 state:
+
+```python
+from sidecar_utils import (
+    get_layer1_state,          # Get state for a session
+    get_layer1_latest,         # Get most recent state
+    get_layer1_goals,          # Extract goals from state
+    get_layer1_decisions,      # Extract decisions
+    get_layer1_file_contexts,  # Extract file contexts
+    get_layer1_errors,         # Extract error journal
+    get_layer1_open_questions, # Extract open questions
+    get_layer1_narrative,      # Extract narrative
+    list_layer1_states,        # List recent states
+    get_layer1_state_count,    # Count snapshots
+)
+
+# Example usage
+db = connect_sidecar_db()
+state = get_layer1_latest(db)
+if state:
+    goals = get_layer1_goals(state)
+    narrative = get_layer1_narrative(state)
+    print(f"Goals: {len(goals)}, Narrative: {narrative[:100]}...")
+```
+
+### Layer 1 Scorers
+
+The `sidecar_scorers.py` module provides scorer factories for validating Layer 1 state:
+
+```python
+from sidecar_scorers import (
+    verify_layer1_state_exists,       # Check state exists
+    verify_layer1_has_goal,           # Check has goals
+    verify_layer1_goal_contains,      # Check goal contains keyword
+    verify_layer1_has_decisions,      # Check decision count
+    verify_layer1_decision_contains,  # Check decision keyword
+    verify_layer1_has_file_context,   # Check file is tracked
+    verify_layer1_file_count,         # Check tracked file count
+    verify_layer1_has_narrative,      # Check narrative exists
+    verify_layer1_narrative_contains, # Check narrative keyword
+    verify_layer1_has_errors,         # Check error count
+    verify_layer1_has_open_questions, # Check question count
+    verify_layer1_snapshots,          # Check snapshot count
+)
+
+# Example usage
+scorer = verify_layer1_goal_contains("fibonacci")
+passed, reason = scorer(session_id)
+print(f"Goal check: {passed} - {reason}")
+```
+
+### Test Categories
+
+| Class | Description | Tests |
+|-------|-------------|-------|
+| `TestLayer1GoalCapture` | Verify goals extracted from prompts | 2 |
+| `TestLayer1FileContext` | Verify file tracking on read/edit | 2 |
+| `TestLayer1Decisions` | Verify decision logging | 1 |
+| `TestLayer1Narrative` | Verify narrative updates | 1 |
+| `TestLayer1Errors` | Verify error tracking | 1 |
+| `TestLayer1OpenQuestions` | Verify question capture | 1 |
+| `TestLayer1Storage` | Verify persistence (no API) | 3 |
+| `TestLayer1Quality` | GEval quality metrics | 2 |
+| `TestLayer1Integration` | End-to-end verification | 2 |
+
+### Known Limitations
+
+- **Processor activation**: Some tests skip if the Layer 1 processor wasn't active during CLI execution. This happens when the CLI runs without full sidecar integration.
+- **State capture timing**: Layer 1 state is captured asynchronously. Tests use `wait_for_layer1_flush()` with longer delays.
+- **Quality tests require state**: The GEval tests (`TestLayer1Quality`) require actual captured state from CLI runs, not seeded test data.
 
 ## Troubleshooting
 

@@ -14,7 +14,9 @@ mod tests {
 
     use crate::sidecar::events::{DecisionType, FileOperation, SessionEvent};
     use crate::sidecar::layer1::processor::{Layer1Config, Layer1Processor};
-    use crate::sidecar::layer1::state::{Decision, ErrorEntry, FileContext, GoalSource, SessionState};
+    use crate::sidecar::layer1::state::{
+        Decision, ErrorEntry, FileContext, GoalSource, SessionState,
+    };
     use crate::sidecar::layer1::storage::{snapshot_reasons, Layer1Storage};
     use crate::sidecar::layer1::{get_injectable_context, get_session_state};
     use crate::sidecar::synthesis_llm::TemplateLlm;
@@ -170,7 +172,10 @@ mod tests {
         let retrieved = storage.get_latest_state(session_id).await.unwrap().unwrap();
 
         // Verify all fields
-        assert!(!retrieved.goal_stack.is_empty(), "goal_stack should not be empty");
+        assert!(
+            !retrieved.goal_stack.is_empty(),
+            "goal_stack should not be empty"
+        );
         assert!(
             !retrieved.narrative.is_empty(),
             "narrative should not be empty"
@@ -242,9 +247,14 @@ mod tests {
             use_llm: false, // Use rule-based for deterministic tests
             snapshot_interval: 5,
             max_snapshots_per_session: 10,
+            narrative_update_interval: 5,
+            max_file_contexts: 100,
+            max_decisions: 50,
+            max_errors: 30,
+            max_open_questions: 20,
         };
 
-        let processor = Layer1Processor::new(storage.clone(), llm, config);
+        let processor = Layer1Processor::new(storage.clone(), llm, config, None);
         (temp_dir, processor, storage)
     }
 
@@ -267,7 +277,10 @@ mod tests {
         assert!(state.is_some(), "State should exist after user prompt");
         let state = state.unwrap();
 
-        assert!(!state.goal_stack.is_empty(), "goal_stack should not be empty");
+        assert!(
+            !state.goal_stack.is_empty(),
+            "goal_stack should not be empty"
+        );
 
         // Verify goal mentions authentication or JWT
         let goal_desc = &state.goal_stack[0].description.to_lowercase();
@@ -568,15 +581,19 @@ mod tests {
                 .unwrap();
 
             let storage = Arc::new(Layer1Storage::new(connection).await.unwrap());
-            let llm =
-                Arc::new(TemplateLlm) as Arc<dyn crate::sidecar::synthesis_llm::SynthesisLlm>;
+            let llm = Arc::new(TemplateLlm) as Arc<dyn crate::sidecar::synthesis_llm::SynthesisLlm>;
             let config = Layer1Config {
                 use_llm: false,
                 snapshot_interval: 1, // Snapshot after every event
                 max_snapshots_per_session: 10,
+                narrative_update_interval: 5,
+                max_file_contexts: 100,
+                max_decisions: 50,
+                max_errors: 30,
+                max_open_questions: 20,
             };
 
-            let processor = Layer1Processor::new(storage.clone(), llm, config);
+            let processor = Layer1Processor::new(storage.clone(), llm, config, None);
 
             // Add a goal (should trigger snapshot)
             processor
@@ -611,10 +628,7 @@ mod tests {
             );
             let recovered = recovered.unwrap();
 
-            assert_eq!(
-                recovered.session_id, session_id,
-                "Session ID should match"
-            );
+            assert_eq!(recovered.session_id, session_id, "Session ID should match");
             assert!(
                 !recovered.goal_stack.is_empty(),
                 "Goals should be recovered"
@@ -639,8 +653,10 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         // Create a realistic session state
-        let mut state =
-            SessionState::with_initial_goal(session_id, "Implement user authentication for the API");
+        let mut state = SessionState::with_initial_goal(
+            session_id,
+            "Implement user authentication for the API",
+        );
 
         // Add sub-goals
         state.add_sub_goal("Create User model".to_string(), GoalSource::Inferred);

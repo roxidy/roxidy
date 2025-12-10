@@ -178,6 +178,13 @@ pub async fn initialize(args: &Args) -> Result<CliContext> {
     if settings.sidecar.enabled {
         if let Err(e) = sidecar_state.initialize(workspace.clone()).await {
             tracing::warn!("Failed to initialize sidecar: {}", e);
+        } else {
+            // Initialize Layer1 processor for session state tracking
+            if let Err(e) = sidecar_state.initialize_layer1().await {
+                tracing::warn!("Failed to initialize Layer1 processor: {}", e);
+            } else if args.verbose {
+                eprintln!("[cli] Sidecar Layer1 processor initialized");
+            }
         }
     }
 
@@ -314,14 +321,10 @@ fn resolve_api_key(settings: &QbitSettings, provider: &str, args: &Args) -> Resu
             &["OPENROUTER_API_KEY"],
             None,
         ),
-        "anthropic" => get_with_env_fallback(
-            &settings.ai.anthropic.api_key,
-            &["ANTHROPIC_API_KEY"],
-            None,
-        ),
-        "openai" => {
-            get_with_env_fallback(&settings.ai.openai.api_key, &["OPENAI_API_KEY"], None)
+        "anthropic" => {
+            get_with_env_fallback(&settings.ai.anthropic.api_key, &["ANTHROPIC_API_KEY"], None)
         }
+        "openai" => get_with_env_fallback(&settings.ai.openai.api_key, &["OPENAI_API_KEY"], None),
         _ => None,
     };
 

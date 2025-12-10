@@ -1,490 +1,34 @@
-"""Pytest configuration and fixtures for CLI integration tests.
+"""Pytest configuration and fixtures for Qbit evaluation tests.
 
-Timeout Configuration:
-- pytest-timeout: 180s (configured in pyproject.toml)
-- CLI subprocess: 120s default (should be less than pytest timeout)
-- Batch operations: 300s (multiple prompts take longer)
+This module provides:
+- Pytest hooks and markers
+- Server lifecycle fixtures
+- Session and runner fixtures
+- Sidecar database fixtures
+- DeepEval model fixtures
 
-If a test hangs, the subprocess timeout fires first (120s), giving a
-clear timeout error. If that fails, pytest-timeout kills it at 180s.
+Fixtures:
+    runner: StreamingRunner for executing prompts (most common)
+    qbit_server: QbitClient connected to the server
+    streaming_session: (session_id, client) tuple
+    sidecar_db: LanceDB connection
+    eval_model: DeepEval GPTModel instance
 """
 
-import json
 import os
+import re
 import subprocess
-import tempfile
 import time
-import tomllib
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Generator
 
 import pytest
-from deepeval.models import GPTModel
 
-# Load environment variables from .env file in project root
-# This is loaded early so API keys are available for fixtures
-try:
-    from dotenv import load_dotenv
-    # Try project root first, then evals directory
-    for env_path in [Path(__file__).parent.parent / ".env", Path(__file__).parent / ".env"]:
-        if env_path.exists():
-            load_dotenv(env_path)
-            break
-except ImportError:
-    pass  # python-dotenv not installed, skip
+from client import QbitClient, StreamingRunner
+from config import create_eval_model, get_binary_path, is_verbose
 
 
 # =============================================================================
-# Timeout Constants
+# Pytest Hooks
 # =============================================================================
-
-# Default timeout for single CLI operations (2 minutes)
-CLI_TIMEOUT_DEFAULT = 120
-
-# Timeout for batch operations with multiple prompts (5 minutes)
-CLI_TIMEOUT_BATCH = 300
-
-
-# =============================================================================
-# JSON Output Parsing Utilities
-# =============================================================================
-
-
-@dataclass
-class CliJsonEvent:
-    """Structured representation of a CLI JSON event.
-
-    The CLI outputs events in JSONL format (one JSON object per line).
-    Each event has an 'event' type, 'timestamp', and event-specific fields.
-    """
-
-    event: str
-    timestamp: int
-    data: dict = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "CliJsonEvent":
-        """Create a CliJsonEvent from a parsed JSON dict."""
-        event = d.pop("event", "unknown")
-        timestamp = d.pop("timestamp", 0)
-        return cls(event=event, timestamp=timestamp, data=d)
-
-    def __getitem__(self, key: str):
-        """Allow dict-like access to data fields."""
-        return self.data.get(key)
-
-    def get(self, key: str, default=None):
-        """Get a data field with optional default."""
-        return self.data.get(key, default)
-
-
-def parse_json_output(stdout: str) -> list[CliJsonEvent]:
-    """Parse JSONL output from CLI into structured events.
-
-    Args:
-        stdout: Raw stdout from CLI with --json flag
-
-    Returns:
-        List of CliJsonEvent objects in order received
-
-    Raises:
-        ValueError: If any line contains invalid JSON
-    """
-    events = []
-    for line in stdout.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-            events.append(CliJsonEvent.from_dict(data))
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in CLI output: {line!r}") from e
-    return events
-
-
-def get_response_from_json(events: list[CliJsonEvent]) -> str:
-    """Extract the final response text from JSON events.
-
-    Looks for a 'completed' event and returns its 'response' field.
-    Falls back to accumulating text_delta events if no completed event.
-
-    Args:
-        events: List of parsed CLI events
-
-    Returns:
-        The final response string, or empty string if not found
-    """
-    # First try to find completed event
-    for event in reversed(events):
-        if event.event == "completed":
-            return event.get("response", "")
-
-    # Fall back to accumulated text from last text_delta
-    for event in reversed(events):
-        if event.event == "text_delta":
-            return event.get("accumulated", "")
-
-    return ""
-
-
-def get_tool_events(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
-    """Extract tool-related events from the event stream.
-
-    Args:
-        events: List of parsed CLI events
-
-    Returns:
-        List of events with type: tool_call, tool_result, tool_approval, etc.
-    """
-    tool_event_types = {
-        "tool_call",
-        "tool_result",
-        "tool_approval",
-        "tool_auto_approved",
-        "tool_denied",
-    }
-    return [e for e in events if e.event in tool_event_types]
-
-
-def get_tool_calls(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
-    """Extract tool call events (both tool_call and tool_auto_approved).
-
-    When tools are auto-approved by policy or learned patterns, the CLI
-    emits tool_auto_approved instead of tool_call. Both represent actual
-    tool invocations.
-    """
-    return [e for e in events if e.event in ("tool_call", "tool_auto_approved")]
-
-
-def get_tool_results(events: list[CliJsonEvent]) -> list[CliJsonEvent]:
-    """Extract only tool_result events."""
-    return [e for e in events if e.event == "tool_result"]
-
-
-def filter_events_by_type(events: list[CliJsonEvent], event_type: str) -> list[CliJsonEvent]:
-    """Filter events by their type."""
-    return [e for e in events if e.event == event_type]
-
-
-@dataclass
-class JsonRunResult:
-    """Result of running CLI in JSON mode.
-
-    Contains both the parsed events and convenience accessors.
-    """
-
-    events: list[CliJsonEvent]
-    response: str
-    returncode: int
-    stderr: str
-
-    @property
-    def tool_calls(self) -> list[CliJsonEvent]:
-        """Get all tool call events (tool_call and tool_auto_approved)."""
-        return get_tool_calls(self.events)
-
-    @property
-    def tool_results(self) -> list[CliJsonEvent]:
-        """Get all tool_result events."""
-        return get_tool_results(self.events)
-
-    @property
-    def completed_event(self) -> CliJsonEvent | None:
-        """Get the completed event if present."""
-        for event in reversed(self.events):
-            if event.event == "completed":
-                return event
-        return None
-
-    @property
-    def error_event(self) -> CliJsonEvent | None:
-        """Get the error event if present."""
-        for event in reversed(self.events):
-            if event.event == "error":
-                return event
-        return None
-
-    @property
-    def tokens_used(self) -> int | None:
-        """Get tokens_used from completed event."""
-        if completed := self.completed_event:
-            return completed.get("tokens_used")
-        return None
-
-    @property
-    def duration_ms(self) -> int | None:
-        """Get duration_ms from completed event."""
-        if completed := self.completed_event:
-            return completed.get("duration_ms")
-        return None
-
-    def has_tool(self, tool_name: str) -> bool:
-        """Check if a specific tool was called."""
-        return any(tc.get("tool_name") == tool_name for tc in self.tool_calls)
-
-    def get_tool_output(self, tool_name: str) -> str | None:
-        """Get the output of a specific tool call."""
-        for tr in self.tool_results:
-            if tr.get("tool_name") == tool_name:
-                return tr.get("output")
-        return None
-
-
-def load_settings() -> dict:
-    """Load settings from settings.toml."""
-    settings_path = "~/.qbit/settings.toml"
-    if not os.path.exists(settings_path):
-        return {"eval": {"model": "gpt-4o-mini", "temperature": 0}}
-    with open(settings_path, "rb") as f:
-        return tomllib.load(f)
-
-
-def create_eval_model():
-    """Create the OpenAI evaluation model from settings."""
-    settings = load_settings()
-    eval_settings = settings.get("eval", {})
-
-    # Set API key from settings if provided (overrides env var)
-    if api_key := eval_settings.get("api_key"):
-        os.environ["OPENAI_API_KEY"] = api_key
-
-    return GPTModel(
-        model=eval_settings.get("model", "gpt-4o-mini"),
-        temperature=eval_settings.get("temperature", 0),
-    )
-
-
-def get_last_response(stdout: str) -> str:
-    """Extract the last response from batch output.
-
-    Batch mode outputs each response on a separate line.
-    This returns only the final response for evaluation.
-    """
-    lines = [line for line in stdout.strip().split("\n") if line.strip()]
-    return lines[-1] if lines else ""
-
-
-def get_cli_path() -> str:
-    """Get the path to the qbit-cli binary."""
-    # Check environment variable first
-    if cli_path := os.environ.get("QBIT_CLI_PATH"):
-        return cli_path
-
-    # Default to debug build
-    return str("../src-tauri/target/debug/qbit-cli")
-
-
-@pytest.fixture(scope="session")
-def cli_path() -> str:
-    """Path to the CLI binary."""
-    path = get_cli_path()
-    if not os.path.exists(path):
-        pytest.skip(f"CLI binary not found at {path}. Run: cargo build --no-default-features --features cli --bin qbit-cli")
-    return path
-
-
-@pytest.fixture
-def temp_prompt_file() -> Generator[Path, None, None]:
-    """Create a temporary file for prompts."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        yield Path(f.name)
-    os.unlink(f.name)
-
-
-class CliRunner:
-    """Helper class to run CLI commands."""
-
-    def __init__(self, cli_path: str, verbose: bool = False, model: str | None = None):
-        self.cli_path = cli_path
-        self.verbose = verbose
-        self.model = model
-
-    def _log(self, *args, **kwargs):
-        """Print if verbose mode is enabled."""
-        if self.verbose:
-            print(*args, **kwargs)
-
-    def run(
-        self,
-        *args: str,
-        timeout: int = CLI_TIMEOUT_DEFAULT,
-        check: bool = False,
-    ) -> subprocess.CompletedProcess:
-        """Run the CLI with given arguments."""
-        cmd = [self.cli_path]
-        if self.model:
-            cmd.extend(["-m", self.model])
-        cmd.extend(args)
-        self._log(f"\n{'='*60}")
-        self._log(f"CMD: {' '.join(cmd)}")
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=check,
-        )
-
-        self._log(f"EXIT: {result.returncode}")
-        if result.stdout:
-            self._log(f"STDOUT:\n{result.stdout}")
-        if result.stderr:
-            self._log(f"STDERR:\n{result.stderr}")
-        self._log('='*60)
-
-        return result
-
-    def run_prompt(
-        self,
-        prompt: str,
-        auto_approve: bool = True,
-        quiet: bool = False,
-        json_output: bool = False,
-        timeout: int = CLI_TIMEOUT_DEFAULT,
-    ) -> subprocess.CompletedProcess:
-        """Run a single prompt."""
-        self._log(f"\n>>> PROMPT: {prompt}")
-
-        args = ["-e", prompt]
-        if auto_approve:
-            args.append("--auto-approve")
-        if quiet:
-            args.append("--quiet")
-        if json_output:
-            args.append("--json")
-
-        result = self.run(*args, timeout=timeout)
-
-        self._log(f"<<< RESPONSE: {result.stdout.strip()}")
-        return result
-
-    def run_prompt_json(
-        self,
-        prompt: str,
-        auto_approve: bool = True,
-        timeout: int = CLI_TIMEOUT_DEFAULT,
-    ) -> JsonRunResult:
-        """Run a single prompt in JSON mode and return parsed results.
-
-        This is the preferred method for tests that need to inspect
-        tool calls, timing, or other structured event data.
-
-        Args:
-            prompt: The prompt to execute
-            auto_approve: Whether to auto-approve tool calls
-            timeout: Command timeout in seconds
-
-        Returns:
-            JsonRunResult with parsed events and convenience accessors
-        """
-        result = self.run_prompt(
-            prompt,
-            auto_approve=auto_approve,
-            quiet=False,
-            json_output=True,
-            timeout=timeout,
-        )
-
-        events = parse_json_output(result.stdout) if result.stdout else []
-        response = get_response_from_json(events)
-
-        return JsonRunResult(
-            events=events,
-            response=response,
-            returncode=result.returncode,
-            stderr=result.stderr,
-        )
-
-    def run_batch(
-        self,
-        prompts: list[str],
-        auto_approve: bool = True,
-        quiet: bool = False,
-        timeout: int = CLI_TIMEOUT_BATCH,
-    ) -> subprocess.CompletedProcess:
-        """Run multiple prompts from a temp file."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            for prompt in prompts:
-                f.write(prompt + "\n")
-            f.flush()
-            temp_path = f.name
-
-        try:
-            args = ["-f", temp_path]
-            if auto_approve:
-                args.append("--auto-approve")
-            # In verbose mode, don't use quiet so we see sequential execution
-            if quiet and not self.verbose:
-                args.append("--quiet")
-
-            self._log(f"\n{'='*60}")
-            self._log(f"BATCH: {len(prompts)} prompts")
-            self._log('='*60)
-
-            result = self.run(*args, timeout=timeout)
-
-            # Parse and display the sequential Q&A from stderr
-            if self.verbose and result.stderr:
-                self._log("\n--- Sequential Execution ---")
-                lines = result.stderr.split('\n')
-                stdout_lines = result.stdout.strip().split('\n') if result.stdout else []
-                response_idx = 0
-
-                for line in lines:
-                    if '[batch]' in line and 'Executing:' in line:
-                        # Extract prompt from: [batch] [1/3] Executing: prompt text
-                        prompt_part = line.split('Executing:', 1)[-1].strip()
-                        self._log(f"\n>>> Q: {prompt_part}")
-                    elif '[batch]' in line and 'Complete' in line:
-                        # Show the response that came before this
-                        if response_idx < len(stdout_lines):
-                            self._log(f"<<< A: {stdout_lines[response_idx]}")
-                            response_idx += 1
-
-                self._log("--- End Execution ---\n")
-
-            return result
-        finally:
-            os.unlink(temp_path)
-
-
-def get_eval_agent_model() -> str | None:
-    """Get the agent model for evals from env var or settings.
-
-    Priority: QBIT_EVAL_MODEL env var > settings.toml [eval] agent_model
-    """
-    if model := os.environ.get("QBIT_EVAL_MODEL"):
-        return model
-
-    settings = load_settings()
-    return settings.get("eval", {}).get("agent_model")
-
-
-@pytest.fixture
-def cli(cli_path: str, request) -> CliRunner:
-    """CLI runner fixture."""
-    # Enable verbose mode with VERBOSE=1 env var or -v pytest flag
-    verbose = (
-        os.environ.get("VERBOSE", "").lower() in ("1", "true", "yes")
-        or request.config.getoption("-v", default=0) > 0
-    )
-    model = get_eval_agent_model()
-    return CliRunner(cli_path, verbose=verbose, model=model)
-
-
-@pytest.fixture(scope="session")
-def eval_model():
-    """Create OpenAI evaluation model from settings.toml.
-
-    Requires OPENAI_API_KEY environment variable.
-    Configure model in settings.toml:
-        [eval]
-        model = "gpt-4o-mini"
-    """
-    return create_eval_model()
 
 
 def pytest_configure(config):
@@ -492,7 +36,6 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_api: mark test as requiring API credentials"
     )
-    # Add new sidecar marker
     config.addinivalue_line(
         "markers", "requires_sidecar: mark test as requiring sidecar database"
     )
@@ -508,36 +51,165 @@ def pytest_collection_modifyitems(config, items):
 
 
 # =============================================================================
-# Sidecar Fixtures
+# DeepEval Model Fixture
+# =============================================================================
+
+
+@pytest.fixture(scope="session")
+def eval_model():
+    """Create OpenAI evaluation model for DeepEval.
+
+    Loads configuration from ~/.qbit/settings.toml:
+        [eval]
+        model = "gpt-4o-mini"
+        api_key = "sk-..."  # or use OPENAI_API_KEY env var
+
+    Returns:
+        GPTModel instance for DeepEval metrics.
+    """
+    return create_eval_model()
+
+
+# =============================================================================
+# Sidecar Database Fixture
 # =============================================================================
 
 
 @pytest.fixture(scope="function")
 def sidecar_db():
-    """Connection to sidecar LanceDB database.
+    """Connect to the sidecar LanceDB database.
 
     Waits briefly for async flush to complete before connecting.
-    Returns None if database doesn't exist (tests should handle this).
+
+    Returns:
+        LanceDB connection, or None if database doesn't exist.
     """
-    # Small delay to ensure async flush completes from previous CLI run
-    time.sleep(0.3)
+    time.sleep(0.3)  # Wait for async flush
     try:
-        from sidecar_utils import connect_sidecar_db
-        return connect_sidecar_db()
+        from sidecar import connect_db
+        return connect_db()
     except (FileNotFoundError, ImportError):
         return None
 
 
-@pytest.fixture(scope="function")
-def sidecar_session_before(sidecar_db):
-    """Capture last session state before test runs.
+# =============================================================================
+# Server Fixtures
+# =============================================================================
 
-    Useful for comparing session counts before/after a test.
+
+@pytest.fixture(scope="session")
+def qbit_server_info():
+    """Start qbit server and return connection info.
+
+    This is a session-scoped fixture that starts one server for all tests.
+    The server runs on a random port to avoid conflicts.
+
+    Yields:
+        Base URL string (e.g., "http://127.0.0.1:54321")
     """
-    if sidecar_db is None:
-        return None
+    import httpx
+
+    binary_path = get_binary_path()
+    if not os.path.exists(binary_path):
+        pytest.skip(f"Binary not found at {binary_path}. Run: just build-server")
+
+    # Start server on random port
+    proc = subprocess.Popen(
+        [str(binary_path), "--server", "--port", "0"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
     try:
-        from sidecar_utils import get_last_session
-        return get_last_session(sidecar_db)
-    except Exception:
-        return None
+        # Parse the bound address from stdout
+        line = proc.stdout.readline()
+        match = re.search(r"http://([^:]+):(\d+)", line)
+        if not match:
+            proc.terminate()
+            pytest.fail(f"Could not parse server address from: {line}")
+
+        host, port = match.groups()
+        base_url = f"http://{host}:{port}"
+
+        # Wait for server to be ready
+        for _ in range(30):
+            try:
+                resp = httpx.get(f"{base_url}/health", timeout=1.0)
+                if resp.status_code == 200:
+                    break
+            except httpx.RequestError:
+                pass
+            time.sleep(0.5)
+        else:
+            proc.terminate()
+            pytest.fail("Server did not become ready within 15 seconds")
+
+        yield base_url
+
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+@pytest.fixture
+async def qbit_server(qbit_server_info: str):
+    """Async QbitClient fixture connected to the running server.
+
+    Creates a fresh QbitClient for each test, properly integrated
+    with pytest-asyncio's event loop management.
+
+    Args:
+        qbit_server_info: Base URL from the server fixture
+
+    Yields:
+        QbitClient instance ready for use.
+    """
+    async with QbitClient(qbit_server_info) as client:
+        yield client
+
+
+@pytest.fixture
+async def streaming_session(qbit_server):
+    """Create a fresh session for each test.
+
+    Automatically creates and cleans up the session.
+
+    Args:
+        qbit_server: QbitClient from the server fixture
+
+    Yields:
+        Tuple of (session_id, client) for flexibility.
+    """
+    session_id = await qbit_server.create_session()
+    yield session_id, qbit_server
+    await qbit_server.delete_session(session_id)
+
+
+@pytest.fixture
+async def runner(streaming_session, request) -> StreamingRunner:
+    """StreamingRunner fixture for running evaluation prompts.
+
+    This is the primary fixture for evaluation tests. It provides
+    a high-level interface for running prompts and collecting results.
+
+    Args:
+        streaming_session: (session_id, client) tuple
+        request: Pytest request for accessing config
+
+    Returns:
+        StreamingRunner instance ready for use.
+
+    Example:
+        @pytest.mark.asyncio
+        async def test_arithmetic(runner):
+            result = await runner.run("What is 2+2?")
+            assert "4" in result.response
+    """
+    session_id, client = streaming_session
+    verbose = is_verbose() or request.config.getoption("-v", default=0) > 0
+    return StreamingRunner(client, session_id, verbose=verbose)

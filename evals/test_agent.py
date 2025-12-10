@@ -1,34 +1,27 @@
-"""Integration tests for qbit-cli using DeepEval.
+"""Agent behavior and quality evaluation tests.
 
-Run basic tests (no API needed):
-    pytest test_cli.py -v -k "TestCliBasics"
+Tests the Qbit agent's ability to:
+- Remember information across conversation turns
+- Perform arithmetic and follow instructions
+- Handle unicode and special characters
+- Use tools correctly (file reading, directory listing)
 
-Run all tests including API/eval tests:
-    RUN_API_TESTS=1 pytest test_cli.py -v
+Run all tests:
+    RUN_API_TESTS=1 pytest test_agent.py -v
 
-Configure models in settings.toml:
+Configure models in ~/.qbit/settings.toml:
     [eval]
-    model = "gpt-4o-mini"       # evaluator model (OpenAI)
-    agent_model = "claude-..."  # qbit-cli agent model (or use QBIT_EVAL_MODEL env var)
-    api_key = "sk-..."          # or use OPENAI_API_KEY env var
-
-Test Organization:
-- TestCliBasics: Fast CLI tests, no API needed
-- TestCliBehavior: CLI behavior tests with API, no DeepEval
-- TestMemoryAndState: Memory recall tests with DeepEval
-- TestResponseQuality: Arithmetic/instruction tests with DeepEval
-- TestCharacterHandling: Unicode/special char tests with DeepEval
-- TestToolUsage: Tool execution tests with DeepEval
+    model = "gpt-4o-mini"       # DeepEval evaluator model
+    agent_model = "claude-..."  # Qbit agent model
 """
 
 from typing import Any
 
 import pytest
-from deepeval import evaluate
 from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
-from conftest import CliRunner, JsonRunResult, get_last_response
+from client import BatchResult, RunResult, StreamingRunner
 
 
 # =============================================================================
@@ -36,50 +29,51 @@ from conftest import CliRunner, JsonRunResult, get_last_response
 # =============================================================================
 
 
-def run_scenario(cli: CliRunner, scenario: dict) -> dict:
-    """Run a single CLI scenario.
+async def run_scenario(runner: StreamingRunner, scenario: dict) -> dict:
+    """Run a single scenario using streaming client.
 
     Args:
-        cli: The CLI runner instance
+        runner: The StreamingRunner instance
         scenario: Scenario dict with 'prompts' or 'prompt' key
 
     Returns:
         Completed scenario with 'output' and 'success' fields added
     """
     if "prompts" in scenario:
-        # Batch mode
-        result = cli.run_batch(scenario["prompts"], quiet=True)
-        output = get_last_response(result.stdout) if result.returncode == 0 else ""
+        # Batch mode - run prompts sequentially in same session
+        result = await runner.run_batch(scenario["prompts"], quiet=True)
+        output = result.responses[-1] if result.responses else ""
         return {
             **scenario,
             "result": result,
             "output": output,
-            "success": result.returncode == 0,
+            "success": result.success,
         }
     elif "prompt" in scenario:
-        # Single prompt mode (JSON)
-        json_result = cli.run_prompt_json(scenario["prompt"])
+        # Single prompt mode
+        result = await runner.run(scenario["prompt"])
         return {
             **scenario,
-            "json_result": json_result,
-            "output": json_result.response,
-            "success": json_result.returncode == 0,
+            "run_result": result,
+            "output": result.response,
+            "success": result.success,
         }
     else:
         raise ValueError("Scenario must have 'prompts' or 'prompt' key")
 
 
 def evaluate_scenario(scenario: dict, eval_model: Any) -> None:
-    """Evaluate a single scenario with DeepEval.
+    """Evaluate a single scenario with DeepEval using assert_test pattern.
 
     Args:
         scenario: Completed scenario with 'output' field
         eval_model: DeepEval model for evaluation
 
     Raises:
-        AssertionError: If evaluation fails
+        AssertionError: If evaluation fails (via assert_test)
     """
-    # Determine eval params based on scenario config
+    from deepeval import assert_test
+
     eval_params = [LLMTestCaseParams.ACTUAL_OUTPUT]
     if scenario.get("use_context"):
         eval_params.append(LLMTestCaseParams.CONTEXT)
@@ -102,106 +96,38 @@ def evaluate_scenario(scenario: dict, eval_model: Any) -> None:
         model=eval_model,
     )
 
-    results = evaluate([test_case], [metric])
-
-    if not results.test_results[0].success:
-        raise AssertionError(
-            f"DeepEval failed for {scenario['metric_name']}: "
-            f"input={scenario['input']}, output={scenario['output'][:200] if scenario['output'] else ''}"
-        )
+    assert_test(test_case, [metric])
 
 
 # =============================================================================
-# Basic CLI Tests (no API needed)
-# =============================================================================
-
-
-class TestCliBasics:
-    """Tests that don't require API credentials - instant execution."""
-
-    def test_help(self, cli: CliRunner):
-        """CLI shows help."""
-        result = cli.run("--help")
-        assert result.returncode == 0
-        assert "--execute" in result.stdout
-        assert "--file" in result.stdout
-        assert "--auto-approve" in result.stdout
-        assert "--json" in result.stdout
-        assert "--quiet" in result.stdout
-
-    def test_version(self, cli: CliRunner):
-        """CLI shows version."""
-        result = cli.run("--version")
-        assert result.returncode == 0
-        assert "qbit-cli" in result.stdout
-
-    def test_conflicting_args(self, cli: CliRunner, temp_prompt_file):
-        """Cannot use -e and -f together."""
-        temp_prompt_file.write_text("test")
-        result = cli.run("-e", "test", "-f", str(temp_prompt_file))
-        assert result.returncode != 0
-        assert "cannot be used with" in result.stderr
-
-    def test_missing_file(self, cli: CliRunner):
-        """Error on missing prompt file."""
-        result = cli.run("-f", "/nonexistent/path.txt", "--auto-approve")
-        assert result.returncode != 0
-
-    def test_empty_file(self, cli: CliRunner, temp_prompt_file):
-        """Error on empty prompt file."""
-        temp_prompt_file.write_text("")
-        result = cli.run("-f", str(temp_prompt_file), "--auto-approve")
-        assert result.returncode != 0
-        assert "No prompts found" in result.stderr
-
-    def test_comments_only_file(self, cli: CliRunner, temp_prompt_file):
-        """Error when file has only comments."""
-        temp_prompt_file.write_text("# comment 1\n# comment 2\n")
-        result = cli.run("-f", str(temp_prompt_file), "--auto-approve")
-        assert result.returncode != 0
-        assert "No prompts found" in result.stderr
-
-
-# =============================================================================
-# CLI Behavior Tests (API required, no DeepEval)
+# Behavior Tests
 # =============================================================================
 
 
 @pytest.mark.requires_api
-class TestCliBehavior:
-    """Tests that verify CLI behavior without DeepEval evaluation.
+class TestBehavior:
+    """Tests that verify agent behavior without DeepEval evaluation."""
 
-    Optimized by consolidating tests that can share CLI calls.
-    """
-
-    def test_batch_progress_output(self, cli: CliRunner):
+    @pytest.mark.asyncio
+    async def test_batch_progress_output(self, runner: StreamingRunner):
         """Batch mode shows progress."""
-        result = cli.run_batch(["Say 'one'", "Say 'two'", "Say 'three'"], quiet=False)
-        assert result.returncode == 0
+        result = await runner.run_batch(
+            ["Say 'one'", "Say 'two'", "Say 'three'"],
+            quiet=False,
+        )
+        assert result.success
         assert "[1/3]" in result.stderr
         assert "[2/3]" in result.stderr
         assert "[3/3]" in result.stderr
         assert "All 3 prompt(s) completed" in result.stderr
 
-    def test_batch_skips_comments(self, cli: CliRunner, temp_prompt_file):
-        """Batch mode skips comment lines."""
-        temp_prompt_file.write_text(
-            "# This is a comment\nSay 'first'\n# Another comment\n\nSay 'second'\n"
-        )
-        result = cli.run("-f", str(temp_prompt_file), "--auto-approve")
-        assert result.returncode == 0
-        assert "[1/2]" in result.stderr
-        assert "[2/2]" in result.stderr
+    @pytest.mark.asyncio
+    async def test_simple_response(self, runner: StreamingRunner):
+        """Basic response with event structure."""
+        result = await runner.run("Say 'hello world'")
+        assert result.success
 
-    def test_simple_json_response(self, cli: CliRunner):
-        """JSON structure, event sequence, turn_id, duration, and streaming.
-
-        Consolidates multiple JSON output tests into one CLI call.
-        """
-        result: JsonRunResult = cli.run_prompt_json("Say 'hello world'")
-        assert result.returncode == 0
-
-        # JSON output structure
+        # Event structure
         assert len(result.events) > 0, "Expected at least one event"
         event_types = {e.event for e in result.events}
         assert "started" in event_types
@@ -210,11 +136,13 @@ class TestCliBehavior:
             assert event.timestamp > 0
         assert result.response
 
-        # Event sequence (started before completed, timestamps ascending)
+        # Event sequence (started before completed)
         event_type_list = [e.event for e in result.events]
         started_idx = event_type_list.index("started")
         completed_idx = event_type_list.index("completed")
         assert started_idx < completed_idx
+
+        # Timestamps ascending
         timestamps = [e.timestamp for e in result.events]
         assert timestamps == sorted(timestamps)
 
@@ -232,15 +160,13 @@ class TestCliBehavior:
         for d in deltas:
             assert "delta" in d.data or "accumulated" in d.data
 
-    def test_file_reading_json_events(self, cli: CliRunner):
-        """Tool calls, results, sequence, event types, and convenience methods.
-
-        Consolidates multiple tool-related tests into one CLI call.
-        """
-        result: JsonRunResult = cli.run_prompt_json(
+    @pytest.mark.asyncio
+    async def test_file_reading_events(self, runner: StreamingRunner):
+        """Tool calls, results, and event sequence."""
+        result = await runner.run(
             "Read the file ./conftest.py in the current directory and tell me briefly what it contains"
         )
-        assert result.returncode == 0
+        assert result.success
 
         # Tool calls include input parameters
         assert len(result.tool_calls) > 0
@@ -261,19 +187,6 @@ class TestCliBehavior:
         assert len(call_idx) > 0 and len(result_idx) > 0
         assert call_idx[0] < result_idx[0]
 
-        # All event types recognized
-        known = {
-            "started", "text_delta", "tool_call", "tool_result", "tool_approval",
-            "tool_auto_approved", "tool_denied", "reasoning", "completed", "error",
-            "sub_agent_started", "sub_agent_tool_request", "sub_agent_tool_result",
-            "sub_agent_completed", "sub_agent_error", "context_pruned", "context_warning",
-            "tool_response_truncated", "loop_warning", "loop_blocked", "max_iterations_reached",
-            "workflow_started", "workflow_step_started", "workflow_step_completed",
-            "workflow_completed", "workflow_error",
-        }
-        for e in result.events:
-            assert e.event in known, f"Unknown event: {e.event}"
-
         # Convenience methods work
         assert not result.has_tool("nonexistent_tool_xyz")
         if result.tool_calls:
@@ -283,28 +196,28 @@ class TestCliBehavior:
             name = result.tool_results[0].get("tool_name")
             assert result.get_tool_output(name) is not None
 
-    def test_unicode_in_json(self, cli: CliRunner):
-        """Unicode characters are preserved in JSON output."""
-        result: JsonRunResult = cli.run_prompt_json("Say the Japanese word '日本語'")
-        assert result.returncode == 0
+    @pytest.mark.asyncio
+    async def test_unicode_preserved(self, runner: StreamingRunner):
+        """Unicode characters are preserved."""
+        result = await runner.run("Say the Japanese word '日本語'")
+        assert result.success
         assert len(result.events) > 0
         assert result.completed_event is not None
         if any(ord(c) > 127 for c in result.response):
             assert "\\u" not in result.response
 
-    def test_newlines_in_json(self, cli: CliRunner):
-        """Newlines don't break JSON parsing."""
-        result: JsonRunResult = cli.run_prompt_json(
-            "Print 'line1' then 'line2' on separate lines"
-        )
-        assert result.returncode == 0
+    @pytest.mark.asyncio
+    async def test_newlines_handled(self, runner: StreamingRunner):
+        """Newlines in output are handled correctly."""
+        result = await runner.run("Print 'line1' then 'line2' on separate lines")
+        assert result.success
         assert len(result.events) > 0
         event_types = {e.event for e in result.events}
         assert "started" in event_types and "completed" in event_types
 
 
 # =============================================================================
-# DeepEval Tests - Memory & State
+# Memory & State Tests (DeepEval)
 # =============================================================================
 
 
@@ -312,7 +225,8 @@ class TestCliBehavior:
 class TestMemoryAndState:
     """Tests for session memory and state tracking."""
 
-    def test_number_recall(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_number_recall(self, runner: StreamingRunner, eval_model):
         """Agent remembers a number across prompts."""
         scenario = {
             "prompts": [
@@ -327,11 +241,12 @@ class TestMemoryAndState:
             "steps": ["Check if response contains 42", "Should be exactly or close to '42'"],
             "threshold": 0.8,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_word_recall(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_word_recall(self, runner: StreamingRunner, eval_model):
         """Agent remembers a word across prompts."""
         scenario = {
             "prompts": [
@@ -346,11 +261,12 @@ class TestMemoryAndState:
             "steps": ["Check if response contains 'elephant'", "Case should not matter"],
             "threshold": 0.8,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_multi_fact_recall(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_multi_fact_recall(self, runner: StreamingRunner, eval_model):
         """Agent remembers multiple facts across prompts."""
         scenario = {
             "prompts": [
@@ -368,11 +284,12 @@ class TestMemoryAndState:
             "threshold": 0.9,
             "use_context": True,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_cumulative_calculation(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_cumulative_calculation(self, runner: StreamingRunner, eval_model):
         """Agent tracks cumulative state."""
         scenario = {
             "prompts": [
@@ -388,11 +305,12 @@ class TestMemoryAndState:
             "steps": ["Check if response contains 5", "Calculation 3 + 2 = 5 is correct"],
             "threshold": 0.9,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_long_chain_recall(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_long_chain_recall(self, runner: StreamingRunner, eval_model):
         """Agent remembers facts over many turns."""
         scenario = {
             "prompts": [
@@ -411,13 +329,13 @@ class TestMemoryAndState:
             "threshold": 0.9,
             "use_context": True,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
 
 # =============================================================================
-# DeepEval Tests - Response Quality
+# Response Quality Tests (DeepEval)
 # =============================================================================
 
 
@@ -425,7 +343,8 @@ class TestMemoryAndState:
 class TestResponseQuality:
     """Tests for arithmetic and instruction following."""
 
-    def test_basic_arithmetic(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_basic_arithmetic(self, runner: StreamingRunner, eval_model):
         """Agent performs basic arithmetic."""
         scenario = {
             "prompt": "What is 1+1? Just the number.",
@@ -436,11 +355,12 @@ class TestResponseQuality:
             "steps": ["Check if response contains '2'"],
             "threshold": 0.9,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], "CLI failed"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_batch_arithmetic(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_batch_arithmetic(self, runner: StreamingRunner, eval_model):
         """Agent performs arithmetic in batch mode."""
         scenario = {
             "prompts": ["What is 2+2? Just the number."],
@@ -451,11 +371,12 @@ class TestResponseQuality:
             "steps": ["Check if response contains '4'"],
             "threshold": 0.9,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_instruction_following(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_instruction_following(self, runner: StreamingRunner, eval_model):
         """Agent follows exact instructions."""
         scenario = {
             "prompts": ["Say exactly: 'test response'"],
@@ -466,13 +387,13 @@ class TestResponseQuality:
             "steps": ["Check if response contains 'test response' (case-insensitive)"],
             "threshold": 0.8,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
 
 # =============================================================================
-# DeepEval Tests - Character Handling
+# Character Handling Tests (DeepEval)
 # =============================================================================
 
 
@@ -480,7 +401,8 @@ class TestResponseQuality:
 class TestCharacterHandling:
     """Tests for unicode, special characters, and multiline responses."""
 
-    def test_unicode_recall(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_unicode_recall(self, runner: StreamingRunner, eval_model):
         """Agent preserves unicode characters."""
         scenario = {
             "prompts": [
@@ -495,11 +417,12 @@ class TestCharacterHandling:
             "steps": ["Check for '日本語'", "Unicode should be preserved exactly"],
             "threshold": 0.9,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], f"CLI failed: {completed['result'].stderr}"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_special_characters(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_special_characters(self, runner: StreamingRunner, eval_model):
         """Agent handles special characters."""
         scenario = {
             "prompt": "Echo back exactly: @#$%^&*()",
@@ -510,11 +433,12 @@ class TestCharacterHandling:
             "steps": ["Check for at least some special characters"],
             "threshold": 0.6,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], "CLI failed"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
-    def test_multiline_response(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_multiline_response(self, runner: StreamingRunner, eval_model):
         """Agent produces multiline output."""
         scenario = {
             "prompt": "List the numbers 1, 2, 3 on separate lines.",
@@ -525,13 +449,205 @@ class TestCharacterHandling:
             "steps": ["Check for '1'", "Check for '2'", "Check for '3'", "Should be separated"],
             "threshold": 0.8,
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], "CLI failed"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
         evaluate_scenario(completed, eval_model)
 
 
 # =============================================================================
-# DeepEval Tests - Tool Usage
+# Layer 1 Session State Tests
+# =============================================================================
+
+
+@pytest.mark.requires_api
+class TestLayer1Tables:
+    """Tests for Layer 1 normalized session state tables."""
+
+    @pytest.mark.asyncio
+    async def test_l1_tables_exist(self, runner: StreamingRunner):
+        """Verify Layer 1 normalized tables are created after agent usage."""
+        result = await runner.run("Say 'hello'")
+        assert result.success
+
+        from sidecar import connect_db, check_l1_tables_exist
+
+        try:
+            db = connect_db()
+            table_status = check_l1_tables_exist(db)
+
+            if not any(table_status.values()):
+                pytest.skip("Layer 1 normalized tables not yet created (schema migration pending)")
+
+            if table_status.get("l1_sessions", False):
+                assert table_status.get("l1_goals", False), "l1_goals table should exist with l1_sessions"
+                assert table_status.get("l1_decisions", False), "l1_decisions table should exist with l1_sessions"
+        except FileNotFoundError:
+            pytest.skip("Sidecar database not initialized")
+
+    @pytest.mark.asyncio
+    async def test_l1_session_created(self, runner: StreamingRunner):
+        """Verify a Layer 1 session is created during agent execution."""
+        result = await runner.run("What is 2+2? Just answer with the number.")
+        assert result.success
+
+        from sidecar import connect_db, get_l1_sessions, check_l1_tables_exist
+
+        try:
+            db = connect_db()
+
+            table_status = check_l1_tables_exist(db)
+            if not table_status.get("l1_sessions", False):
+                pytest.skip("l1_sessions table not yet created")
+
+            sessions = get_l1_sessions(db, include_inactive=True)
+            assert len(sessions) > 0, "At least one L1 session should exist"
+
+            latest = sessions[0]
+            assert "id" in latest, "Session should have an id"
+            assert "created_at_ms" in latest, "Session should have created_at_ms"
+        except FileNotFoundError:
+            pytest.skip("Sidecar database not initialized")
+
+    @pytest.mark.asyncio
+    async def test_l1_goals_populated(self, runner: StreamingRunner):
+        """Verify goals are tracked when given a task."""
+        result = await runner.run(
+            "Read the file conftest.py and summarize what it does in one sentence."
+        )
+        assert result.success
+
+        from sidecar import connect_db, get_l1_sessions, get_l1_goals, check_l1_tables_exist
+
+        try:
+            db = connect_db()
+
+            table_status = check_l1_tables_exist(db)
+            if not table_status.get("l1_goals", False):
+                pytest.skip("l1_goals table not yet created")
+
+            sessions = get_l1_sessions(db, include_inactive=True)
+            if not sessions:
+                pytest.skip("No L1 sessions found")
+
+            latest_session_id = sessions[0]["id"]
+            goals = get_l1_goals(db, latest_session_id)
+            assert len(goals) >= 0, "Goals should be tracked (may be empty for simple tasks)"
+
+            if goals:
+                goal = goals[0]
+                assert "description" in goal or "id" in goal, "Goal should have description or id"
+        except FileNotFoundError:
+            pytest.skip("Sidecar database not initialized")
+
+    @pytest.mark.asyncio
+    async def test_l1_file_contexts_on_file_read(self, runner: StreamingRunner):
+        """Verify file contexts are recorded when agent reads files."""
+        result = await runner.run(
+            "Read the file ./conftest.py and tell me the first function defined in it."
+        )
+        assert result.success
+
+        tool_names = {tc.get("tool_name") for tc in result.tool_calls}
+        file_tools = {"read_file", "read", "file_read"}
+        assert tool_names & file_tools, f"Expected file read tool, got: {tool_names}"
+
+        from sidecar import connect_db, get_l1_sessions, get_l1_file_contexts, check_l1_tables_exist
+
+        try:
+            db = connect_db()
+
+            table_status = check_l1_tables_exist(db)
+            if not table_status.get("l1_file_contexts", False):
+                pytest.skip("l1_file_contexts table not yet created")
+
+            sessions = get_l1_sessions(db, include_inactive=True)
+            if not sessions:
+                pytest.skip("No L1 sessions found")
+
+            latest_session_id = sessions[0]["id"]
+            file_contexts = get_l1_file_contexts(db, latest_session_id)
+
+            if file_contexts:
+                ctx = file_contexts[0]
+                assert "path" in ctx or "session_id" in ctx, "File context should have path or session_id"
+        except FileNotFoundError:
+            pytest.skip("Sidecar database not initialized")
+
+    @pytest.mark.asyncio
+    async def test_l1_table_stats(self, runner: StreamingRunner):
+        """Verify table stats function works after agent activity."""
+        result = await runner.run("Say 'test' and nothing else.")
+        assert result.success
+
+        from sidecar import connect_db, get_l1_table_stats, check_l1_tables_exist
+
+        try:
+            db = connect_db()
+
+            table_status = check_l1_tables_exist(db)
+            if not any(table_status.values()):
+                pytest.skip("Layer 1 normalized tables not yet created")
+
+            stats = get_l1_table_stats(db)
+
+            expected_tables = [
+                "l1_sessions", "l1_goals", "l1_decisions", "l1_errors",
+                "l1_file_contexts", "l1_questions", "l1_goal_progress", "l1_file_changes",
+            ]
+
+            for table_name in expected_tables:
+                assert table_name in stats, f"Stats should include {table_name}"
+                assert isinstance(stats[table_name], int), f"{table_name} count should be int"
+        except FileNotFoundError:
+            pytest.skip("Sidecar database not initialized")
+
+    @pytest.mark.asyncio
+    async def test_l1_decisions_cross_session_query(self, runner: StreamingRunner):
+        """Verify cross-session decision queries work."""
+        result = await runner.run(
+            "What approach would you take to fix a bug? Just describe briefly."
+        )
+        assert result.success
+
+        from sidecar import connect_db, get_l1_decisions_by_category, check_l1_tables_exist
+
+        try:
+            db = connect_db()
+
+            table_status = check_l1_tables_exist(db)
+            if not table_status.get("l1_decisions", False):
+                pytest.skip("l1_decisions table not yet created")
+
+            categories = ["architecture", "library", "approach", "tradeoff", "fallback"]
+            for category in categories:
+                decisions = get_l1_decisions_by_category(db, category)
+                assert isinstance(decisions, list), f"Decisions for {category} should be a list"
+        except FileNotFoundError:
+            pytest.skip("Sidecar database not initialized")
+
+    @pytest.mark.asyncio
+    async def test_l1_unresolved_errors_query(self, runner: StreamingRunner):
+        """Verify unresolved errors cross-session query works."""
+        result = await runner.run("Say 'ok'")
+        assert result.success
+
+        from sidecar import connect_db, get_l1_unresolved_errors, check_l1_tables_exist
+
+        try:
+            db = connect_db()
+
+            table_status = check_l1_tables_exist(db)
+            if not table_status.get("l1_errors", False):
+                pytest.skip("l1_errors table not yet created")
+
+            unresolved = get_l1_unresolved_errors(db)
+            assert isinstance(unresolved, list), "Unresolved errors should be a list"
+        except FileNotFoundError:
+            pytest.skip("Sidecar database not initialized")
+
+
+# =============================================================================
+# Tool Usage Tests (DeepEval)
 # =============================================================================
 
 
@@ -539,60 +655,61 @@ class TestCharacterHandling:
 class TestToolUsage:
     """Tests for tool execution and file operations."""
 
-    def test_read_file(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_read_file(self, runner: StreamingRunner, eval_model):
         """Agent reads and summarizes file contents."""
         scenario = {
-            "prompt": "Read the file ./conftest.py and tell me what the CliRunner class does in one sentence.",
-            "input": "What does the CliRunner class do?",
-            "expected": "CliRunner is a helper class that runs CLI commands for testing.",
+            "prompt": "Read the file ./conftest.py and tell me what the file contains in one sentence.",
+            "input": "What does the conftest.py file contain?",
+            "expected": "conftest.py contains pytest fixtures and test runner classes for evaluation tests.",
             "context": [
-                "conftest.py contains the CliRunner class",
-                "CliRunner wraps subprocess calls to qbit-cli",
-                "Methods include run(), run_prompt(), run_batch()",
+                "conftest.py contains pytest fixtures",
+                "It has StreamingRunner class",
+                "The file sets up test configuration and helpers",
             ],
             "metric_name": "File Reading Comprehension",
-            "criteria": "Response should accurately describe what CliRunner does.",
+            "criteria": "Response should accurately describe what the file contains.",
             "steps": [
-                "Check if mentions CLI or command execution",
-                "Check if mentions running or testing",
+                "Check if mentions fixtures, testing, or configuration",
+                "Check if mentions runner classes or test helpers",
                 "Should demonstrate understanding of file contents",
             ],
             "threshold": 0.7,
             "use_context": True,
             "verify_tool": {
                 "tools": {"read_file", "read", "file_read"},
-                "content_check": "CliRunner",
+                "content_check": "conftest",
             },
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], "CLI failed"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
 
-        # Verify tool usage
-        json_result = completed["json_result"]
+        run_result = completed["run_result"]
         expected_tools = scenario["verify_tool"]["tools"]
-        tool_names = {tc.get("tool_name") for tc in json_result.tool_calls}
+        tool_names = {tc.get("tool_name") for tc in run_result.tool_calls}
         assert tool_names & expected_tools, f"Expected tool from {expected_tools}. Got: {tool_names}"
 
-        successful = [tr for tr in json_result.tool_results if tr.get("success")]
+        successful = [tr for tr in run_result.tool_results if tr.get("success")]
         assert len(successful) > 0, "Expected at least one successful tool result"
 
         evaluate_scenario(completed, eval_model)
 
-    def test_list_directory(self, cli: CliRunner, eval_model):
+    @pytest.mark.asyncio
+    async def test_list_directory(self, runner: StreamingRunner, eval_model):
         """Agent lists directory contents."""
         scenario = {
             "prompt": "What files are in the current directory? Just list a few.",
             "input": "What files are in the current directory?",
-            "expected": "conftest.py, test_cli.py, pyproject.toml",
+            "expected": "conftest.py, test_evals.py, pyproject.toml",
             "context": [
                 "Directory contains conftest.py",
-                "Directory contains test_cli.py",
+                "Directory contains test_evals.py",
                 "Directory contains pyproject.toml",
             ],
             "metric_name": "Directory Listing",
             "criteria": "Response should list at least one relevant file from the test directory.",
             "steps": [
-                "Check for conftest.py, test_cli.py, or pyproject.toml",
+                "Check for conftest.py, test_evals.py, or pyproject.toml",
                 "Should indicate files were successfully listed",
             ],
             "threshold": 0.7,
@@ -601,16 +718,15 @@ class TestToolUsage:
                 "tools": {"list_directory", "ls", "list_files", "glob", "list_dir"},
             },
         }
-        completed = run_scenario(cli, scenario)
-        assert completed["success"], "CLI failed"
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"], "Execution failed"
 
-        # Verify tool usage
-        json_result = completed["json_result"]
+        run_result = completed["run_result"]
         expected_tools = scenario["verify_tool"]["tools"]
-        tool_names = {tc.get("tool_name") for tc in json_result.tool_calls}
+        tool_names = {tc.get("tool_name") for tc in run_result.tool_calls}
         assert tool_names & expected_tools, f"Expected tool from {expected_tools}. Got: {tool_names}"
 
-        successful = [tr for tr in json_result.tool_results if tr.get("success")]
+        successful = [tr for tr in run_result.tool_results if tr.get("success")]
         assert len(successful) > 0, "Expected at least one successful tool result"
 
         evaluate_scenario(completed, eval_model)

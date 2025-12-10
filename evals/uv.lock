@@ -2057,9 +2057,11 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "deepeval" },
+    { name = "httpx" },
     { name = "lancedb" },
     { name = "pandas" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "python-dotenv" },
@@ -2068,9 +2070,11 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "deepeval", specifier = ">=2.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "lancedb", specifier = ">=0.3.0" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pytest", specifier = ">=7.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "pytest-timeout", specifier = ">=2.0" },
     { name = "pytest-xdist", specifier = ">=3.0" },
     { name = "python-dotenv", specifier = ">=1.0" },

@@ -1,5 +1,8 @@
 //! Layer 1: Session State Implementation
 //!
+//! Note: Many items in this module are public API intended for future use.
+#![allow(dead_code)]
+//!
 //! This layer maintains a continuously-updated session state model derived from
 //! L0 raw events. It provides a live understanding of the current session that
 //! can be injected into agent context.
@@ -20,6 +23,7 @@
 //! - **API**: Public functions for querying state and getting injectable context
 
 pub mod api;
+pub mod events;
 pub mod processor;
 pub mod prompt;
 pub mod state;
@@ -29,6 +33,15 @@ pub mod storage;
 mod verification_tests;
 
 pub use api::*;
-pub use processor::{Layer1Config, Layer1Processor};
-pub use state::{Decision, ErrorEntry, FileContext, Goal, GoalSource, SessionState};
+pub use events::Layer1Event;
+pub use processor::{Layer1Config, Layer1Processor, Layer1Task};
+pub use state::{
+    // Main state types
+    Decision,
+    ErrorEntry,
+    FileContext,
+    Goal,
+    OpenQuestion,
+    SessionState,
+};
 pub use storage::Layer1Storage;

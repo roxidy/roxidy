@@ -213,14 +213,20 @@ impl Synthesizer {
                 user_prompt.len()
             );
 
-            match self.llm.generate_chat(&system_prompt, &user_prompt, 256).await {
+            match self
+                .llm
+                .generate_chat(&system_prompt, &user_prompt, 256)
+                .await
+            {
                 Ok(response) => {
                     tracing::debug!(
                         "[sidecar-synthesis] LLM response: {:?}",
                         truncate(&response, 200)
                     );
                     if let Some(mut draft) = self.parse_commit_response(&response, &files) {
-                        tracing::info!("[sidecar-synthesis] Successfully generated commit with LLM");
+                        tracing::info!(
+                            "[sidecar-synthesis] Successfully generated commit with LLM"
+                        );
                         // Add prompt details and metadata
                         draft.system_prompt = Some(system_prompt);
                         draft.user_prompt = Some(user_prompt);
@@ -249,11 +255,7 @@ impl Synthesizer {
             prompts::template_commit_message(&file_strings, events.len(), Some(&initial_request));
 
         // Extract scope from message (e.g., "feat: add foo" -> "feat")
-        let scope = message
-            .split(':')
-            .next()
-            .unwrap_or("chore")
-            .to_string();
+        let scope = message.split(':').next().unwrap_or("chore").to_string();
 
         tracing::info!(
             "[sidecar-synthesis] Generated template commit: scope='{}', files={}",
@@ -516,11 +518,7 @@ impl Synthesizer {
         let message = lines.join("\n");
 
         // Extract scope from first line (e.g., "feat: add foo" -> "feat")
-        let scope = lines[0]
-            .split(':')
-            .next()
-            .unwrap_or("chore")
-            .to_string();
+        let scope = lines[0].split(':').next().unwrap_or("chore").to_string();
 
         let file_strings: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
 
@@ -646,8 +644,8 @@ fn truncate(s: &str, max_len: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::synthesis_llm::TemplateLlm;
+    use super::*;
     use tempfile::TempDir;
 
     async fn setup_synthesizer() -> (TempDir, Synthesizer) {

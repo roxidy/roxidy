@@ -2,8 +2,6 @@
 //!
 //! This module is only compiled when the `tauri` feature is enabled.
 
-#![cfg(feature = "tauri")]
-
 use std::sync::Arc;
 
 use crate::ai::commands::WorkflowState;
@@ -11,7 +9,7 @@ use crate::ai::AiState;
 use crate::indexer::IndexerState;
 use crate::pty::PtyManager;
 use crate::settings::SettingsManager;
-use crate::sidecar::SidecarState;
+use crate::sidecar::{SidecarConfig, SidecarState};
 use crate::tavily::TavilyState;
 
 pub struct AppState {
@@ -41,6 +39,16 @@ impl AppState {
             tracing::warn!("Failed to create settings template: {}", e);
         }
 
+        // Load settings and create SidecarConfig from them
+        let settings = settings_manager.get().await;
+        let sidecar_config =
+            SidecarConfig::from_qbit_settings(&settings.sidecar, Some(&settings.ai.vertex_ai));
+        tracing::info!(
+            "[app-state] Created sidecar config: synthesis_enabled={}, backend={:?}",
+            sidecar_config.synthesis_enabled,
+            sidecar_config.synthesis_backend
+        );
+
         Self {
             pty_manager: Arc::new(PtyManager::new()),
             ai_state: AiState::new(),
@@ -48,7 +56,7 @@ impl AppState {
             indexer_state: Arc::new(IndexerState::new()),
             tavily_state: Arc::new(TavilyState::new()),
             settings_manager,
-            sidecar_state: Arc::new(SidecarState::new()),
+            sidecar_state: Arc::new(SidecarState::with_config(sidecar_config)),
         }
     }
 }

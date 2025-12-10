@@ -145,7 +145,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="!max-w-none !top-0 !left-0 !right-0 !bottom-0 !translate-x-0 !translate-y-0 !w-full !h-full p-0 bg-[#1a1b26] border-0 rounded-none text-[#c0caf5] flex flex-col"
+        className="!max-w-none !inset-0 !translate-x-0 !translate-y-0 !w-screen !h-screen p-0 bg-[#1a1b26] border-0 rounded-none text-[#c0caf5] flex flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#3b4261] flex-shrink-0">
@@ -164,7 +164,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <Loader2 className="w-6 h-6 text-[#565f89] animate-spin" />
           </div>
         ) : settings ? (
-          <div className="flex-1 flex min-h-0">
+          <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Sidebar Navigation */}
             <nav className="w-64 border-r border-[#3b4261] flex flex-col flex-shrink-0">
               <div className="flex-1 py-2">
@@ -195,8 +195,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </nav>
 
             {/* Main Content */}
-            <div className="flex-1 flex flex-col min-w-0">
-              <ScrollArea className="flex-1">
+            <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+              <ScrollArea className="h-full">
                 <div className="p-6 max-w-3xl">{renderContent()}</div>
               </ScrollArea>
             </div>

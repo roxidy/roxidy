@@ -474,7 +474,7 @@ pub async fn run_event_loop(
     while let Some(event) = event_rx.recv().await {
         match event {
             RuntimeEvent::Ai(ai_event) => {
-                let should_break = handle_ai_event(&ai_event, json_mode, quiet_mode)?;
+                let should_break = handle_ai_event(&*ai_event, json_mode, quiet_mode)?;
                 if should_break {
                     break;
                 }
@@ -608,7 +608,11 @@ fn handle_ai_event_terminal(event: &AiEvent) -> Result<()> {
             success,
             ..
         } => {
-            let icon = if *success { "\x1b[32m+\x1b[0m" } else { "\x1b[31m!\x1b[0m" };
+            let icon = if *success {
+                "\x1b[32m+\x1b[0m"
+            } else {
+                "\x1b[31m!\x1b[0m"
+            };
             eprintln!();
             eprintln!("\x1b[2m{}\x1b[0m {} {}", BOX_TOP, icon, tool_name);
             eprintln!("\x1b[2m{}\x1b[0m output:", BOX_MID);
@@ -654,7 +658,11 @@ fn handle_ai_event_terminal(event: &AiEvent) -> Result<()> {
         AiEvent::SubAgentStarted {
             agent_name, task, ..
         } => {
-            eprintln!("[sub-agent] {} starting: {}", agent_name, truncate(task, 80));
+            eprintln!(
+                "[sub-agent] {} starting: {}",
+                agent_name,
+                truncate(task, 80)
+            );
         }
         AiEvent::SubAgentCompleted {
             agent_id: _,
@@ -764,6 +772,141 @@ fn truncate(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Server-only functions for SSE streaming
+// ────────────────────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "server")]
+use tokio_stream::wrappers::UnboundedReceiverStream;
+
+#[cfg(feature = "server")]
+use tokio_stream::Stream;
+
+/// Create an event stream for SSE consumption.
+///
+/// Unlike `run_event_loop()` which writes to stdout, this returns a Stream
+/// that can be consumed by the SSE handler. The stream yields all events
+/// until the channel closes.
+///
+/// # Arguments
+///
+/// * `event_rx` - Channel receiver for runtime events
+///
+/// # Returns
+///
+/// A Stream that yields RuntimeEvent items
+///
+/// # Example
+///
+/// ```ignore
+/// use tokio::sync::mpsc;
+/// use qbit_lib::cli::output::event_stream;
+///
+/// let (tx, rx) = mpsc::unbounded_channel();
+/// let stream = event_stream(rx);
+/// // Use stream with SSE handler
+/// ```
+#[cfg(feature = "server")]
+pub fn event_stream(
+    event_rx: mpsc::UnboundedReceiver<RuntimeEvent>,
+) -> impl Stream<Item = RuntimeEvent> {
+    UnboundedReceiverStream::new(event_rx)
+}
+
+/// Check if a RuntimeEvent is a terminal event (signals end of agent turn).
+///
+/// Terminal events indicate that the agent has finished processing:
+/// - `AiEvent::Completed` - Agent completed successfully
+/// - `AiEvent::Error` - Agent encountered an error
+///
+/// The SSE handler should close the stream after receiving a terminal event.
+///
+/// # Arguments
+///
+/// * `event` - The runtime event to check
+///
+/// # Returns
+///
+/// `true` if the event signals the end of processing, `false` otherwise
+#[cfg(feature = "server")]
+pub fn is_terminal_event(event: &RuntimeEvent) -> bool {
+    match event {
+        RuntimeEvent::Ai(ai_event) => {
+            matches!(
+                **ai_event,
+                AiEvent::Completed { .. } | AiEvent::Error { .. }
+            )
+        }
+        _ => false,
+    }
+}
+
+/// Convert RuntimeEvent to SSE Event with proper formatting.
+///
+/// This is used by the HTTP server to convert events to the SSE wire format.
+/// AI events use the existing `convert_to_cli_json()` function for consistency
+/// with CLI JSON output.
+///
+/// # Arguments
+///
+/// * `event` - The runtime event to convert
+///
+/// # Returns
+///
+/// An SSE Event if the event can be converted, `None` otherwise
+#[cfg(feature = "server")]
+pub fn runtime_event_to_sse(event: &RuntimeEvent) -> Option<axum::response::sse::Event> {
+    use base64::Engine;
+
+    match event {
+        RuntimeEvent::Ai(ai_event) => {
+            let cli_json = convert_to_cli_json(ai_event);
+            let json_str = serde_json::to_string(&cli_json).ok()?;
+            Some(
+                axum::response::sse::Event::default()
+                    .event("ai_event")
+                    .data(json_str),
+            )
+        }
+        RuntimeEvent::TerminalOutput { session_id, data } => {
+            let json = serde_json::json!({
+                "type": "terminal_output",
+                "session_id": session_id,
+                "data": base64::engine::general_purpose::STANDARD.encode(data)
+            });
+            Some(
+                axum::response::sse::Event::default()
+                    .event("terminal")
+                    .data(json.to_string()),
+            )
+        }
+        RuntimeEvent::TerminalExit { session_id, code } => {
+            let json = serde_json::json!({
+                "type": "terminal_exit",
+                "session_id": session_id,
+                "code": code
+            });
+            Some(
+                axum::response::sse::Event::default()
+                    .event("terminal")
+                    .data(json.to_string()),
+            )
+        }
+        RuntimeEvent::Custom { name, payload } => {
+            let json = serde_json::json!({
+                "type": "custom",
+                "name": name,
+                "payload": payload
+            });
+            Some(
+                axum::response::sse::Event::default()
+                    .event("custom")
+                    .data(json.to_string()),
+            )
+        }
     }
 }
 
@@ -1133,6 +1276,298 @@ mod tests {
                 5000,
                 "JSON tool input should NOT be truncated"
             );
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // Tests for server-only SSE streaming functions
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    #[cfg(feature = "server")]
+    mod event_stream_tests {
+        use super::*;
+        use tokio_stream::StreamExt;
+
+        /// ES-1: Test that event_stream() returns a working Stream
+        #[tokio::test]
+        async fn event_stream_returns_stream() {
+            let (tx, rx) = mpsc::unbounded_channel::<RuntimeEvent>();
+
+            // Send some events
+            tx.send(RuntimeEvent::Ai(Box::new(AiEvent::Started {
+                turn_id: "test-turn".to_string(),
+            })))
+            .unwrap();
+            tx.send(RuntimeEvent::Ai(Box::new(AiEvent::TextDelta {
+                delta: "Hello".to_string(),
+                accumulated: "Hello".to_string(),
+            })))
+            .unwrap();
+            tx.send(RuntimeEvent::Ai(Box::new(AiEvent::Completed {
+                response: "Done".to_string(),
+                tokens_used: None,
+                duration_ms: None,
+            })))
+            .unwrap();
+
+            // Drop sender to close the stream
+            drop(tx);
+
+            // Create stream and collect events
+            let stream = event_stream(rx);
+            let events: Vec<RuntimeEvent> = stream.collect().await;
+
+            assert_eq!(events.len(), 3, "Stream should yield all 3 events");
+
+            // Verify event types
+            assert!(
+                matches!(events[0], RuntimeEvent::Ai(ref e) if matches!(**e, AiEvent::Started { .. }))
+            );
+            assert!(
+                matches!(events[1], RuntimeEvent::Ai(ref e) if matches!(**e, AiEvent::TextDelta { .. }))
+            );
+            assert!(
+                matches!(events[2], RuntimeEvent::Ai(ref e) if matches!(**e, AiEvent::Completed { .. }))
+            );
+        }
+
+        /// ES-2: Test that stream terminates when sender is dropped
+        #[tokio::test]
+        async fn event_stream_terminates_on_channel_close() {
+            let (tx, rx) = mpsc::unbounded_channel::<RuntimeEvent>();
+
+            // Send one event then drop sender
+            tx.send(RuntimeEvent::Ai(Box::new(AiEvent::Started {
+                turn_id: "test".to_string(),
+            })))
+            .unwrap();
+            drop(tx);
+
+            let stream = event_stream(rx);
+            let events: Vec<RuntimeEvent> = stream.collect().await;
+
+            assert_eq!(
+                events.len(),
+                1,
+                "Stream should terminate after sender drops"
+            );
+        }
+
+        /// ES-3: Test stream with mixed event types
+        #[tokio::test]
+        async fn event_stream_handles_mixed_events() {
+            let (tx, rx) = mpsc::unbounded_channel::<RuntimeEvent>();
+
+            // Send different event types
+            tx.send(RuntimeEvent::Ai(Box::new(AiEvent::Started {
+                turn_id: "turn-1".to_string(),
+            })))
+            .unwrap();
+            tx.send(RuntimeEvent::TerminalOutput {
+                session_id: "session-1".to_string(),
+                data: vec![72, 101, 108, 108, 111], // "Hello"
+            })
+            .unwrap();
+            tx.send(RuntimeEvent::Custom {
+                name: "custom_event".to_string(),
+                payload: serde_json::json!({"key": "value"}),
+            })
+            .unwrap();
+            drop(tx);
+
+            let stream = event_stream(rx);
+            let events: Vec<RuntimeEvent> = stream.collect().await;
+
+            assert_eq!(events.len(), 3);
+            assert!(matches!(events[0], RuntimeEvent::Ai(_)));
+            assert!(matches!(events[1], RuntimeEvent::TerminalOutput { .. }));
+            assert!(matches!(events[2], RuntimeEvent::Custom { .. }));
+        }
+    }
+
+    #[cfg(feature = "server")]
+    mod is_terminal_event_tests {
+        use super::*;
+
+        #[test]
+        fn completed_event_is_terminal() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::Completed {
+                response: "Done".to_string(),
+                tokens_used: Some(100),
+                duration_ms: Some(500),
+            }));
+            assert!(
+                is_terminal_event(&event),
+                "Completed event should be terminal"
+            );
+        }
+
+        #[test]
+        fn error_event_is_terminal() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::Error {
+                message: "Something went wrong".to_string(),
+                error_type: "api_error".to_string(),
+            }));
+            assert!(is_terminal_event(&event), "Error event should be terminal");
+        }
+
+        #[test]
+        fn started_event_is_not_terminal() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::Started {
+                turn_id: "turn-1".to_string(),
+            }));
+            assert!(
+                !is_terminal_event(&event),
+                "Started event should not be terminal"
+            );
+        }
+
+        #[test]
+        fn text_delta_is_not_terminal() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::TextDelta {
+                delta: "Hello".to_string(),
+                accumulated: "Hello World".to_string(),
+            }));
+            assert!(
+                !is_terminal_event(&event),
+                "TextDelta event should not be terminal"
+            );
+        }
+
+        #[test]
+        fn tool_request_is_not_terminal() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::ToolRequest {
+                tool_name: "read_file".to_string(),
+                args: serde_json::json!({"path": "/tmp"}),
+                request_id: "req-1".to_string(),
+                source: Default::default(),
+            }));
+            assert!(
+                !is_terminal_event(&event),
+                "ToolRequest event should not be terminal"
+            );
+        }
+
+        #[test]
+        fn tool_result_is_not_terminal() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::ToolResult {
+                tool_name: "read_file".to_string(),
+                result: serde_json::json!("file contents"),
+                success: true,
+                request_id: "req-1".to_string(),
+                source: Default::default(),
+            }));
+            assert!(
+                !is_terminal_event(&event),
+                "ToolResult event should not be terminal"
+            );
+        }
+
+        #[test]
+        fn reasoning_is_not_terminal() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::Reasoning {
+                content: "Let me think...".to_string(),
+            }));
+            assert!(
+                !is_terminal_event(&event),
+                "Reasoning event should not be terminal"
+            );
+        }
+
+        #[test]
+        fn terminal_output_is_not_terminal() {
+            let event = RuntimeEvent::TerminalOutput {
+                session_id: "session-1".to_string(),
+                data: vec![65, 66, 67],
+            };
+            assert!(
+                !is_terminal_event(&event),
+                "TerminalOutput should not be terminal"
+            );
+        }
+
+        #[test]
+        fn terminal_exit_is_not_terminal() {
+            let event = RuntimeEvent::TerminalExit {
+                session_id: "session-1".to_string(),
+                code: Some(0),
+            };
+            assert!(
+                !is_terminal_event(&event),
+                "TerminalExit should not be terminal (it's for PTY, not agent)"
+            );
+        }
+
+        #[test]
+        fn custom_event_is_not_terminal() {
+            let event = RuntimeEvent::Custom {
+                name: "my_event".to_string(),
+                payload: serde_json::json!({}),
+            };
+            assert!(
+                !is_terminal_event(&event),
+                "Custom event should not be terminal"
+            );
+        }
+    }
+
+    #[cfg(feature = "server")]
+    mod runtime_event_to_sse_tests {
+        use super::*;
+
+        #[test]
+        fn ai_event_converts_to_sse() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::Started {
+                turn_id: "turn-123".to_string(),
+            }));
+
+            let sse = runtime_event_to_sse(&event);
+            assert!(sse.is_some(), "AI event should convert to SSE");
+        }
+
+        #[test]
+        fn ai_completed_event_converts_to_sse() {
+            let event = RuntimeEvent::Ai(Box::new(AiEvent::Completed {
+                response: "Task completed".to_string(),
+                tokens_used: Some(150),
+                duration_ms: Some(1000),
+            }));
+
+            let sse = runtime_event_to_sse(&event);
+            assert!(sse.is_some(), "Completed event should convert to SSE");
+        }
+
+        #[test]
+        fn terminal_output_converts_to_sse() {
+            let event = RuntimeEvent::TerminalOutput {
+                session_id: "session-1".to_string(),
+                data: vec![72, 101, 108, 108, 111], // "Hello"
+            };
+
+            let sse = runtime_event_to_sse(&event);
+            assert!(sse.is_some(), "TerminalOutput should convert to SSE");
+        }
+
+        #[test]
+        fn terminal_exit_converts_to_sse() {
+            let event = RuntimeEvent::TerminalExit {
+                session_id: "session-1".to_string(),
+                code: Some(0),
+            };
+
+            let sse = runtime_event_to_sse(&event);
+            assert!(sse.is_some(), "TerminalExit should convert to SSE");
+        }
+
+        #[test]
+        fn custom_event_converts_to_sse() {
+            let event = RuntimeEvent::Custom {
+                name: "my_event".to_string(),
+                payload: serde_json::json!({"data": "test"}),
+            };
+
+            let sse = runtime_event_to_sse(&event);
+            assert!(sse.is_some(), "Custom event should convert to SSE");
         }
     }
 }

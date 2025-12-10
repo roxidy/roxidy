@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use crate::error::{QbitError, Result};
 use parking_lot::Mutex;
-use portable_pty::{Child, MasterPty, PtySize};
 #[cfg(feature = "tauri")]
 use portable_pty::{native_pty_system, CommandBuilder};
+use portable_pty::{Child, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(feature = "tauri")]
@@ -494,5 +496,68 @@ impl PtyManager {
             rows,
             cols,
         })
+    }
+
+    /// Get the foreground process name for a PTY session.
+    ///
+    /// This uses OS-level process group detection to get the actual running process,
+    /// rather than guessing based on command patterns.
+    ///
+    /// # Platform Support
+    /// - macOS/Linux: Uses `ps` to query the terminal's foreground process group
+    /// - Windows: Returns None (process groups work differently)
+    ///
+    /// # Returns
+    /// - `Ok(Some(String))` - The foreground process name (e.g., "npm", "cargo", "python")
+    /// - `Ok(None)` - No foreground process or shell is in foreground
+    /// - `Err(_)` - Failed to query process information
+    #[cfg(feature = "tauri")]
+    pub fn get_foreground_process(&self, session_id: &str) -> Result<Option<String>> {
+        use std::process::Command;
+
+        // Verify session exists
+        let sessions = self.sessions.lock();
+        if !sessions.contains_key(session_id) {
+            return Err(QbitError::SessionNotFound(session_id.to_string()));
+        }
+        drop(sessions);
+
+        // Platform-specific process detection
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            // Get the PTY's foreground process group leader
+            // This uses the ps command to query the terminal's current foreground process
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("ps -o comm= -p $(ps -o tpgid= -p $$) 2>/dev/null || echo ''")
+                .output();
+
+            match output {
+                Ok(output) if output.status.success() => {
+                    let process_name = String::from_utf8_lossy(&output.stdout)
+                        .trim()
+                        .to_string();
+
+                    if process_name.is_empty() {
+                        Ok(None)
+                    } else {
+                        // Extract just the binary name (remove path)
+                        let name = process_name
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&process_name)
+                            .to_string();
+                        Ok(Some(name))
+                    }
+                }
+                _ => Ok(None),
+            }
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            // Windows and other platforms don't have the same process group semantics
+            Ok(None)
+        }
     }
 }

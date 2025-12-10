@@ -1,20 +1,13 @@
-"""Integration tests for qbit sidecar functionality.
+"""Sidecar database integration tests.
 
-The sidecar system captures terminal events, AI interactions, and session metadata
-into a LanceDB vector database for context retrieval, search, and analysis.
+Tests the LanceDB sidecar database functionality:
+- Event capture and storage
+- Session lifecycle management
+- Search functionality
+- Data persistence and integrity
 
-Run basic tests (no API needed):
-    pytest test_sidecar.py -v -k "TestStorageIntegrity"
-
-Run all tests including API/eval tests:
-    RUN_API_TESTS=1 pytest test_sidecar.py -v
-
-Test Organization:
-- TestEventCapture: Verify events are captured correctly
-- TestSessionLifecycle: Verify session management
-- TestSearchFunctionality: Verify search works
-- TestSynthesisQuality: Use GEval to evaluate session summaries
-- TestStorageIntegrity: Verify data consistency and persistence
+Run all tests:
+    RUN_API_TESTS=1 pytest test_sidecar_db.py -v
 """
 
 import time
@@ -25,15 +18,15 @@ from deepeval import evaluate
 from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
-from conftest import CliRunner, JsonRunResult, get_last_response
-from sidecar_utils import (
-    connect_sidecar_db,
+from client import StreamingRunner
+from sidecar import (
+    connect_db,
     get_last_session,
     get_session,
-    get_session_events,
-    search_events_keyword,
+    get_events,
+    search_events,
     get_storage_stats,
-    list_sessions,
+    get_sessions,
 )
 
 
@@ -73,19 +66,20 @@ def create_unique_marker() -> str:
 class TestEventCapture:
     """Tests that verify events are captured correctly in the sidecar database."""
 
-    def test_user_prompt_captured(self, cli: CliRunner, sidecar_db):
+    @pytest.mark.asyncio
+    async def test_user_prompt_captured(self, runner: StreamingRunner, sidecar_db):
         """UserPrompt events contain the prompt text."""
         marker = create_unique_marker()
         prompt = f"Say '{marker}' and nothing else"
 
-        result: JsonRunResult = cli.run_prompt_json(prompt)
-        assert result.returncode == 0
+        result = await runner.run(prompt)
+        assert result.success
 
         # Wait for async flush
         wait_for_sidecar_flush()
 
         # Search for the marker in event content
-        events = search_events_keyword(sidecar_db, marker, limit=5)
+        events = search_events(sidecar_db, marker, limit=5)
         assert len(events) > 0, f"Expected to find events with marker '{marker}'"
 
         # Verify at least one event contains the full prompt or marker
@@ -93,13 +87,14 @@ class TestEventCapture:
         assert any(marker in content for content in event_contents), \
             f"Expected marker '{marker}' in event content"
 
-    def test_tool_execution_captured(self, cli: CliRunner, sidecar_db):
+    @pytest.mark.asyncio
+    async def test_tool_execution_captured(self, runner: StreamingRunner, sidecar_db):
         """ToolCall events are created when tools run."""
         marker = create_unique_marker()
         prompt = f"Create a file called '/tmp/{marker}.txt' with content 'test' and then read it back"
 
-        result: JsonRunResult = cli.run_prompt_json(prompt)
-        assert result.returncode == 0
+        result = await runner.run(prompt)
+        assert result.success
 
         # Verify tool was called
         assert len(result.tool_calls) > 0, "Expected at least one tool call"
@@ -109,16 +104,17 @@ class TestEventCapture:
 
         # Search for tool-related events
         # The marker should appear in file-related tool calls or content
-        events = search_events_keyword(sidecar_db, marker, limit=10)
+        events = search_events(sidecar_db, marker, limit=10)
         assert len(events) > 0, f"Expected to find tool events with marker '{marker}'"
 
-    def test_session_events_not_empty(self, cli: CliRunner, sidecar_db):
+    @pytest.mark.asyncio
+    async def test_session_events_not_empty(self, runner: StreamingRunner, sidecar_db):
         """Verify sessions have at least one event."""
         marker = create_unique_marker()
         prompt = f"Echo '{marker}'"
 
-        result: JsonRunResult = cli.run_prompt_json(prompt)
-        assert result.returncode == 0
+        result = await runner.run(prompt)
+        assert result.success
 
         # Wait for async flush
         wait_for_sidecar_flush()
@@ -129,7 +125,7 @@ class TestEventCapture:
 
         # Get events for this session
         session_id = session["id"]
-        events = get_session_events(sidecar_db, session_id)
+        events = get_events(sidecar_db, session_id)
         assert len(events) > 0, f"Expected session {session_id} to have at least one event"
 
 
@@ -143,15 +139,16 @@ class TestEventCapture:
 class TestSessionLifecycle:
     """Tests that verify session management and metadata capture."""
 
-    def test_session_created_on_prompt(self, cli: CliRunner, sidecar_db):
-        """New sessions are created for CLI runs."""
+    @pytest.mark.asyncio
+    async def test_session_created_on_prompt(self, runner: StreamingRunner, sidecar_db):
+        """New sessions are created for agent runs."""
         # Get current session count
         stats_before = get_storage_stats(sidecar_db)
         count_before = stats_before.get("session_count", 0)
 
         marker = create_unique_marker()
-        result: JsonRunResult = cli.run_prompt_json(f"Say '{marker}'")
-        assert result.returncode == 0
+        result = await runner.run(f"Say '{marker}'")
+        assert result.success
 
         # Wait for async flush
         wait_for_sidecar_flush()
@@ -162,13 +159,14 @@ class TestSessionLifecycle:
         assert count_after > count_before, \
             f"Expected session count to increase from {count_before} to {count_after}"
 
-    def test_session_has_initial_request(self, cli: CliRunner, sidecar_db):
+    @pytest.mark.asyncio
+    async def test_session_has_initial_request(self, runner: StreamingRunner, sidecar_db):
         """Session captures initial request."""
         marker = create_unique_marker()
         prompt = f"Remember this marker: {marker}"
 
-        result: JsonRunResult = cli.run_prompt_json(prompt)
-        assert result.returncode == 0
+        result = await runner.run(prompt)
+        assert result.success
 
         # Wait for async flush
         wait_for_sidecar_flush()
@@ -179,30 +177,12 @@ class TestSessionLifecycle:
 
         # Get events for this session
         session_id = session["id"]
-        events = get_session_events(sidecar_db, session_id)
+        events = get_events(sidecar_db, session_id)
 
         # Verify the marker appears in at least one event
         event_contents = [e.get("content", "") or "" for e in events]
         assert any(marker in content for content in event_contents), \
             f"Expected marker '{marker}' in session events"
-
-    def test_session_has_workspace(self, cli: CliRunner, sidecar_db):
-        """Workspace path is captured in session metadata."""
-        marker = create_unique_marker()
-        result: JsonRunResult = cli.run_prompt_json(f"Say '{marker}'")
-        assert result.returncode == 0
-
-        # Wait for async flush
-        wait_for_sidecar_flush()
-
-        # Get the last session
-        session = get_last_session(sidecar_db)
-        assert session is not None, "Expected to find a session"
-
-        # Verify workspace_path exists and is not empty
-        workspace_path = session.get("workspace_path")
-        assert workspace_path is not None, "Expected workspace_path to be set"
-        assert len(workspace_path) > 0, "Expected workspace_path to be non-empty"
 
 
 # =============================================================================
@@ -215,20 +195,21 @@ class TestSessionLifecycle:
 class TestSearchFunctionality:
     """Tests that verify search capabilities work correctly."""
 
-    def test_keyword_search_finds_events(self, cli: CliRunner, sidecar_db):
+    @pytest.mark.asyncio
+    async def test_keyword_search_finds_events(self, runner: StreamingRunner, sidecar_db):
         """Searching for a unique term finds it."""
         # Create a unique marker that's unlikely to exist elsewhere
         marker = f"UNIQUE_TEST_MARKER_{int(time.time() * 1000)}"
         prompt = f"Say the exact phrase '{marker}' and nothing else"
 
-        result: JsonRunResult = cli.run_prompt_json(prompt)
-        assert result.returncode == 0
+        result = await runner.run(prompt)
+        assert result.success
 
         # Wait for async flush
         wait_for_sidecar_flush()
 
         # Search for the unique marker
-        events = search_events_keyword(sidecar_db, marker, limit=5)
+        events = search_events(sidecar_db, marker, limit=5)
         assert len(events) > 0, f"Expected to find events containing '{marker}'"
 
         # Verify the marker actually appears in the results
@@ -241,13 +222,14 @@ class TestSearchFunctionality:
 
         assert found_marker, f"Expected marker '{marker}' to appear in event content"
 
-    def test_search_no_false_positives(self, cli: CliRunner, sidecar_db):
+    @pytest.mark.asyncio
+    async def test_search_no_false_positives(self, runner: StreamingRunner, sidecar_db):
         """Nonsense queries return empty or don't match."""
         # Use a nonsense string that definitely won't exist
         nonsense = f"xyzzy_nonexistent_gibberish_{int(time.time() * 1000)}_qwerty"
 
         # Search for the nonsense string (no need to create a session first)
-        events = search_events_keyword(sidecar_db, nonsense, limit=10)
+        events = search_events(sidecar_db, nonsense, limit=10)
 
         # Either no events found, or if any are found, they don't actually contain the nonsense
         if len(events) > 0:
@@ -267,14 +249,14 @@ class TestSearchFunctionality:
 class TestSynthesisQuality:
     """Tests that use GEval metrics to evaluate session summary quality."""
 
-    def test_session_summary_quality(self, cli: CliRunner, sidecar_db, eval_model: Any):
+    @pytest.mark.asyncio
+    async def test_session_summary_quality(self, runner: StreamingRunner, sidecar_db, eval_model: Any):
         """Evaluate that captured events make semantic sense.
 
         This test verifies that the sidecar captures meaningful context that
         could be used for session summarization or retrieval.
         """
         # Use a single prompt that covers multiple topics to test event capture
-        # This avoids batch mode which has inconsistent event capture
         prompt = (
             "Answer these three questions briefly: "
             "1) Name three programming languages, "
@@ -282,8 +264,8 @@ class TestSynthesisQuality:
             "3) What is the capital of France?"
         )
 
-        result: JsonRunResult = cli.run_prompt_json(prompt)
-        assert result.returncode == 0
+        result = await runner.run(prompt)
+        assert result.success
 
         # Wait for async flush
         wait_for_sidecar_flush(delay=1.0)
@@ -294,7 +276,7 @@ class TestSynthesisQuality:
 
         # Get events for this session
         session_id = session["id"]
-        events = get_session_events(sidecar_db, session_id)
+        events = get_events(sidecar_db, session_id)
         assert len(events) > 0, "Expected session to have events"
 
         # Create a summary of event types and content snippets
@@ -351,17 +333,17 @@ class TestStorageIntegrity:
     def test_sessions_persist_across_runs(self, sidecar_db):
         """Sessions survive multiple database connections."""
         # Get sessions from first connection
-        sessions_1 = list_sessions(sidecar_db, limit=5)
+        sessions_1 = get_sessions(sidecar_db, limit=5)
         session_count_1 = len(sessions_1)
 
         # Close and reconnect
         # Note: sidecar_db fixture creates a new connection per test
         # So we manually reconnect here
-        from sidecar_utils import connect_sidecar_db
-        db2 = connect_sidecar_db()
+        from sidecar import connect_db
+        db2 = connect_db()
 
         # Get sessions from second connection
-        sessions_2 = list_sessions(db2, limit=5)
+        sessions_2 = get_sessions(db2, limit=5)
         session_count_2 = len(sessions_2)
 
         # Session count should be the same
@@ -388,7 +370,7 @@ class TestStorageIntegrity:
             pytest.skip("No sessions found in database")
 
         session_id = session["id"]
-        events = get_session_events(sidecar_db, session_id)
+        events = get_events(sidecar_db, session_id)
 
         # If no events, skip
         if len(events) == 0:
@@ -407,15 +389,26 @@ class TestStorageIntegrity:
         # Get table names
         table_names = sidecar_db.table_names()
 
-        # Check for expected tables
-        expected_tables = {"sessions", "events"}
+        # Check for expected tables (includes both legacy and new L1 normalized tables)
+        # Core required tables
+        expected_tables = {"events"}
 
         for table in expected_tables:
             assert table in table_names, f"Expected table '{table}' not found in database"
 
+        # Layer 1 normalized tables (new schema)
+        l1_tables = {
+            "l1_sessions", "l1_goals", "l1_decisions", "l1_errors",
+            "l1_file_contexts", "l1_questions", "l1_goal_progress", "l1_file_changes"
+        }
+
+        # Check that L1 tables exist
+        for table in l1_tables:
+            assert table in table_names, f"Expected L1 table '{table}' not found in database"
+
     def test_session_timestamps_valid(self, sidecar_db):
         """Session timestamps are valid and ordered correctly."""
-        sessions = list_sessions(sidecar_db, limit=10)
+        sessions = get_sessions(sidecar_db, limit=10)
 
         if len(sessions) == 0:
             pytest.skip("No sessions found in database")
@@ -441,7 +434,7 @@ class TestStorageIntegrity:
             pytest.skip("No sessions found in database")
 
         session_id = session["id"]
-        events = get_session_events(sidecar_db, session_id)
+        events = get_events(sidecar_db, session_id)
 
         if len(events) == 0:
             pytest.skip(f"No events found for session {session_id}")

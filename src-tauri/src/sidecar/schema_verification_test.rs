@@ -47,10 +47,26 @@ mod tests {
         println!("files_modified: {:?}", e.files_modified);
         println!("diff: {:?}", e.diff);
 
-        assert_eq!(e.cwd, Some("/workspace/project".to_string()), "cwd column missing");
-        assert_eq!(e.tool_output, Some("Edit successful".to_string()), "tool_output column missing");
-        assert_eq!(e.files_accessed, Some(vec![PathBuf::from("src/test.rs")]), "files_accessed column missing");
-        assert_eq!(e.files_modified, vec![PathBuf::from("src/test.rs")], "files_modified column missing");
+        assert_eq!(
+            e.cwd,
+            Some("/workspace/project".to_string()),
+            "cwd column missing"
+        );
+        assert_eq!(
+            e.tool_output,
+            Some("Edit successful".to_string()),
+            "tool_output column missing"
+        );
+        assert_eq!(
+            e.files_accessed,
+            Some(vec![PathBuf::from("src/test.rs")]),
+            "files_accessed column missing"
+        );
+        assert_eq!(
+            e.files_modified,
+            vec![PathBuf::from("src/test.rs")],
+            "files_modified column missing"
+        );
         assert!(e.diff.is_some(), "diff column missing");
 
         println!("✓ All schema columns exist and work correctly");
@@ -87,12 +103,25 @@ list all rust files in the src directory"#;
         println!("content: {:?}", e.content);
 
         // Verify cwd extracted
-        assert_eq!(e.cwd, Some("/Users/test/myproject".to_string()), "cwd not extracted from XML");
+        assert_eq!(
+            e.cwd,
+            Some("/Users/test/myproject".to_string()),
+            "cwd not extracted from XML"
+        );
 
         // Verify content is clean (no XML, no "User asked:" prefix)
-        assert_eq!(e.content, "list all rust files in the src directory", "content should be clean");
-        assert!(!e.content.contains("<context>"), "content should not contain XML");
-        assert!(!e.content.contains("User asked:"), "content should not have 'User asked:' prefix");
+        assert_eq!(
+            e.content, "list all rust files in the src directory",
+            "content should be clean"
+        );
+        assert!(
+            !e.content.contains("<context>"),
+            "content should not contain XML"
+        );
+        assert!(
+            !e.content.contains("User asked:"),
+            "content should not have 'User asked:' prefix"
+        );
 
         // Verify event type
         assert_eq!(e.event_type.name(), "user_prompt");
@@ -135,7 +164,10 @@ list all rust files in the src directory"#;
 
         // Verify tool_output captured
         assert!(e.tool_output.is_some(), "tool_output should be captured");
-        assert!(e.tool_output.as_ref().unwrap().contains("fn main()"), "tool_output should contain file content");
+        assert!(
+            e.tool_output.as_ref().unwrap().contains("fn main()"),
+            "tool_output should contain file content"
+        );
 
         // Verify files_accessed captured
         assert_eq!(
@@ -145,7 +177,10 @@ list all rust files in the src directory"#;
         );
 
         // Verify files_modified is empty for read
-        assert!(e.files_modified.is_empty(), "files_modified should be empty for read operation");
+        assert!(
+            e.files_modified.is_empty(),
+            "files_modified should be empty for read operation"
+        );
 
         println!("✓ File read capture works correctly");
     }
@@ -190,7 +225,10 @@ list all rust files in the src directory"#;
         println!("content: {:?}", e.content);
         println!("tool_output: {:?}", e.tool_output);
         println!("files_modified: {:?}", e.files_modified);
-        println!("diff preview: {:?}", e.diff.as_ref().map(|d| &d[..d.len().min(100)]));
+        println!(
+            "diff preview: {:?}",
+            e.diff.as_ref().map(|d| &d[..d.len().min(100)])
+        );
 
         // Verify files_modified captured
         assert_eq!(
@@ -202,9 +240,18 @@ list all rust files in the src directory"#;
         // Verify diff captured
         assert!(e.diff.is_some(), "diff should be captured");
         let diff_content = e.diff.as_ref().unwrap();
-        assert!(diff_content.contains("--- src/lib.rs"), "diff should have file header");
-        assert!(diff_content.contains("-    old_implementation();"), "diff should show removed line");
-        assert!(diff_content.contains("+    new_implementation();"), "diff should show added line");
+        assert!(
+            diff_content.contains("--- src/lib.rs"),
+            "diff should have file header"
+        );
+        assert!(
+            diff_content.contains("-    old_implementation();"),
+            "diff should show removed line"
+        );
+        assert!(
+            diff_content.contains("+    new_implementation();"),
+            "diff should show added line"
+        );
 
         println!("✓ File edit capture works correctly");
     }
@@ -228,9 +275,7 @@ list all rust files in the src directory"#;
         state.initialize(workspace).await.unwrap();
 
         // Start a session (workspace is set via config, only needs initial_request)
-        let session_id = state
-            .start_session("Test request")
-            .unwrap();
+        let session_id = state.start_session("Test request").unwrap();
 
         // Wait for any async processing
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -245,8 +290,13 @@ list all rust files in the src directory"#;
         }
 
         // Verify NO session_start event
-        let has_session_start = events.iter().any(|e| e.event_type.name() == "session_start");
-        assert!(!has_session_start, "session_start event should NOT be emitted");
+        let has_session_start = events
+            .iter()
+            .any(|e| e.event_type.name() == "session_start");
+        assert!(
+            !has_session_start,
+            "session_start event should NOT be emitted"
+        );
 
         println!("✓ No session_start event emitted");
     }
@@ -283,8 +333,14 @@ list all rust files in the src directory"#;
                 "grep",
                 "pattern=authenticate",
                 true,
-                Some("src/auth.rs:1: pub fn authenticate\nsrc/main.rs:15: authenticate(user)".to_string()),
-                Some(vec![PathBuf::from("src/auth.rs"), PathBuf::from("src/main.rs")]),
+                Some(
+                    "src/auth.rs:1: pub fn authenticate\nsrc/main.rs:15: authenticate(user)"
+                        .to_string(),
+                ),
+                Some(vec![
+                    PathBuf::from("src/auth.rs"),
+                    PathBuf::from("src/main.rs"),
+                ]),
                 vec![],
                 None,
             ),
@@ -308,7 +364,10 @@ list all rust files in the src directory"#;
                 Some("File created".to_string()),
                 None,
                 vec![PathBuf::from("src/auth_test.rs")],
-                Some("--- /dev/null\n+++ src/auth_test.rs\n@@ @@\n+#[test]\n+fn test_auth() {}".to_string()),
+                Some(
+                    "--- /dev/null\n+++ src/auth_test.rs\n@@ @@\n+#[test]\n+fn test_auth() {}"
+                        .to_string(),
+                ),
             ),
         ];
 
@@ -322,10 +381,16 @@ list all rust files in the src directory"#;
             println!("  event_type: {}", e.event_type.name());
             println!("  content: {:?}", truncate_for_display(&e.content, 60));
             println!("  cwd: {:?}", e.cwd);
-            println!("  tool_output: {:?}", e.tool_output.as_ref().map(|s| truncate_for_display(s, 50)));
+            println!(
+                "  tool_output: {:?}",
+                e.tool_output.as_ref().map(|s| truncate_for_display(s, 50))
+            );
             println!("  files_accessed: {:?}", e.files_accessed);
             println!("  files_modified: {:?}", e.files_modified);
-            println!("  diff: {:?}", e.diff.as_ref().map(|s| truncate_for_display(s, 60)));
+            println!(
+                "  diff: {:?}",
+                e.diff.as_ref().map(|s| truncate_for_display(s, 60))
+            );
             println!();
         }
 

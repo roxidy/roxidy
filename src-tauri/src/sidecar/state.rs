@@ -4,6 +4,7 @@
 //! - Active session tracking
 //! - Event buffering
 //! - Coordination with the async processor
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,8 +18,14 @@ use super::config::SidecarConfig;
 use super::events::{
     Checkpoint, CommitBoundaryDetector, CommitBoundaryInfo, EventType, SessionEvent, SidecarSession,
 };
-use super::processor::{ProcessorHandle, ProcessorTask, SidecarProcessor};
+use super::layer1::{
+    Layer1Config, Layer1Event, Layer1Processor, Layer1Storage, Layer1Task, SessionState,
+};
+use super::processor::{ProcessorTask, SidecarProcessor};
 use super::storage::SidecarStorage;
+
+#[cfg(feature = "tauri")]
+use tauri::{AppHandle, Emitter};
 
 /// Status of the sidecar system
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -78,6 +85,16 @@ pub struct SidecarState {
 
     /// Commit boundary detector
     commit_boundary_detector: RwLock<CommitBoundaryDetector>,
+
+    /// Layer 1 processor task sender
+    layer1_tx: RwLock<Option<mpsc::UnboundedSender<Layer1Task>>>,
+
+    /// Layer 1 storage
+    layer1_storage: RwLock<Option<Arc<Layer1Storage>>>,
+
+    /// Tauri app handle for emitting events to frontend
+    #[cfg(feature = "tauri")]
+    app_handle: RwLock<Option<AppHandle>>,
 }
 
 impl SidecarState {
@@ -96,6 +113,10 @@ impl SidecarState {
             embeddings_ready: RwLock::new(false),
             llm_ready: RwLock::new(false),
             commit_boundary_detector: RwLock::new(CommitBoundaryDetector::new()),
+            layer1_tx: RwLock::new(None),
+            layer1_storage: RwLock::new(None),
+            #[cfg(feature = "tauri")]
+            app_handle: RwLock::new(None),
         }
     }
 
@@ -115,7 +136,17 @@ impl SidecarState {
             embeddings_ready: RwLock::new(false),
             llm_ready: RwLock::new(false),
             commit_boundary_detector: RwLock::new(CommitBoundaryDetector::new()),
+            layer1_tx: RwLock::new(None),
+            layer1_storage: RwLock::new(None),
+            #[cfg(feature = "tauri")]
+            app_handle: RwLock::new(None),
         }
+    }
+
+    /// Set the Tauri app handle for event emission
+    #[cfg(feature = "tauri")]
+    pub fn set_app_handle(&self, handle: AppHandle) {
+        *self.app_handle.write() = Some(handle);
     }
 
     /// Initialize the sidecar for a workspace
@@ -160,6 +191,112 @@ impl SidecarState {
             workspace_path
         );
         Ok(())
+    }
+
+    /// Initialize Layer 1 processor for session state tracking
+    pub async fn initialize_layer1(&self) -> anyhow::Result<()> {
+        tracing::info!("[sidecar] Initializing Layer 1 processor...");
+
+        // Get storage - must be initialized first
+        let sidecar_storage =
+            self.storage.read().clone().ok_or_else(|| {
+                anyhow::anyhow!("Storage not initialized - call initialize() first")
+            })?;
+
+        // Create Layer1 storage from sidecar storage
+        let layer1_storage = Arc::new(Layer1Storage::from_sidecar_storage(&sidecar_storage).await?);
+        *self.layer1_storage.write() = Some(layer1_storage.clone());
+
+        // Create model manager for LLM
+        let (models_dir, synthesis_backend, synthesis_enabled) = {
+            let config = self.config.read();
+            (
+                config.models_dir.clone(),
+                config.synthesis_backend.clone(),
+                config.synthesis_enabled,
+            )
+        };
+
+        tracing::info!(
+            "[sidecar] Layer1 LLM config: synthesis_enabled={}, backend={:?}",
+            synthesis_enabled,
+            synthesis_backend
+        );
+
+        let model_manager = Arc::new(super::models::ModelManager::new(models_dir));
+
+        // Create synthesis LLM
+        let llm =
+            super::synthesis_llm::create_synthesis_llm(&synthesis_backend, model_manager.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "[sidecar] Failed to create LLM for Layer1, using template: {}",
+                        e
+                    );
+                    Arc::new(super::synthesis_llm::TemplateLlm)
+                });
+
+        tracing::info!(
+            "[sidecar] Layer1 LLM created: available={}, description={}",
+            llm.is_available(),
+            llm.description()
+        );
+
+        // Create Layer1 config
+        let layer1_config = Layer1Config::default();
+
+        // Spawn the Layer1 processor (returns task sender and event receiver)
+        let (task_tx, event_rx) = Layer1Processor::spawn(layer1_storage, llm, layer1_config);
+        *self.layer1_tx.write() = Some(task_tx);
+
+        // Spawn event emitter task to forward Layer1 events to frontend
+        #[cfg(feature = "tauri")]
+        {
+            if let Some(app) = self.app_handle.read().clone() {
+                Self::spawn_layer1_event_emitter(app, event_rx);
+            } else {
+                tracing::debug!(
+                    "[sidecar] No app handle set, Layer1 events will not be emitted to frontend"
+                );
+                // Still consume the receiver to avoid blocking
+                tokio::spawn(async move {
+                    let mut rx = event_rx;
+                    while rx.recv().await.is_some() {}
+                });
+            }
+        }
+
+        #[cfg(not(feature = "tauri"))]
+        {
+            // In non-Tauri mode, just drain the event receiver
+            tokio::spawn(async move {
+                let mut rx = event_rx;
+                while rx.recv().await.is_some() {}
+            });
+        }
+
+        tracing::info!("[sidecar] Layer 1 processor initialized successfully");
+        Ok(())
+    }
+
+    /// Spawn a task that forwards Layer1 events to the frontend via Tauri events
+    #[cfg(feature = "tauri")]
+    fn spawn_layer1_event_emitter(
+        app: AppHandle,
+        mut event_rx: mpsc::UnboundedReceiver<Layer1Event>,
+    ) {
+        tokio::spawn(async move {
+            tracing::debug!("[layer1] Event emitter task started");
+            while let Some(event) = event_rx.recv().await {
+                if let Err(e) = app.emit("layer1-event", &event) {
+                    tracing::warn!("[layer1] Failed to emit event to frontend: {}", e);
+                } else {
+                    tracing::trace!("[layer1] Emitted event: {:?}", event);
+                }
+            }
+            tracing::debug!("[layer1] Event emitter task ended");
+        });
     }
 
     /// Get the current status
@@ -300,6 +437,14 @@ impl SidecarState {
                 session.event_count,
                 session.files_touched.len()
             );
+        }
+
+        // Forward to Layer 1 processor for session state tracking
+        // This captures user_prompt events that don't go through CaptureContext
+        if let Some(tx) = self.layer1_tx() {
+            if let Err(e) = tx.send(Layer1Task::ProcessEvent(Box::new(event.clone()))) {
+                tracing::trace!("[sidecar] Failed to forward event to Layer1: {}", e);
+            }
         }
 
         // Add to buffer
@@ -538,6 +683,27 @@ impl SidecarState {
         self.commit_boundary_detector.write().check_boundary(event)
     }
 
+    /// Get the Layer1 state for a session
+    pub async fn get_layer1_state(&self, session_id: Uuid) -> anyhow::Result<Option<SessionState>> {
+        let storage = self
+            .layer1_storage
+            .read()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Layer1 not initialized"))?;
+
+        storage.get_latest_state(session_id).await
+    }
+
+    /// Get direct access to Layer1 storage (for cross-session queries)
+    pub fn layer1_storage(&self) -> Option<Arc<Layer1Storage>> {
+        self.layer1_storage.read().clone()
+    }
+
+    /// Get the Layer1 task sender (for internal use by capture)
+    pub(super) fn layer1_tx(&self) -> Option<mpsc::UnboundedSender<Layer1Task>> {
+        self.layer1_tx.read().clone()
+    }
+
     /// Shutdown the sidecar synchronously (deprecated, use shutdown_async for graceful shutdown)
     pub fn shutdown(&self) {
         tracing::info!("Shutting down sidecar (sync)");
@@ -550,9 +716,15 @@ impl SidecarState {
             let _ = tx.send(ProcessorTask::Shutdown);
         }
 
+        // Send shutdown signal to Layer1 processor (but don't wait)
+        if let Some(tx) = self.layer1_tx.write().take() {
+            let _ = tx.send(Layer1Task::Shutdown);
+        }
+
         // Clear state
         *self.storage.write() = None;
         *self.workspace_root.write() = None;
+        *self.layer1_storage.write() = None;
     }
 
     /// Gracefully shutdown the sidecar, waiting for the processor to complete.
@@ -567,6 +739,11 @@ impl SidecarState {
         // Send shutdown signal to processor
         if let Some(tx) = self.processor_tx.write().take() {
             let _ = tx.send(ProcessorTask::Shutdown);
+        }
+
+        // Send shutdown signal to Layer1 processor
+        if let Some(tx) = self.layer1_tx.write().take() {
+            let _ = tx.send(Layer1Task::Shutdown);
         }
 
         // Wait for processor to complete (with timeout)
@@ -587,6 +764,7 @@ impl SidecarState {
         // Clear state
         *self.storage.write() = None;
         *self.workspace_root.write() = None;
+        *self.layer1_storage.write() = None;
 
         tracing::info!("Sidecar shutdown complete");
     }

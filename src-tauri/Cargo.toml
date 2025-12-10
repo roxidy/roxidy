@@ -11,6 +11,11 @@ name = "qbit_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
+name = "qbit"
+path = "src/main.rs"
+required-features = ["tauri"]
+
+[[bin]]
 name = "qbit-cli"
 path = "src/bin/qbit-cli.rs"
 required-features = ["cli"]
@@ -66,7 +71,7 @@ url = "2.5"
 
 # Anthropic on Vertex AI (custom crate)
 rig-anthropic-vertex = { path = "crates/rig-anthropic-vertex" }
-rig-core = "0.23"
+rig-core = "^0.23.1"
 
 # Graph-based workflow execution for multi-agent systems
 graph-flow = "0.4"
@@ -88,10 +93,18 @@ fastembed = "4"
 # Sidecar: Local LLM inference via mistral.rs (async, auto chat templates)
 # Using Metal for GPU-accelerated inference on macOS
 # Optional: enable with `--features local-llm`
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["metal"], optional = true }
+# TEMPORARILY DISABLED - See: https://github.com/EricLBuehler/mistral.rs/issues/XXX
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["metal"], optional = true }
 
 # TLS crypto provider (required for rustls 0.23+)
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+# HTTP Server (optional - only for server feature)
+axum = { version = "0.8", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+tokio-util = { version = "0.7", optional = true }
+dashmap = { version = "6", optional = true }
+base64 = { version = "0.22", optional = true }
 
 [features]
 default = ["tauri"]
@@ -99,10 +112,15 @@ default = ["tauri"]
 tauri = ["dep:tauri", "dep:tauri-plugin-opener", "dep:tauri-build"]
 # CLI binary for headless operation (mutually exclusive with tauri)
 cli = ["dep:clap", "dep:atty"]
+# HTTP/SSE server for evals (extends cli, adds HTTP endpoints)
+server = ["cli", "dep:axum", "dep:tokio-stream", "dep:tokio-util", "dep:dashmap", "dep:base64"]
 # Enable local LLM inference via mistral.rs (adds ~400MB binary size, requires Metal on macOS)
-local-llm = ["dep:mistralrs"]
+# TEMPORARILY DISABLED - mistralrs dependency commented out due to resolution conflicts
+# Uncomment mistralrs dependency above and add "dep:mistralrs" to re-enable
+local-llm = []
 
 [dev-dependencies]
 tempfile = "3"
 proptest = "1.4"
+tower = { version = "0.5", features = ["util"] }
 

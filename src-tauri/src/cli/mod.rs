@@ -29,6 +29,9 @@ mod output;
 mod repl;
 mod runner;
 
+#[cfg(feature = "server")]
+pub mod server;
+
 pub use args::Args;
 pub use bootstrap::{initialize, CliContext};
 pub use output::run_event_loop;

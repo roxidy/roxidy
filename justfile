@@ -143,12 +143,49 @@ update-rust:
     cd src-tauri && cargo update
 
 # ============================================
+# CLI & Server
+# ============================================
+
+# Build CLI binary (without server feature)
+build-cli:
+    cd src-tauri && cargo build --no-default-features --features cli --bin qbit-cli
+
+# Build server binary (with HTTP/SSE support)
+build-server:
+    cd src-tauri && cargo build --no-default-features --features server --bin qbit-cli
+
+# Run the eval server on default port (8080)
+server port="8080":
+    @just build-server
+    ./src-tauri/target/debug/qbit-cli --server --port {{port}}
+
+# Run the eval server on a random available port
+server-random:
+    @just build-server
+    ./src-tauri/target/debug/qbit-cli --server --port 0
+
+# ============================================
+# Evaluations
+# ============================================
+
+# Run all evals (builds server, runs all tests)
+eval *args:
+    @just build-server
+    cd evals && RUN_API_TESTS=1 uv run pytest {{args}} -v
+
+# Run evals without LLM calls (fast, no API key needed)
+eval-fast *args:
+    @just build-server
+    cd evals && uv run pytest -k "not requires_api" {{args}} -v
+
+# ============================================
 # Utilities
 # ============================================
 
-# Kill any running dev processes
+# Kill any running dev processes (including server)
 kill:
     -pkill -f "target/debug/qbit" 2>/dev/null
+    -pkill -f "qbit-cli" 2>/dev/null
     -pkill -f "vite" 2>/dev/null
     -lsof -ti:1420 | xargs kill -9 2>/dev/null
 

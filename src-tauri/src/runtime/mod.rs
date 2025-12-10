@@ -43,10 +43,7 @@ pub enum RuntimeError {
 #[serde(tag = "type")]
 pub enum RuntimeEvent {
     /// Terminal output from PTY
-    TerminalOutput {
-        session_id: String,
-        data: Vec<u8>,
-    },
+    TerminalOutput { session_id: String, data: Vec<u8> },
 
     /// Terminal exited
     TerminalExit {
@@ -55,7 +52,7 @@ pub enum RuntimeEvent {
     },
 
     /// AI agent event (re-export from AiEvent)
-    Ai(crate::ai::events::AiEvent),
+    Ai(Box<crate::ai::events::AiEvent>),
 
     /// Generic extensibility
     Custom {

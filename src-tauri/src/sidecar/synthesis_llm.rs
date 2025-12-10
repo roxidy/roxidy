@@ -85,10 +85,13 @@ impl RemoteLlm {
                         .to_string()
                 });
 
-                let vertex_client =
-                    rig_anthropic_vertex::Client::from_service_account(&creds_path, project_id, location)
-                        .await
-                        .context("Failed to create Vertex AI client")?;
+                let vertex_client = rig_anthropic_vertex::Client::from_service_account(
+                    &creds_path,
+                    project_id,
+                    location,
+                )
+                .await
+                .context("Failed to create Vertex AI client")?;
 
                 RemoteClient::VertexAnthropic(vertex_client.completion_model(model))
             }
@@ -177,7 +180,12 @@ pub struct TemplateLlm;
 
 #[async_trait]
 impl SynthesisLlm for TemplateLlm {
-    async fn generate_chat(&self, _system: &str, _user: &str, _max_tokens: usize) -> Result<String> {
+    async fn generate_chat(
+        &self,
+        _system: &str,
+        _user: &str,
+        _max_tokens: usize,
+    ) -> Result<String> {
         anyhow::bail!("Template mode - no LLM available")
     }
 

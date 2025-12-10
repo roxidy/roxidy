@@ -36,6 +36,8 @@ export interface Session {
   createdAt: string;
   mode: SessionMode;
   inputMode?: InputMode; // Toggle button state for unified input (defaults to "agent")
+  customName?: string; // User-defined custom name (set via double-click)
+  processName?: string; // Detected running process name
 }
 
 // Unified timeline block types
@@ -225,6 +227,8 @@ interface QbitState {
   updateWorkingDirectory: (sessionId: string, path: string) => void;
   setSessionMode: (sessionId: string, mode: SessionMode) => void;
   setInputMode: (sessionId: string, mode: InputMode) => void;
+  setCustomTabName: (sessionId: string, customName: string | null) => void;
+  setProcessName: (sessionId: string, processName: string | null) => void;
 
   // Terminal actions
   handlePromptStart: (sessionId: string) => void;
@@ -419,6 +423,23 @@ export const useStore = create<QbitState>()(
         set((state) => {
           if (state.sessions[sessionId]) {
             state.sessions[sessionId].inputMode = mode;
+          }
+        }),
+
+      setCustomTabName: (sessionId, customName) =>
+        set((state) => {
+          if (state.sessions[sessionId]) {
+            state.sessions[sessionId].customName = customName ?? undefined;
+          }
+        }),
+
+      setProcessName: (sessionId, processName) =>
+        set((state) => {
+          if (state.sessions[sessionId]) {
+            // Only set process name if there's no custom name
+            if (!state.sessions[sessionId].customName) {
+              state.sessions[sessionId].processName = processName ?? undefined;
+            }
           }
         }),
 

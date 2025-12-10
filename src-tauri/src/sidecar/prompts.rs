@@ -2,6 +2,7 @@
 //!
 //! These prompts are designed to work with small models like Qwen 0.5B,
 //! focusing on structured synthesis tasks rather than open-ended reasoning.
+#![allow(dead_code)]
 
 /// Context for generating a commit message
 pub struct CommitContext {
@@ -414,7 +415,8 @@ mod tests {
 
     #[test]
     fn test_strip_xml_context() {
-        let input = "<context>some context here</context>\n<cwd>/users/test</cwd>\nActual user request";
+        let input =
+            "<context>some context here</context>\n<cwd>/users/test</cwd>\nActual user request";
         let result = strip_xml_context(input);
         assert_eq!(result, "Actual user request");
 
@@ -426,7 +428,8 @@ mod tests {
     #[test]
     fn test_extract_user_intent() {
         // Request with XML context should extract just the user part
-        let input = "<context>lots of context</context>\n<cwd>/path</cwd>\nImplement authentication";
+        let input =
+            "<context>lots of context</context>\n<cwd>/path</cwd>\nImplement authentication";
         let result = extract_user_intent(input);
         assert_eq!(result, "Implement authentication");
 

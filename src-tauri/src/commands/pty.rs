@@ -50,3 +50,8 @@ pub async fn pty_destroy(state: State<'_, AppState>, session_id: String) -> Resu
 pub async fn pty_get_session(state: State<'_, AppState>, session_id: String) -> Result<PtySession> {
     state.pty_manager.get_session(&session_id)
 }
+
+#[tauri::command]
+pub async fn pty_get_foreground_process(state: State<'_, AppState>, session_id: String) -> Result<Option<String>> {
+    state.pty_manager.get_foreground_process(&session_id)
+}
