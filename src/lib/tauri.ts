@@ -44,6 +44,10 @@ export async function ptyGetSession(sessionId: string): Promise<PtySession> {
   return invoke("pty_get_session", { sessionId });
 }
 
+export async function ptyGetForegroundProcess(sessionId: string): Promise<string | null> {
+  return invoke("pty_get_foreground_process", { sessionId });
+}
+
 // Shell Integration Commands
 export async function shellIntegrationStatus(): Promise<IntegrationStatus> {
   return invoke("shell_integration_status");

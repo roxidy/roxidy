@@ -158,6 +158,7 @@ pub fn run() {
             pty_resize,
             pty_destroy,
             pty_get_session,
+            pty_get_foreground_process,
             // Shell integration commands
             shell_integration_status,
             shell_integration_install,

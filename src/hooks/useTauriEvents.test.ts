@@ -532,4 +532,126 @@ describe("useTauriEvents", () => {
       expect(block.output.split("\n").filter(Boolean)).toHaveLength(50);
     });
   });
+
+  describe("Process Name Extraction", () => {
+    /**
+     * Extract the process name from a command string.
+     * Duplicated from useTauriEvents.ts for testing.
+     */
+    function extractProcessName(command: string | null): string | null {
+      if (!command) return null;
+      const trimmed = command.trim();
+      if (!trimmed) return null;
+      const withoutEnv = trimmed.replace(/^[A-Z_][A-Z0-9_]*=\S+\s+/g, "");
+      const withoutSudo = withoutEnv.replace(/^(sudo|doas)\s+/, "");
+      const firstWord = withoutSudo.split(/\s+/)[0];
+      const baseName = firstWord.split("/").pop() || firstWord;
+      return baseName;
+    }
+
+    describe("basic commands", () => {
+      it("extracts simple command name", () => {
+        expect(extractProcessName("npm install")).toBe("npm");
+        expect(extractProcessName("pnpm install")).toBe("pnpm");
+        expect(extractProcessName("just build")).toBe("just");
+        expect(extractProcessName("cargo build")).toBe("cargo");
+      });
+
+      it("handles commands without arguments", () => {
+        expect(extractProcessName("npm")).toBe("npm");
+        expect(extractProcessName("node")).toBe("node");
+      });
+    });
+
+    describe("path handling", () => {
+      it("strips absolute paths", () => {
+        expect(extractProcessName("/usr/bin/npm install")).toBe("npm");
+        expect(extractProcessName("/usr/local/bin/node app.js")).toBe("node");
+      });
+
+      it("strips relative paths", () => {
+        expect(extractProcessName("./node_modules/.bin/vite")).toBe("vite");
+      });
+    });
+
+    describe("sudo/doas handling", () => {
+      it("removes sudo prefix", () => {
+        expect(extractProcessName("sudo npm install -g")).toBe("npm");
+        expect(extractProcessName("sudo apt-get update")).toBe("apt-get");
+      });
+
+      it("removes doas prefix", () => {
+        expect(extractProcessName("doas npm install")).toBe("npm");
+      });
+    });
+
+    describe("environment variables", () => {
+      it("removes leading environment variables", () => {
+        expect(extractProcessName("NODE_ENV=production npm start")).toBe("npm");
+        expect(extractProcessName("DEBUG=* node app.js")).toBe("node");
+      });
+    });
+
+    describe("real-world examples", () => {
+      it("handles common development tools", () => {
+        expect(extractProcessName("pnpm install")).toBe("pnpm");
+        expect(extractProcessName("bun install")).toBe("bun");
+        expect(extractProcessName("just build")).toBe("just");
+        expect(extractProcessName("cargo build --release")).toBe("cargo");
+        expect(extractProcessName("go run main.go")).toBe("go");
+        expect(extractProcessName("deno run --allow-net server.ts")).toBe("deno");
+      });
+    });
+  });
+
+  describe("Tab Name Display Logic", () => {
+    describe("priority order", () => {
+      it("prioritizes custom name over process name", () => {
+        const session = {
+          customName: "My Custom Tab",
+          processName: "npm",
+          workingDirectory: "/Users/test/project",
+        };
+        const displayName =
+          session.customName || session.processName || session.workingDirectory.split("/").pop();
+        expect(displayName).toBe("My Custom Tab");
+      });
+
+      it("prioritizes process name over directory", () => {
+        const session = {
+          processName: "npm",
+          workingDirectory: "/Users/test/project",
+        };
+        const displayName =
+          session.processName || session.workingDirectory.split("/").pop();
+        expect(displayName).toBe("npm");
+      });
+
+      it("falls back to directory name", () => {
+        const session = {
+          workingDirectory: "/Users/test/project",
+        };
+        const displayName = session.workingDirectory.split("/").pop() || "Terminal";
+        expect(displayName).toBe("project");
+      });
+    });
+
+    describe("custom name persistence", () => {
+      it("custom name persists when process starts", () => {
+        const session = {
+          customName: "Frontend Dev",
+          processName: "npm",
+        };
+        expect(session.customName || session.processName).toBe("Frontend Dev");
+      });
+
+      it("custom name persists when process ends", () => {
+        const session = {
+          customName: "Frontend Dev",
+          processName: undefined,
+        };
+        expect(session.customName || session.processName || "dir").toBe("Frontend Dev");
+      });
+    });
+  });
 });

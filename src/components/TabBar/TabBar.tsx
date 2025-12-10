@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Bot, Plus, Settings, Terminal, X } from "lucide-react";
+import React from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -29,15 +30,18 @@ export function TabBar({ onNewTab, onOpenSettings }: TabBarProps) {
 
   const sessionList = Object.values(sessions);
 
-  const handleCloseTab = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    try {
-      await ptyDestroy(sessionId);
-    } catch (err) {
-      console.error("Failed to destroy PTY:", err);
-    }
-    removeSession(sessionId);
-  };
+  const handleCloseTab = React.useCallback(
+    async (e: React.MouseEvent, sessionId: string) => {
+      e.stopPropagation();
+      try {
+        await ptyDestroy(sessionId);
+      } catch (err) {
+        console.error("Failed to destroy PTY:", err);
+      }
+      removeSession(sessionId);
+    },
+    [removeSession]
+  );
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -117,53 +121,142 @@ interface TabItemProps {
   canClose: boolean;
 }
 
-function TabItem({ session, isActive, onClose, canClose }: TabItemProps) {
-  // Get short name from working directory
-  const dirName = session.workingDirectory.split("/").pop() || "Terminal";
+const TabItem = React.memo(function TabItem({ session, isActive, onClose, canClose }: TabItemProps) {
+  const setCustomTabName = useStore((state) => state.setCustomTabName);
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editValue, setEditValue] = React.useState("");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // Determine display name: custom name > process name > directory name
+  const { displayName, dirName, isCustomName, isProcessName } = React.useMemo(() => {
+    const dir = session.workingDirectory.split(/[/\\]/).pop() || "Terminal";
+    const name = session.customName || session.processName || dir;
+    return {
+      displayName: name,
+      dirName: dir,
+      isCustomName: !!session.customName,
+      isProcessName: !session.customName && !!session.processName,
+    };
+  }, [session.customName, session.processName, session.workingDirectory]);
+
+  // Focus input when entering edit mode
+  React.useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleDoubleClick = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsEditing(true);
+      setEditValue(session.customName || dirName);
+    },
+    [session.customName, dirName]
+  );
+
+  const handleSave = React.useCallback(() => {
+    const trimmed = editValue.trim();
+    setCustomTabName(session.id, trimmed || null);
+    setIsEditing(false);
+  }, [editValue, session.id, setCustomTabName]);
+
+  const handleKeyDown = React.useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleSave();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setIsEditing(false);
+      }
+    },
+    [handleSave]
+  );
 
   const ModeIcon = session.mode === "agent" ? Bot : Terminal;
   const modeColor =
     session.mode === "agent" ? "text-[var(--ansi-magenta)]" : "text-[var(--ansi-blue)]";
 
+  // Generate tooltip text showing full context
+  const tooltipText = React.useMemo(() => {
+    if (isCustomName) return `Custom name: ${displayName}\nDirectory: ${session.workingDirectory}`;
+    if (isProcessName) return `Running: ${displayName}\nDirectory: ${session.workingDirectory}`;
+    return session.workingDirectory;
+  }, [isCustomName, isProcessName, displayName, session.workingDirectory]);
+
   return (
-    <div className="group relative flex items-center">
-      <TabsTrigger
-        value={session.id}
-        className={cn(
-          "relative flex items-center gap-2 px-3 h-5 rounded-md min-w-0 max-w-[200px]",
-          "data-[state=active]:bg-accent data-[state=active]:text-foreground data-[state=active]:shadow-none",
-          "data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-card data-[state=inactive]:hover:text-foreground",
-          "border-none focus-visible:ring-0 focus-visible:ring-offset-0",
-          canClose && "pr-7" // Add padding for close button
-        )}
-      >
-        {/* Mode icon */}
-        <ModeIcon
-          className={cn(
-            "w-3.5 h-3.5 flex-shrink-0",
-            isActive ? modeColor : "text-muted-foreground"
-          )}
-        />
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="group relative flex items-center">
+          <TabsTrigger
+            value={session.id}
+            className={cn(
+              "relative flex items-center gap-2 px-3 h-5 rounded-md min-w-0 max-w-[200px]",
+              "data-[state=active]:bg-accent data-[state=active]:text-foreground data-[state=active]:shadow-none",
+              "data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-card data-[state=inactive]:hover:text-foreground",
+              "border-none focus-visible:ring-0 focus-visible:ring-offset-0",
+              canClose && "pr-7" // Add padding for close button
+            )}
+          >
+            {/* Mode icon */}
+            <ModeIcon
+              className={cn(
+                "w-3.5 h-3.5 flex-shrink-0",
+                isActive ? modeColor : "text-muted-foreground"
+              )}
+            />
 
-        {/* Tab name */}
-        <span className="truncate text-xs">{dirName}</span>
-      </TabsTrigger>
+            {/* Tab name or edit input */}
+            {isEditing ? (
+              <input
+                ref={inputRef}
+                type="text"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={handleSave}
+                onKeyDown={handleKeyDown}
+                onClick={(e) => e.stopPropagation()}
+                className={cn(
+                  "truncate text-xs bg-transparent border-none outline-none",
+                  "focus:ring-1 focus:ring-primary rounded px-1 min-w-[60px] max-w-[140px]"
+                )}
+              />
+            ) : (
+              <span
+                className={cn(
+                  "truncate text-xs",
+                  isProcessName && "text-[var(--ansi-yellow)]"
+                )}
+                onDoubleClick={handleDoubleClick}
+              >
+                {displayName}
+              </span>
+            )}
+          </TabsTrigger>
 
-      {/* Close button - positioned outside TabsTrigger to avoid nested buttons */}
-      {canClose && (
-        <button
-          type="button"
-          onClick={onClose}
-          className={cn(
-            "absolute right-1 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity",
-            "hover:bg-primary/20 text-muted-foreground hover:text-foreground",
-            "z-10"
+          {/* Close button - positioned outside TabsTrigger to avoid nested buttons */}
+          {canClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className={cn(
+                "absolute right-1 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity",
+                "hover:bg-primary/20 text-muted-foreground hover:text-foreground",
+                "z-10"
+              )}
+              title="Close tab"
+            >
+              <X className="w-3 h-3" />
+            </button>
           )}
-          title="Close tab"
-        >
-          <X className="w-3 h-3" />
-        </button>
-      )}
-    </div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="whitespace-pre-wrap">
+        <p className="text-xs">{tooltipText}</p>
+      </TooltipContent>
+    </Tooltip>
   );
-}
+});
