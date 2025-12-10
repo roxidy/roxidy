@@ -437,7 +437,7 @@ function App() {
   return (
     <div className="h-screen w-screen bg-background flex flex-col overflow-hidden app-bg-layered">
       {/* Tab bar */}
-      <TabBar onNewTab={handleNewTab} />
+      <TabBar onNewTab={handleNewTab} onOpenSettings={() => setSettingsOpen(true)} />
 
       {/* Main content area with sidebar */}
       <div className="flex-1 min-h-0 min-w-0 flex overflow-hidden">
