@@ -171,7 +171,7 @@ server-random:
 # Run all evals (builds server, runs all tests)
 eval *args:
     @just build-server
-    cd evals && RUN_API_TESTS=1 uv run pytest {{args}} -v
+    cd evals && QBIT_EVAL_MODEL="claude-haiku-4-5@20251001" RUN_API_TESTS=1 uv run pytest {{args}} -v
 
 # Run evals without LLM calls (fast, no API key needed)
 eval-fast *args:
