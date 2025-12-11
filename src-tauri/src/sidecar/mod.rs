@@ -1,55 +1,51 @@
 //! Sidecar Context Capture System
 //!
 //! A background system that passively captures session context during Qbit agent
-//! interactions, stores it semantically, and synthesizes useful outputs (commit
-//! messages, documentation, session summaries) on demand.
+//! interactions using a simple markdown-based storage approach.
 //!
 //! ## Architecture
 //!
-//! The sidecar operates in multiple layers:
+//! Each session is stored as a directory in `~/.qbit/sessions/{session_id}/`:
 //!
-//! ### Layer 0: Raw Event Capture (synchronous, cheap)
-//! - No LLM calls, just logging
-//! - File changes, tool calls, agent reasoning, user feedback
-//! - Persisted to LanceDB with embeddings
+//! ```text
+//! ~/.qbit/sessions/{session_id}/
+//!   meta.toml       # Machine-managed metadata (cwd, git info, timestamps)
+//!   state.md        # LLM-managed current state (rewritten on each event)
+//!   state.md.bak    # Previous state backup (for recovery)
+//!   log.md          # Append-only event log with diffs
+//!   events.jsonl    # Raw events (optional, for future use)
+//! ```
 //!
-//! ### Layer 1: Session State (async, interpreted)
-//! - Maintains live session state derived from L0 events
-//! - Tracks goals, decisions, file contexts, errors
-//! - Provides injectable context for agent system prompts
-//! - Uses sidecar LLM for interpretation (with rule-based fallback)
+//! ### state.md
+//! The current session state, maintained by an LLM. Contains:
+//! - Current goal and sub-goals
+//! - Narrative summary of progress
+//! - Files in focus
+//! - Open questions
 //!
-//! ### Periodic Processing (async, batched)
-//! - Runs during natural pauses
-//! - Embed events for semantic search
-//! - Generate checkpoint summaries
+//! ### log.md
+//! Chronological append-only log of events with timestamps and diffs.
+//! Used for commit synthesis and audit trail.
 //!
-//! ### On-Demand Synthesis (user-triggered)
-//! - One-shot when user asks
-//! - Commit messages, session summaries, history queries
+//! ### meta.toml
+//! Machine-managed metadata that shouldn't be touched by LLM:
+//! - Session ID, timestamps, status
+//! - Working directory, git info
+//! - Initial request
 
 pub mod capture;
 #[cfg(feature = "tauri")]
 pub mod commands;
 pub mod config;
 pub mod events;
-pub mod layer1;
-pub mod models;
+pub mod formats;
 pub mod processor;
-pub mod prompts;
+pub mod session;
 pub mod state;
-pub mod storage;
-pub mod synthesis;
-pub mod synthesis_llm;
-
-#[cfg(test)]
-mod integration_tests;
-
-#[cfg(test)]
-mod schema_verification_test;
 
 pub use capture::CaptureContext;
 #[cfg(feature = "tauri")]
 pub use commands::*;
 pub use config::SidecarConfig;
+
 pub use state::SidecarState;

@@ -99,9 +99,9 @@ pub async fn update_ai_workspace(
     let workspace_path: std::path::PathBuf = workspace.into();
     bridge.set_workspace(workspace_path.clone()).await;
 
-    // Re-initialize sidecar if not already initialized or workspace changed significantly
+    // Re-initialize sidecar if workspace changed
     let status = state.sidecar_state.status();
-    if !status.storage_ready || status.workspace_path.as_ref() != Some(&workspace_path) {
+    if status.enabled && status.workspace_path.as_ref() != Some(&workspace_path) {
         if let Err(e) = state.sidecar_state.initialize(workspace_path).await {
             tracing::warn!("[cwd-sync] Failed to initialize sidecar: {}", e);
         } else {

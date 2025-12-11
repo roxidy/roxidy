@@ -41,12 +41,10 @@ impl AppState {
 
         // Load settings and create SidecarConfig from them
         let settings = settings_manager.get().await;
-        let sidecar_config =
-            SidecarConfig::from_qbit_settings(&settings.sidecar, Some(&settings.ai.vertex_ai));
+        let sidecar_config = SidecarConfig::from_qbit_settings(&settings.sidecar);
         tracing::info!(
-            "[app-state] Created sidecar config: synthesis_enabled={}, backend={:?}",
-            sidecar_config.synthesis_enabled,
-            sidecar_config.synthesis_backend
+            "[app-state] Created sidecar config: enabled={}",
+            sidecar_config.enabled
         );
 
         Self {

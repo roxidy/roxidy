@@ -54,6 +54,7 @@ dirs = "5"
 parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+similar = "2"
 
 # AI / LLM integration via vtcode
 vtcode-core = "0.47"
@@ -123,4 +124,3 @@ local-llm = []
 tempfile = "3"
 proptest = "1.4"
 tower = { version = "0.5", features = ["util"] }
-
