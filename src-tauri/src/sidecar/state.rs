@@ -1,143 +1,80 @@
-//! Sidecar state management.
+//! Sidecar state management for markdown-based session tracking.
 //!
-//! This module provides the main `SidecarState` struct that manages:
-//! - Active session tracking
-//! - Event buffering
-//! - Coordination with the async processor
-#![allow(dead_code)]
+//! This is the main entry point for the sidecar system. It manages:
+//! - Session lifecycle (create, end, get current)
+//! - Event capture and forwarding to the processor
+//! - Status reporting
 
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use chrono::{DateTime, Utc};
-use parking_lot::RwLock;
-use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
-use uuid::Uuid;
-
-use super::config::SidecarConfig;
-use super::events::{
-    Checkpoint, CommitBoundaryDetector, CommitBoundaryInfo, EventType, SessionEvent, SidecarSession,
-};
-use super::layer1::{
-    Layer1Config, Layer1Event, Layer1Processor, Layer1Storage, Layer1Task, SessionState,
-};
-use super::processor::{ProcessorTask, SidecarProcessor};
-use super::storage::SidecarStorage;
+use std::sync::RwLock;
 
 #[cfg(feature = "tauri")]
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+
+use super::config::SidecarConfig;
+use super::events::SessionEvent;
+use super::processor::{Processor, ProcessorConfig};
+use super::session::{ensure_sessions_dir, Session, SessionMeta};
 
 /// Status of the sidecar system
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidecarStatus {
     /// Whether a session is currently active
     pub active_session: bool,
-    /// Current session ID if active
-    pub session_id: Option<Uuid>,
-    /// Number of events in current session
-    pub event_count: usize,
-    /// Number of events in buffer (not yet persisted)
-    pub buffer_size: usize,
-    /// Whether embedding models are ready
-    pub embeddings_ready: bool,
-    /// Whether LLM models are ready
-    pub llm_ready: bool,
-    /// Whether storage is initialized
-    pub storage_ready: bool,
-    /// Current workspace path
+    /// Current session ID if any
+    pub session_id: Option<String>,
+    /// Whether the sidecar is enabled
+    pub enabled: bool,
+    /// Sessions directory path
+    pub sessions_dir: PathBuf,
+    /// Workspace path (cwd of current session)
     pub workspace_path: Option<PathBuf>,
 }
 
-/// Main state manager for the sidecar system
+/// Internal state for active session tracking
+#[derive(Default)]
+struct InternalState {
+    /// Current session ID
+    current_session_id: Option<String>,
+    /// Current workspace path
+    workspace_path: Option<PathBuf>,
+    /// Whether initialized
+    initialized: bool,
+}
+
+/// Main sidecar state manager
 pub struct SidecarState {
-    /// Current active session (if any)
-    session: RwLock<Option<SidecarSession>>,
-
-    /// Event buffer (not yet persisted)
-    event_buffer: RwLock<Vec<SessionEvent>>,
-
-    /// Events since last checkpoint
-    events_since_checkpoint: RwLock<Vec<SessionEvent>>,
-
-    /// Last checkpoint time
-    last_checkpoint_time: RwLock<DateTime<Utc>>,
-
-    /// Vector storage (initialized lazily)
-    storage: RwLock<Option<Arc<SidecarStorage>>>,
-
-    /// Workspace path
-    workspace_root: RwLock<Option<PathBuf>>,
-
-    /// Channel for async processing tasks
-    processor_tx: RwLock<Option<mpsc::UnboundedSender<ProcessorTask>>>,
-
-    /// Shutdown completion signal (for graceful async shutdown)
-    shutdown_rx: TokioMutex<Option<oneshot::Receiver<()>>>,
-
     /// Configuration
     config: RwLock<SidecarConfig>,
-
-    /// Whether embeddings are available
-    embeddings_ready: RwLock<bool>,
-
-    /// Whether LLM is available
-    llm_ready: RwLock<bool>,
-
-    /// Commit boundary detector
-    commit_boundary_detector: RwLock<CommitBoundaryDetector>,
-
-    /// Layer 1 processor task sender
-    layer1_tx: RwLock<Option<mpsc::UnboundedSender<Layer1Task>>>,
-
-    /// Layer 1 storage
-    layer1_storage: RwLock<Option<Arc<Layer1Storage>>>,
-
-    /// Tauri app handle for emitting events to frontend
+    /// Internal state
+    state: RwLock<InternalState>,
+    /// Event processor
+    processor: RwLock<Option<Processor>>,
+    /// Tauri app handle for emitting events
     #[cfg(feature = "tauri")]
     app_handle: RwLock<Option<AppHandle>>,
 }
 
 impl SidecarState {
-    /// Create a new sidecar state with default configuration
+    /// Create a new SidecarState with default configuration
     pub fn new() -> Self {
         Self {
-            session: RwLock::new(None),
-            event_buffer: RwLock::new(Vec::new()),
-            events_since_checkpoint: RwLock::new(Vec::new()),
-            last_checkpoint_time: RwLock::new(Utc::now()),
-            storage: RwLock::new(None),
-            workspace_root: RwLock::new(None),
-            processor_tx: RwLock::new(None),
-            shutdown_rx: TokioMutex::new(None),
             config: RwLock::new(SidecarConfig::default()),
-            embeddings_ready: RwLock::new(false),
-            llm_ready: RwLock::new(false),
-            commit_boundary_detector: RwLock::new(CommitBoundaryDetector::new()),
-            layer1_tx: RwLock::new(None),
-            layer1_storage: RwLock::new(None),
+            state: RwLock::new(InternalState::default()),
+            processor: RwLock::new(None),
             #[cfg(feature = "tauri")]
             app_handle: RwLock::new(None),
         }
     }
 
-    /// Create a new sidecar state with custom configuration
-    #[allow(dead_code)]
+    /// Create a new SidecarState with custom configuration
     pub fn with_config(config: SidecarConfig) -> Self {
         Self {
-            session: RwLock::new(None),
-            event_buffer: RwLock::new(Vec::new()),
-            events_since_checkpoint: RwLock::new(Vec::new()),
-            last_checkpoint_time: RwLock::new(Utc::now()),
-            storage: RwLock::new(None),
-            workspace_root: RwLock::new(None),
-            processor_tx: RwLock::new(None),
-            shutdown_rx: TokioMutex::new(None),
             config: RwLock::new(config),
-            embeddings_ready: RwLock::new(false),
-            llm_ready: RwLock::new(false),
-            commit_boundary_detector: RwLock::new(CommitBoundaryDetector::new()),
-            layer1_tx: RwLock::new(None),
-            layer1_storage: RwLock::new(None),
+            state: RwLock::new(InternalState::default()),
+            processor: RwLock::new(None),
             #[cfg(feature = "tauri")]
             app_handle: RwLock::new(None),
         }
@@ -146,625 +83,256 @@ impl SidecarState {
     /// Set the Tauri app handle for event emission
     #[cfg(feature = "tauri")]
     pub fn set_app_handle(&self, handle: AppHandle) {
-        *self.app_handle.write() = Some(handle);
+        *self.app_handle.write().unwrap() = Some(handle);
     }
 
-    /// Initialize the sidecar for a workspace
-    pub async fn initialize(&self, workspace_path: PathBuf) -> anyhow::Result<()> {
-        tracing::info!("[sidecar] Initializing for workspace: {:?}", workspace_path);
+    /// Initialize the sidecar system
+    pub async fn initialize(&self, workspace: PathBuf) -> Result<()> {
+        let config = self.config.read().unwrap().clone();
 
-        // Ensure directories exist
-        let config = self.config.read().clone();
-        tracing::debug!("[sidecar] Data directory: {:?}", config.data_dir);
-        config.ensure_directories()?;
-        tracing::debug!("[sidecar] Directories created");
+        if !config.enabled {
+            tracing::debug!("Sidecar is disabled, skipping initialization");
+            return Ok(());
+        }
 
-        // Initialize storage
-        tracing::debug!("[sidecar] Initializing LanceDB storage...");
-        let storage = SidecarStorage::new(&config.data_dir).await?;
-        let storage = Arc::new(storage);
-        *self.storage.write() = Some(storage.clone());
-        tracing::info!("[sidecar] LanceDB storage initialized");
+        // Ensure sessions directory exists
+        let sessions_dir = config.sessions_dir();
+        ensure_sessions_dir(&sessions_dir).await?;
 
-        // Store workspace path
-        *self.workspace_root.write() = Some(workspace_path.clone());
-
-        // Check model availability
-        let embeddings_available = config.embedding_model_available();
-        let llm_available = config.llm_model_available();
-        *self.embeddings_ready.write() = embeddings_available;
-        *self.llm_ready.write() = llm_available;
-        tracing::info!(
-            "[sidecar] Model status: embeddings={}, llm={}",
-            embeddings_available,
-            llm_available
-        );
-
-        // Spawn the background processor
-        tracing::debug!("[sidecar] Spawning background processor...");
-        let handle = SidecarProcessor::spawn(storage, config);
-        *self.processor_tx.write() = Some(handle.task_tx);
-        *self.shutdown_rx.lock().await = Some(handle.shutdown_complete);
-
-        tracing::info!(
-            "[sidecar] Initialized successfully for workspace: {:?}",
-            workspace_path
-        );
-        Ok(())
-    }
-
-    /// Initialize Layer 1 processor for session state tracking
-    pub async fn initialize_layer1(&self) -> anyhow::Result<()> {
-        tracing::info!("[sidecar] Initializing Layer 1 processor...");
-
-        // Get storage - must be initialized first
-        let sidecar_storage =
-            self.storage.read().clone().ok_or_else(|| {
-                anyhow::anyhow!("Storage not initialized - call initialize() first")
-            })?;
-
-        // Create Layer1 storage from sidecar storage
-        let layer1_storage = Arc::new(Layer1Storage::from_sidecar_storage(&sidecar_storage).await?);
-        *self.layer1_storage.write() = Some(layer1_storage.clone());
-
-        // Create model manager for LLM
-        let (models_dir, synthesis_backend, synthesis_enabled) = {
-            let config = self.config.read();
-            (
-                config.models_dir.clone(),
-                config.synthesis_backend.clone(),
-                config.synthesis_enabled,
-            )
+        // Create processor
+        let processor_config = ProcessorConfig {
+            sessions_dir: sessions_dir.clone(),
+            use_llm: config.use_llm_for_state,
+            write_raw_events: config.write_raw_events,
         };
+        let processor = Processor::spawn(processor_config);
 
-        tracing::info!(
-            "[sidecar] Layer1 LLM config: synthesis_enabled={}, backend={:?}",
-            synthesis_enabled,
-            synthesis_backend
-        );
-
-        let model_manager = Arc::new(super::models::ModelManager::new(models_dir));
-
-        // Create synthesis LLM
-        let llm =
-            super::synthesis_llm::create_synthesis_llm(&synthesis_backend, model_manager.clone())
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(
-                        "[sidecar] Failed to create LLM for Layer1, using template: {}",
-                        e
-                    );
-                    Arc::new(super::synthesis_llm::TemplateLlm)
-                });
-
-        tracing::info!(
-            "[sidecar] Layer1 LLM created: available={}, description={}",
-            llm.is_available(),
-            llm.description()
-        );
-
-        // Create Layer1 config
-        let layer1_config = Layer1Config::default();
-
-        // Spawn the Layer1 processor (returns task sender and event receiver)
-        let (task_tx, event_rx) = Layer1Processor::spawn(layer1_storage, llm, layer1_config);
-        *self.layer1_tx.write() = Some(task_tx);
-
-        // Spawn event emitter task to forward Layer1 events to frontend
-        #[cfg(feature = "tauri")]
+        // Update state
         {
-            if let Some(app) = self.app_handle.read().clone() {
-                Self::spawn_layer1_event_emitter(app, event_rx);
-            } else {
-                tracing::debug!(
-                    "[sidecar] No app handle set, Layer1 events will not be emitted to frontend"
-                );
-                // Still consume the receiver to avoid blocking
-                tokio::spawn(async move {
-                    let mut rx = event_rx;
-                    while rx.recv().await.is_some() {}
-                });
-            }
+            let mut state = self.state.write().unwrap();
+            state.workspace_path = Some(workspace);
+            state.initialized = true;
+        }
+        {
+            *self.processor.write().unwrap() = Some(processor);
         }
 
-        #[cfg(not(feature = "tauri"))]
-        {
-            // In non-Tauri mode, just drain the event receiver
-            tokio::spawn(async move {
-                let mut rx = event_rx;
-                while rx.recv().await.is_some() {}
-            });
-        }
-
-        tracing::info!("[sidecar] Layer 1 processor initialized successfully");
+        tracing::info!("Sidecar initialized with sessions dir: {:?}", sessions_dir);
         Ok(())
     }
 
-    /// Spawn a task that forwards Layer1 events to the frontend via Tauri events
-    #[cfg(feature = "tauri")]
-    fn spawn_layer1_event_emitter(
-        app: AppHandle,
-        mut event_rx: mpsc::UnboundedReceiver<Layer1Event>,
-    ) {
-        tokio::spawn(async move {
-            tracing::debug!("[layer1] Event emitter task started");
-            while let Some(event) = event_rx.recv().await {
-                if let Err(e) = app.emit("layer1-event", &event) {
-                    tracing::warn!("[layer1] Failed to emit event to frontend: {}", e);
-                } else {
-                    tracing::trace!("[layer1] Emitted event: {:?}", event);
-                }
-            }
-            tracing::debug!("[layer1] Event emitter task ended");
-        });
-    }
-
-    /// Get the current status
+    /// Get current status
     pub fn status(&self) -> SidecarStatus {
-        let session = self.session.read();
-        let buffer = self.event_buffer.read();
+        let config = self.config.read().unwrap();
+        let state = self.state.read().unwrap();
 
         SidecarStatus {
-            active_session: session.is_some(),
-            session_id: session.as_ref().map(|s| s.id),
-            event_count: session.as_ref().map(|s| s.event_count).unwrap_or(0),
-            buffer_size: buffer.len(),
-            embeddings_ready: *self.embeddings_ready.read(),
-            llm_ready: *self.llm_ready.read(),
-            storage_ready: self.storage.read().is_some(),
-            workspace_path: self.workspace_root.read().clone(),
+            active_session: state.current_session_id.is_some(),
+            session_id: state.current_session_id.clone(),
+            enabled: config.enabled,
+            sessions_dir: config.sessions_dir(),
+            workspace_path: state.workspace_path.clone(),
         }
     }
 
-    /// Start a new capture session
-    pub fn start_session(&self, initial_request: &str) -> anyhow::Result<Uuid> {
-        let workspace_path = self
-            .workspace_root
-            .read()
+    /// Start a new session
+    pub fn start_session(&self, initial_request: &str) -> Result<String> {
+        let config = self.config.read().unwrap();
+        if !config.enabled {
+            anyhow::bail!("Sidecar is disabled");
+        }
+
+        let state = self.state.read().unwrap();
+        if !state.initialized {
+            anyhow::bail!("Sidecar not initialized");
+        }
+
+        // Check if session already exists
+        if state.current_session_id.is_some() {
+            // Return existing session ID instead of error
+            return Ok(state.current_session_id.clone().unwrap());
+        }
+
+        let cwd = state
+            .workspace_path
             .clone()
             .unwrap_or_else(|| PathBuf::from("."));
+        drop(state);
 
-        let session = SidecarSession::new(workspace_path.clone(), initial_request.to_string());
-        let session_id = session.id;
+        // Generate session ID
+        let session_id = uuid::Uuid::new_v4().to_string();
 
-        tracing::info!(
-            "[sidecar] Starting session {} for workspace {:?}",
-            session_id,
-            workspace_path
-        );
-        tracing::debug!(
-            "[sidecar] Initial request: {}",
-            truncate(initial_request, 100)
-        );
+        // Create session directory and files synchronously via blocking task
+        let sessions_dir = config.sessions_dir();
+        let sid = session_id.clone();
+        let req = initial_request.to_string();
+        let cwd_clone = cwd.clone();
 
-        // NOTE: session_start events are no longer emitted.
-        // Sessions begin with the first user_prompt event.
+        // Use tokio's spawn_blocking for the async file operations
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                if let Err(e) = Session::create(&sessions_dir, sid, cwd_clone, req).await {
+                    tracing::error!("Failed to create session: {}", e);
+                }
+            });
+        });
 
-        *self.session.write() = Some(session);
-        *self.last_checkpoint_time.write() = Utc::now();
+        // Update state
+        {
+            let mut state = self.state.write().unwrap();
+            state.current_session_id = Some(session_id.clone());
+        }
 
-        tracing::info!("[sidecar] Session {} started successfully", session_id);
+        tracing::info!("Started new session: {}", session_id);
         Ok(session_id)
     }
 
     /// End the current session
-    pub fn end_session(&self) -> anyhow::Result<Option<SidecarSession>> {
-        let mut session_guard = self.session.write();
+    pub fn end_session(&self) -> Result<Option<SessionMeta>> {
+        let session_id = {
+            let mut state = self.state.write().unwrap();
+            state.current_session_id.take()
+        };
 
-        if let Some(mut session) = session_guard.take() {
-            tracing::info!(
-                "[sidecar] Ending session {} ({} events, {} files, {} checkpoints)",
-                session.id,
-                session.event_count,
-                session.files_touched.len(),
-                session.checkpoint_count
-            );
+        let Some(session_id) = session_id else {
+            return Ok(None);
+        };
 
-            // Create session end event
-            let event = SessionEvent::new(
-                session.id,
-                EventType::SessionEnd { summary: None },
-                "Session ended".to_string(),
-            );
-
-            session.end(None);
-
-            // Capture the end event and flush
-            drop(session_guard);
-            self.capture_internal(event);
-            self.request_flush();
-
-            tracing::info!("[sidecar] Session {} ended, buffer flushed", session.id);
-            return Ok(Some(session));
+        // Signal processor to end session
+        if let Some(processor) = self.processor.read().unwrap().as_ref() {
+            processor.end_session(session_id.clone());
         }
 
-        tracing::debug!("[sidecar] No active session to end");
-        Ok(None)
+        // Load session metadata
+        let config = self.config.read().unwrap();
+        let sessions_dir = config.sessions_dir();
+
+        // Load metadata synchronously
+        let meta = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                match Session::load(&sessions_dir, &session_id).await {
+                    Ok(session) => Some(session.meta().clone()),
+                    Err(e) => {
+                        tracing::error!("Failed to load session metadata: {}", e);
+                        None
+                    }
+                }
+            })
+        })
+        .join()
+        .unwrap_or(None);
+
+        tracing::info!("Ended session: {:?}", meta.as_ref().map(|m| &m.session_id));
+        Ok(meta)
     }
 
-    /// Get the current session ID
-    pub fn current_session_id(&self) -> Option<Uuid> {
-        self.session.read().as_ref().map(|s| s.id)
+    /// Get current session ID
+    pub fn current_session_id(&self) -> Option<String> {
+        self.state.read().unwrap().current_session_id.clone()
     }
 
-    /// Check if there's an active session
-    #[allow(dead_code)]
-    pub fn has_active_session(&self) -> bool {
-        self.session.read().is_some()
-    }
-
-    /// Capture an event (synchronous, returns immediately)
+    /// Capture an event
     pub fn capture(&self, event: SessionEvent) {
-        // Validate event has a session
-        if self.session.read().is_none() {
-            tracing::debug!("Ignoring event - no active session");
+        let config = self.config.read().unwrap();
+        if !config.enabled {
             return;
         }
 
-        self.capture_internal(event);
-    }
-
-    /// Internal capture logic
-    fn capture_internal(&self, event: SessionEvent) {
-        let config = self.config.read();
-
-        // Check minimum content length
-        if event.content.len() < config.min_content_length {
-            tracing::trace!(
-                "[sidecar] Skipping event (content too short: {} < {})",
-                event.content.len(),
-                config.min_content_length
-            );
-            return;
-        }
-
-        tracing::debug!(
-            "[sidecar] Capturing event: type={}, content_len={}, session={}",
-            event.event_type.name(),
-            event.content.len(),
-            event.session_id
-        );
-
-        // Update session stats
-        if let Some(ref mut session) = *self.session.write() {
-            session.increment_events();
-            for file in &event.files_modified {
-                session.touch_file(file.clone());
-            }
-            tracing::trace!(
-                "[sidecar] Session {} now has {} events, {} files",
-                session.id,
-                session.event_count,
-                session.files_touched.len()
-            );
-        }
-
-        // Forward to Layer 1 processor for session state tracking
-        // This captures user_prompt events that don't go through CaptureContext
-        if let Some(tx) = self.layer1_tx() {
-            if let Err(e) = tx.send(Layer1Task::ProcessEvent(Box::new(event.clone()))) {
-                tracing::trace!("[sidecar] Failed to forward event to Layer1: {}", e);
-            }
-        }
-
-        // Add to buffer
+        // Filter based on config
+        if !config.capture_tool_calls
+            && matches!(event.event_type, super::events::EventType::ToolCall { .. })
         {
-            let mut buffer = self.event_buffer.write();
-            buffer.push(event.clone());
-            let buffer_len = buffer.len();
-            tracing::trace!("[sidecar] Buffer size: {}", buffer_len);
-
-            // Check if we should flush
-            if buffer_len >= config.buffer_flush_threshold {
-                tracing::debug!(
-                    "[sidecar] Buffer threshold reached ({} >= {}), requesting flush",
-                    buffer_len,
-                    config.buffer_flush_threshold
-                );
-                drop(buffer);
-                self.request_flush();
-            }
+            return;
         }
-
-        // Track for checkpoint generation
+        if !config.capture_reasoning
+            && matches!(
+                event.event_type,
+                super::events::EventType::AgentReasoning { .. }
+            )
         {
-            let mut checkpoint_events = self.events_since_checkpoint.write();
-            checkpoint_events.push(event.clone());
-            let checkpoint_count = checkpoint_events.len();
-
-            // Check if we should generate a checkpoint
-            if checkpoint_count >= config.checkpoint_event_threshold {
-                tracing::debug!(
-                    "[sidecar] Checkpoint threshold reached ({} >= {}), requesting checkpoint",
-                    checkpoint_count,
-                    config.checkpoint_event_threshold
-                );
-                drop(checkpoint_events);
-                self.request_checkpoint();
-            }
-        }
-
-        // Also check time-based checkpoint
-        self.maybe_time_checkpoint();
-
-        // Check for commit boundary
-        if let Some(boundary_info) = self.commit_boundary_detector.write().check_boundary(&event) {
-            if let Some(session_id) = self.current_session_id() {
-                // Create and capture the commit boundary event
-                let boundary_event = SessionEvent::commit_boundary(
-                    session_id,
-                    boundary_info.files_in_scope.clone(),
-                    Some(boundary_info.reason.clone()),
-                );
-
-                // Add to buffer (don't recurse into full capture_internal)
-                let mut buffer = self.event_buffer.write();
-                buffer.push(boundary_event);
-
-                tracing::info!(
-                    "[sidecar] Commit boundary detected: {} files, reason: {}",
-                    boundary_info.files_in_scope.len(),
-                    boundary_info.reason
-                );
-            }
-        }
-    }
-
-    /// Check if we should generate a time-based checkpoint
-    fn maybe_time_checkpoint(&self) {
-        let config = self.config.read();
-        let last_time = *self.last_checkpoint_time.read();
-        let elapsed = Utc::now().signed_duration_since(last_time).num_seconds() as u64;
-
-        if elapsed >= config.checkpoint_time_threshold_secs {
-            let events = self.events_since_checkpoint.read();
-            if !events.is_empty() {
-                drop(events);
-                self.request_checkpoint();
-            }
-        }
-    }
-
-    /// Request a buffer flush to storage
-    fn request_flush(&self) {
-        let events: Vec<SessionEvent> = {
-            let mut buffer = self.event_buffer.write();
-            std::mem::take(&mut *buffer)
-        };
-
-        if events.is_empty() {
-            tracing::trace!("[sidecar] Flush requested but buffer empty");
             return;
         }
 
-        tracing::info!("[sidecar] Flushing {} events to storage", events.len());
-
-        if let Some(ref tx) = *self.processor_tx.read() {
-            if tx.send(ProcessorTask::FlushEvents(events)).is_err() {
-                tracing::warn!("[sidecar] Failed to send flush task to processor");
-            }
-        } else {
-            tracing::warn!("[sidecar] No processor available for flush");
+        // Forward to processor
+        if let Some(processor) = self.processor.read().unwrap().as_ref() {
+            processor.process_event(event.session_id.clone(), event);
         }
     }
 
-    /// Request checkpoint generation
-    fn request_checkpoint(&self) {
-        let events: Vec<SessionEvent> = {
-            let mut checkpoint_events = self.events_since_checkpoint.write();
-            std::mem::take(&mut *checkpoint_events)
-        };
-
-        if events.is_empty() {
-            tracing::trace!("[sidecar] Checkpoint requested but no events");
-            return;
-        }
-
-        tracing::info!(
-            "[sidecar] Generating checkpoint from {} events",
-            events.len()
-        );
-
-        // Update last checkpoint time
-        *self.last_checkpoint_time.write() = Utc::now();
-
-        // Update session checkpoint count
-        if let Some(ref mut session) = *self.session.write() {
-            session.increment_checkpoints();
-            tracing::debug!(
-                "[sidecar] Session {} now has {} checkpoints",
-                session.id,
-                session.checkpoint_count
-            );
-        }
-
-        if let Some(ref tx) = *self.processor_tx.read() {
-            if tx.send(ProcessorTask::GenerateCheckpoint(events)).is_err() {
-                tracing::warn!("[sidecar] Failed to send checkpoint task to processor");
-            }
-        } else {
-            tracing::warn!("[sidecar] No processor available for checkpoint");
-        }
-    }
-
-    /// Get events for a session from storage
-    pub async fn get_session_events(&self, session_id: Uuid) -> anyhow::Result<Vec<SessionEvent>> {
-        let storage = self
-            .storage
-            .read()
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
-
-        storage.get_session_events(session_id).await
-    }
-
-    /// Get checkpoints for a session from storage
-    pub async fn get_session_checkpoints(
-        &self,
-        session_id: Uuid,
-    ) -> anyhow::Result<Vec<Checkpoint>> {
-        let storage = self
-            .storage
-            .read()
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
-
-        storage.get_session_checkpoints(session_id).await
-    }
-
-    /// Search events semantically
-    pub async fn search_events(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> anyhow::Result<Vec<SessionEvent>> {
-        let storage = self
-            .storage
-            .read()
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
-
-        // For now, do keyword search until we have embeddings
-        storage.search_events_keyword(query, limit).await
-    }
-
-    /// Get the configuration
+    /// Get current configuration
     pub fn config(&self) -> SidecarConfig {
-        self.config.read().clone()
+        self.config.read().unwrap().clone()
     }
 
-    /// Update the configuration
+    /// Update configuration
     pub fn set_config(&self, config: SidecarConfig) {
-        *self.config.write() = config;
+        *self.config.write().unwrap() = config;
     }
 
-    /// Check if embeddings are ready
-    #[allow(dead_code)]
-    pub fn embeddings_ready(&self) -> bool {
-        *self.embeddings_ready.read()
+    /// Get injectable context (state.md content) for current session
+    pub async fn get_injectable_context(&self) -> Result<Option<String>> {
+        let session_id = match self.current_session_id() {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        let sessions_dir = self.config.read().unwrap().sessions_dir();
+        let session = Session::load(&sessions_dir, &session_id).await?;
+        let state = session.read_state().await?;
+        Ok(Some(state))
     }
 
-    /// Check if LLM is ready
-    pub fn llm_ready(&self) -> bool {
-        *self.llm_ready.read()
+    /// Get session state.md content
+    pub async fn get_session_state(&self, session_id: &str) -> Result<String> {
+        let sessions_dir = self.config.read().unwrap().sessions_dir();
+        let session = Session::load(&sessions_dir, session_id).await?;
+        session.read_state().await
     }
 
-    /// Set embeddings ready status
-    pub fn set_embeddings_ready(&self, ready: bool) {
-        *self.embeddings_ready.write() = ready;
+    /// Get session log.md content
+    pub async fn get_session_log(&self, session_id: &str) -> Result<String> {
+        let sessions_dir = self.config.read().unwrap().sessions_dir();
+        let session = Session::load(&sessions_dir, session_id).await?;
+        session.read_log().await
     }
 
-    /// Set LLM ready status
-    pub fn set_llm_ready(&self, ready: bool) {
-        *self.llm_ready.write() = ready;
+    /// Get session metadata
+    pub async fn get_session_meta(&self, session_id: &str) -> Result<SessionMeta> {
+        let sessions_dir = self.config.read().unwrap().sessions_dir();
+        let session = Session::load(&sessions_dir, session_id).await?;
+        Ok(session.meta().clone())
     }
 
-    /// Get the storage instance
-    pub fn storage(&self) -> Option<Arc<SidecarStorage>> {
-        self.storage.read().clone()
+    /// List all sessions
+    pub async fn list_sessions(&self) -> Result<Vec<SessionMeta>> {
+        let sessions_dir = self.config.read().unwrap().sessions_dir();
+        super::session::list_sessions(&sessions_dir).await
     }
 
-    /// Get pending files for commit boundary detection
-    pub fn pending_commit_files(&self) -> Vec<PathBuf> {
-        self.commit_boundary_detector
-            .read()
-            .pending_files()
-            .to_vec()
-    }
-
-    /// Clear commit boundary tracking (after manual commit)
-    pub fn clear_commit_boundary(&self) {
-        self.commit_boundary_detector.write().clear();
-    }
-
-    /// Check for commit boundary and return boundary info if detected
-    #[allow(dead_code)]
-    pub fn check_commit_boundary(&self, event: &SessionEvent) -> Option<CommitBoundaryInfo> {
-        self.commit_boundary_detector.write().check_boundary(event)
-    }
-
-    /// Get the Layer1 state for a session
-    pub async fn get_layer1_state(&self, session_id: Uuid) -> anyhow::Result<Option<SessionState>> {
-        let storage = self
-            .layer1_storage
-            .read()
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("Layer1 not initialized"))?;
-
-        storage.get_latest_state(session_id).await
-    }
-
-    /// Get direct access to Layer1 storage (for cross-session queries)
-    pub fn layer1_storage(&self) -> Option<Arc<Layer1Storage>> {
-        self.layer1_storage.read().clone()
-    }
-
-    /// Get the Layer1 task sender (for internal use by capture)
-    pub(super) fn layer1_tx(&self) -> Option<mpsc::UnboundedSender<Layer1Task>> {
-        self.layer1_tx.read().clone()
-    }
-
-    /// Shutdown the sidecar synchronously (deprecated, use shutdown_async for graceful shutdown)
+    /// Shutdown the sidecar
     pub fn shutdown(&self) {
-        tracing::info!("Shutting down sidecar (sync)");
-
-        // End any active session
+        // End current session if any
         let _ = self.end_session();
 
-        // Send shutdown signal to processor (but don't wait)
-        if let Some(tx) = self.processor_tx.write().take() {
-            let _ = tx.send(ProcessorTask::Shutdown);
+        // Shutdown processor
+        if let Some(processor) = self.processor.write().unwrap().take() {
+            // Use blocking shutdown since we're in sync context
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt.block_on(processor.shutdown());
+            });
         }
-
-        // Send shutdown signal to Layer1 processor (but don't wait)
-        if let Some(tx) = self.layer1_tx.write().take() {
-            let _ = tx.send(Layer1Task::Shutdown);
-        }
-
-        // Clear state
-        *self.storage.write() = None;
-        *self.workspace_root.write() = None;
-        *self.layer1_storage.write() = None;
-    }
-
-    /// Gracefully shutdown the sidecar, waiting for the processor to complete.
-    ///
-    /// This ensures all pending events are flushed to storage before returning.
-    pub async fn shutdown_async(&self) {
-        tracing::info!("Shutting down sidecar (async, graceful)");
-
-        // End any active session (flushes remaining events)
-        let _ = self.end_session();
-
-        // Send shutdown signal to processor
-        if let Some(tx) = self.processor_tx.write().take() {
-            let _ = tx.send(ProcessorTask::Shutdown);
-        }
-
-        // Send shutdown signal to Layer1 processor
-        if let Some(tx) = self.layer1_tx.write().take() {
-            let _ = tx.send(Layer1Task::Shutdown);
-        }
-
-        // Wait for processor to complete (with timeout)
-        if let Some(rx) = self.shutdown_rx.lock().await.take() {
-            match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
-                Ok(Ok(())) => {
-                    tracing::info!("Sidecar processor shutdown complete");
-                }
-                Ok(Err(_)) => {
-                    tracing::warn!("Sidecar processor shutdown signal dropped");
-                }
-                Err(_) => {
-                    tracing::warn!("Sidecar processor shutdown timed out after 5s");
-                }
-            }
-        }
-
-        // Clear state
-        *self.storage.write() = None;
-        *self.workspace_root.write() = None;
-        *self.layer1_storage.write() = None;
 
         tracing::info!("Sidecar shutdown complete");
     }
@@ -776,76 +344,74 @@ impl Default for SidecarState {
     }
 }
 
-/// Truncate a string to a maximum length
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let mut result: String = s.chars().take(max_len.saturating_sub(1)).collect();
-        result.push('…');
-        result
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
-    #[test]
-    fn test_sidecar_state_creation() {
-        let state = SidecarState::new();
-        assert!(!state.has_active_session());
-        assert!(state.current_session_id().is_none());
+    fn test_config(temp_dir: &std::path::Path) -> SidecarConfig {
+        SidecarConfig {
+            enabled: true,
+            sessions_dir: Some(temp_dir.to_path_buf()),
+            retention_days: 0,
+            max_state_size: 16 * 1024,
+            write_raw_events: true,
+            use_llm_for_state: false,
+            capture_tool_calls: true,
+            capture_reasoning: true,
+        }
     }
 
-    #[test]
-    fn test_session_lifecycle() {
+    #[tokio::test]
+    async fn test_sidecar_state_creation() {
         let state = SidecarState::new();
-
-        // Start session
-        let session_id = state.start_session("Test request").unwrap();
-        assert!(state.has_active_session());
-        assert_eq!(state.current_session_id(), Some(session_id));
-
-        // End session
-        let session = state.end_session().unwrap();
-        assert!(session.is_some());
-        assert!(!state.has_active_session());
-    }
-
-    #[test]
-    fn test_event_capture() {
-        let state = SidecarState::new();
-
-        // Start session
-        let session_id = state.start_session("Test request").unwrap();
-
-        // Capture some events
-        let event = SessionEvent::user_prompt(session_id, "Do something");
-        state.capture(event);
-
-        let event = SessionEvent::reasoning(session_id, "I'll try approach A", None);
-        state.capture(event);
-
-        // Check buffer
-        assert!(state.event_buffer.read().len() >= 2);
-    }
-
-    #[test]
-    fn test_status() {
-        let state = SidecarState::new();
-
         let status = state.status();
         assert!(!status.active_session);
         assert!(status.session_id.is_none());
-        assert_eq!(status.event_count, 0);
     }
 
-    #[test]
-    fn test_config() {
-        let config = SidecarConfig::default().without_synthesis();
-        let state = SidecarState::with_config(config.clone());
+    #[tokio::test]
+    async fn test_sidecar_initialization() {
+        let temp = TempDir::new().unwrap();
+        let config = test_config(temp.path());
+        let state = SidecarState::with_config(config);
 
-        assert!(!state.config().synthesis_enabled);
+        state.initialize(temp.path().to_path_buf()).await.unwrap();
+
+        let status = state.status();
+        assert!(status.enabled);
+        assert!(status.workspace_path.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_session_lifecycle() {
+        let temp = TempDir::new().unwrap();
+        let config = test_config(temp.path());
+        let state = SidecarState::with_config(config);
+
+        state.initialize(temp.path().to_path_buf()).await.unwrap();
+
+        // Start session
+        let session_id = state.start_session("Test request").unwrap();
+        assert!(!session_id.is_empty());
+        assert!(state.current_session_id().is_some());
+
+        // Give time for async session creation
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // End session
+        let _meta = state.end_session().unwrap();
+        assert!(state.current_session_id().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_status() {
+        let temp = TempDir::new().unwrap();
+        let config = test_config(temp.path());
+        let state = SidecarState::with_config(config);
+
+        let status = state.status();
+        assert!(status.enabled);
+        assert!(!status.active_session);
     }
 }

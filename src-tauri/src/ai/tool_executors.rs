@@ -12,11 +12,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::json;
+#[cfg(feature = "tauri")]
 use tokio::sync::RwLock;
 use vtcode_core::tools::tree_sitter::analysis::CodeAnalyzer;
+#[cfg(feature = "tauri")]
+use vtcode_core::tools::ToolRegistry;
 
 #[cfg(feature = "tauri")]
 use crate::ai::commands::workflow::{BridgeLlmExecutor, WorkflowState};
+#[cfg(feature = "tauri")]
 use crate::ai::events::AiEvent;
 #[cfg(feature = "tauri")]
 use crate::ai::llm_client::LlmClient;
@@ -25,7 +29,6 @@ use crate::ai::workflow::{WorkflowLlmExecutor, WorkflowRunner};
 use crate::indexer::IndexerState;
 use crate::tavily::TavilyState;
 use crate::web_fetch::WebFetcher;
-use vtcode_core::tools::ToolRegistry;
 
 /// Result type for tool execution: (json_result, success_flag)
 type ToolResult = (serde_json::Value, bool);

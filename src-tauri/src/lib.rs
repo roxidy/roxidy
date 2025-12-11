@@ -52,53 +52,10 @@ use settings::{
 };
 #[cfg(feature = "tauri")]
 use sidecar::{
-    // Cross-session Layer1 query commands
-    layer1_get_decisions_by_category,
-    layer1_get_state_history,
-    layer1_get_unresolved_errors,
-    layer1_list_sessions,
-    layer1_search_goals,
-    layer1_search_similar_decisions,
-    layer1_search_similar_errors,
-    // Existing sidecar commands
-    sidecar_answer_question,
-    sidecar_available_backends,
-    sidecar_cleanup,
-    sidecar_clear_commit_boundary,
-    sidecar_complete_goal,
-    sidecar_create_indexes,
-    sidecar_current_session,
-    sidecar_download_models,
-    sidecar_end_session,
-    sidecar_export_session,
-    sidecar_export_session_to_file,
-    sidecar_generate_commit,
-    sidecar_generate_summary,
-    sidecar_get_config,
-    sidecar_get_decisions,
-    sidecar_get_errors,
-    sidecar_get_file_contexts,
-    sidecar_get_goals,
-    sidecar_get_injectable_context,
-    sidecar_get_open_questions,
-    sidecar_get_session_checkpoints,
-    sidecar_get_session_events,
-    sidecar_get_session_state,
-    sidecar_import_session,
-    sidecar_import_session_from_file,
-    sidecar_index_status,
-    sidecar_initialize,
-    sidecar_list_sessions,
-    sidecar_models_status,
-    sidecar_pending_files,
-    sidecar_query_history,
-    sidecar_search_events,
-    sidecar_set_backend,
-    sidecar_set_config,
-    sidecar_shutdown,
-    sidecar_start_session,
-    sidecar_status,
-    sidecar_storage_stats,
+    sidecar_current_session, sidecar_end_session, sidecar_get_config,
+    sidecar_get_injectable_context, sidecar_get_session_log, sidecar_get_session_meta,
+    sidecar_get_session_state, sidecar_initialize, sidecar_list_sessions, sidecar_set_config,
+    sidecar_shutdown, sidecar_start_session, sidecar_status,
 };
 #[cfg(feature = "tauri")]
 use state::AppState;
@@ -147,11 +104,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(app_state)
         .setup(|app| {
-            // Auto-initialize sidecar and Layer1 at startup
+            // Auto-initialize sidecar at startup
             let state = app.state::<AppState>();
             let settings_manager = state.settings_manager.clone();
             let sidecar_state = state.sidecar_state.clone();
-            let app_handle = app.handle().clone();
+
+            #[cfg(feature = "tauri")]
+            {
+                let app_handle = app.handle().clone();
+                sidecar_state.set_app_handle(app_handle);
+            }
 
             // Spawn async initialization (settings access is async)
             tauri::async_runtime::spawn(async move {
@@ -164,9 +126,6 @@ pub fn run() {
                     return;
                 }
 
-                // Set app handle for Layer1 event emission to frontend
-                sidecar_state.set_app_handle(app_handle);
-
                 // Get workspace path (default to home directory)
                 let workspace = std::env::current_dir()
                     .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default());
@@ -176,17 +135,11 @@ pub fn run() {
                     workspace
                 );
 
-                // Initialize sidecar storage
+                // Initialize sidecar
                 if let Err(e) = sidecar_state.initialize(workspace).await {
                     tracing::warn!("[tauri-setup] Failed to initialize sidecar: {}", e);
-                    return;
-                }
-
-                // Initialize Layer1 processor
-                if let Err(e) = sidecar_state.initialize_layer1().await {
-                    tracing::warn!("[tauri-setup] Failed to initialize Layer1 processor: {}", e);
                 } else {
-                    tracing::info!("[tauri-setup] Sidecar and Layer1 initialized successfully");
+                    tracing::info!("[tauri-setup] Sidecar initialized successfully");
                 }
             });
 
@@ -307,54 +260,20 @@ pub fn run() {
             settings_file_exists,
             get_settings_path,
             reload_settings,
-            // Sidecar commands
+            // Sidecar commands (simplified markdown-based)
             sidecar_status,
             sidecar_initialize,
             sidecar_start_session,
             sidecar_end_session,
             sidecar_current_session,
-            sidecar_generate_commit,
-            sidecar_generate_summary,
-            sidecar_query_history,
-            sidecar_search_events,
-            sidecar_get_session_events,
-            sidecar_get_session_checkpoints,
+            sidecar_get_session_state,
+            sidecar_get_injectable_context,
+            sidecar_get_session_log,
+            sidecar_get_session_meta,
             sidecar_list_sessions,
-            sidecar_storage_stats,
-            sidecar_models_status,
-            sidecar_download_models,
             sidecar_get_config,
             sidecar_set_config,
             sidecar_shutdown,
-            sidecar_export_session,
-            sidecar_export_session_to_file,
-            sidecar_import_session,
-            sidecar_import_session_from_file,
-            sidecar_pending_files,
-            sidecar_clear_commit_boundary,
-            sidecar_cleanup,
-            sidecar_index_status,
-            sidecar_create_indexes,
-            sidecar_set_backend,
-            sidecar_available_backends,
-            // Layer 1 commands (single session)
-            sidecar_get_session_state,
-            sidecar_get_injectable_context,
-            sidecar_get_goals,
-            sidecar_get_file_contexts,
-            sidecar_get_decisions,
-            sidecar_get_errors,
-            sidecar_get_open_questions,
-            sidecar_answer_question,
-            sidecar_complete_goal,
-            // Layer 1 cross-session query commands
-            layer1_search_similar_decisions,
-            layer1_get_decisions_by_category,
-            layer1_get_unresolved_errors,
-            layer1_search_similar_errors,
-            layer1_list_sessions,
-            layer1_search_goals,
-            layer1_get_state_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

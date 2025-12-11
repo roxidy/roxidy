@@ -6,7 +6,6 @@ import type {
   SidecarSettings,
   SynthesisBackendType,
 } from "@/lib/settings";
-import { type SynthesisBackend, setBackend } from "@/lib/sidecar";
 
 interface AiSettingsProps {
   settings: AiSettingsType;
@@ -60,6 +59,8 @@ export function AiSettings({
   onSidecarChange,
 }: AiSettingsProps) {
   const [synthesisStatus, setSynthesisStatus] = useState<string>("");
+  // Note: synthesis backend selection is now just a preference stored in settings
+  // The actual backend implementation was removed in the sidecar simplification
   const [isChangingBackend, setIsChangingBackend] = useState(false);
 
   const updateField = <K extends keyof AiSettingsType>(key: K, value: AiSettingsType[K]) => {
@@ -70,67 +71,22 @@ export function AiSettings({
     onSidecarChange({ ...sidecarSettings, [key]: value });
   };
 
-  const handleSynthesisBackendChange = async (value: string) => {
+  const handleSynthesisBackendChange = (value: string) => {
     setIsChangingBackend(true);
     setSynthesisStatus("");
 
-    try {
-      let backend: SynthesisBackend;
-      if (value === "local") {
-        backend = { backend: "Local" };
-      } else if (value === "vertex_anthropic") {
-        // Use sidecar synthesis vertex settings, fall back to main AI settings
-        const project_id =
-          sidecarSettings.synthesis_vertex.project_id || settings.vertex_ai.project_id || "";
-        const location =
-          sidecarSettings.synthesis_vertex.location || settings.vertex_ai.location || "us-east5";
-        const credentials_path =
-          sidecarSettings.synthesis_vertex.credentials_path ||
-          settings.vertex_ai.credentials_path ||
-          undefined;
-        backend = {
-          backend: "Remote",
-          provider: {
-            type: "VertexAnthropic",
-            project_id,
-            location,
-            model: sidecarSettings.synthesis_vertex.model,
-            credentials_path,
-          },
-        };
-      } else if (value === "openai") {
-        backend = {
-          backend: "Remote",
-          provider: {
-            type: "OpenAI",
-            model: sidecarSettings.synthesis_openai.model,
-            api_key: sidecarSettings.synthesis_openai.api_key || undefined,
-            base_url: sidecarSettings.synthesis_openai.base_url || undefined,
-          },
-        };
-      } else if (value === "grok") {
-        backend = {
-          backend: "Remote",
-          provider: {
-            type: "Grok",
-            model: sidecarSettings.synthesis_grok.model,
-            api_key: sidecarSettings.synthesis_grok.api_key || undefined,
-          },
-        };
-      } else {
-        backend = { backend: "Template" };
-      }
+    // Just update the preference - actual synthesis implementation was simplified
+    updateSidecar("synthesis_backend", value as SynthesisBackendType);
 
-      const description = await setBackend(backend);
-      updateSidecar("synthesis_backend", value as SynthesisBackendType);
-      setSynthesisStatus(`✓ ${description}`);
-    } catch (error) {
-      setSynthesisStatus(
-        `✗ ${error instanceof Error ? error.message : "Failed to change backend"}`
-      );
-    } finally {
-      setIsChangingBackend(false);
-    }
+    const backendNames: Record<string, string> = {
+      local: "Local LLM",
+      vertex_anthropic: "Vertex AI (Anthropic)",
+      openai: "OpenAI",
+      grok: "Grok",
+      template: "Template-based",
+    };
+    setSynthesisStatus(`✓ Set to ${backendNames[value] || value}`);
+    setIsChangingBackend(false);
   };
 
   const updateVertexAi = (field: string, value: string | null) => {
@@ -341,13 +297,25 @@ export function AiSettings({
                 onValueChange={(value) =>
                   onSidecarChange({
                     ...sidecarSettings,
-                    synthesis_vertex: { ...sidecarSettings.synthesis_vertex, model: value },
+                    synthesis_vertex: {
+                      ...sidecarSettings.synthesis_vertex,
+                      model: value,
+                    },
                   })
                 }
                 options={[
-                  { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5 (Most Capable)" },
-                  { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
-                  { value: "claude-haiku-4-5-20250514", label: "Claude Haiku 4.5 (Fastest)" },
+                  {
+                    value: "claude-opus-4-5-20251101",
+                    label: "Claude Opus 4.5 (Most Capable)",
+                  },
+                  {
+                    value: "claude-sonnet-4-5-20250514",
+                    label: "Claude Sonnet 4.5",
+                  },
+                  {
+                    value: "claude-haiku-4-5-20250514",
+                    label: "Claude Haiku 4.5 (Fastest)",
+                  },
                 ]}
               />
             </div>
@@ -411,7 +379,10 @@ export function AiSettings({
                 onValueChange={(value) =>
                   onSidecarChange({
                     ...sidecarSettings,
-                    synthesis_openai: { ...sidecarSettings.synthesis_openai, model: value },
+                    synthesis_openai: {
+                      ...sidecarSettings.synthesis_openai,
+                      model: value,
+                    },
                   })
                 }
                 options={[
@@ -462,7 +433,10 @@ export function AiSettings({
                 onValueChange={(value) =>
                   onSidecarChange({
                     ...sidecarSettings,
-                    synthesis_grok: { ...sidecarSettings.synthesis_grok, model: value },
+                    synthesis_grok: {
+                      ...sidecarSettings.synthesis_grok,
+                      model: value,
+                    },
                   })
                 }
                 options={[

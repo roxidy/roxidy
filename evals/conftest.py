@@ -79,12 +79,9 @@ def eval_model():
 def sidecar_db():
     """Connect to the sidecar LanceDB database.
 
-    Waits briefly for async flush to complete before connecting.
-
     Returns:
         LanceDB connection, or None if database doesn't exist.
     """
-    time.sleep(0.3)  # Wait for async flush
     try:
         from sidecar import connect_db
         return connect_db()
@@ -211,5 +208,37 @@ async def runner(streaming_session, request) -> StreamingRunner:
             assert "4" in result.response
     """
     session_id, client = streaming_session
+    verbose = is_verbose() or request.config.getoption("-v", default=0) > 0
+    return StreamingRunner(client, session_id, verbose=verbose)
+
+
+# =============================================================================
+# Class-Scoped Fixtures (for sharing LLM calls across tests in same class)
+# =============================================================================
+
+
+@pytest.fixture(scope="class")
+async def class_qbit_server(qbit_server_info: str):
+    """Class-scoped QbitClient for shared fixtures."""
+    async with QbitClient(qbit_server_info) as client:
+        yield client
+
+
+@pytest.fixture(scope="class")
+async def class_streaming_session(class_qbit_server):
+    """Class-scoped session for shared fixtures."""
+    session_id = await class_qbit_server.create_session()
+    yield session_id, class_qbit_server
+    await class_qbit_server.delete_session(session_id)
+
+
+@pytest.fixture(scope="class")
+async def class_runner(class_streaming_session, request) -> StreamingRunner:
+    """Class-scoped StreamingRunner for shared fixtures.
+
+    Use this when you want to share LLM call results across
+    multiple tests in the same class.
+    """
+    session_id, client = class_streaming_session
     verbose = is_verbose() or request.config.getoption("-v", default=0) > 0
     return StreamingRunner(client, session_id, verbose=verbose)

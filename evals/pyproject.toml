@@ -27,5 +27,9 @@ timeout = 180
 timeout_method = "thread"
 # pytest-asyncio mode: auto marks all async test functions
 asyncio_mode = "auto"
-# Default fixture scope for async fixtures
-asyncio_default_fixture_loop_scope = "function"
+# Default fixture scope for async fixtures - class scope allows sharing LLM calls
+asyncio_default_fixture_loop_scope = "class"
+# Suppress httpx/httpcore async cleanup warnings (known issue with pytest-asyncio)
+filterwarnings = [
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]

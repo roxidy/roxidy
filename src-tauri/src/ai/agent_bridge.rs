@@ -692,18 +692,11 @@ impl AgentBridge {
             self.save_session().await;
         }
 
-        // End sidecar capture session and save to storage
+        // End sidecar capture session
         if let Some(ref sidecar) = self.sidecar_state {
             match sidecar.end_session() {
                 Ok(Some(session)) => {
-                    // Save the session to storage
-                    if let Some(storage) = sidecar.storage() {
-                        if let Err(e) = storage.save_session(&session).await {
-                            tracing::error!("Failed to save sidecar session to storage: {}", e);
-                        } else {
-                            tracing::info!("Sidecar session {} saved to storage", session.id);
-                        }
-                    }
+                    tracing::info!("Sidecar session {} ended", session.session_id);
                 }
                 Ok(None) => {
                     tracing::debug!("No active sidecar session to end");
@@ -747,16 +740,18 @@ impl AgentBridge {
             .collect()
     }
 
-    /// Get Layer 1 session context for injection into agent prompt
+    /// Get session context for injection into agent prompt
     pub async fn get_session_context(&self) -> Option<String> {
         let sidecar = self.sidecar_state.as_ref()?;
-        let session_id = sidecar.current_session_id()?;
 
-        // Use the get_layer1_state method
-        let state = sidecar.get_layer1_state(session_id).await.ok()??;
-
-        // Use the existing get_injectable_context function from layer1::api
-        Some(crate::sidecar::layer1::get_injectable_context(&state))
+        // Use the simplified sidecar API to get injectable context (state.md content)
+        match sidecar.get_injectable_context().await {
+            Ok(context) => context,
+            Err(e) => {
+                tracing::warn!("Failed to get session context: {}", e);
+                None
+            }
+        }
     }
 }
 

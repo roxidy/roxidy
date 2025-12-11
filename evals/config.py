@@ -39,8 +39,8 @@ load_dotenv()  # Also load local .env if present
 # Timeout Constants
 # =============================================================================
 
-TIMEOUT_DEFAULT = 120  # 2 minutes for single operations
-TIMEOUT_BATCH = 300    # 5 minutes for batch operations
+TIMEOUT_DEFAULT = 60   # 1 minute for single operations
+TIMEOUT_BATCH = 180    # 3 minutes for batch operations
 
 # =============================================================================
 # Paths

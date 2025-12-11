@@ -78,7 +78,7 @@ impl CliContext {
         }
 
         // Gracefully shutdown sidecar (waits for processor to flush pending events)
-        self.sidecar_state.shutdown_async().await;
+        self.sidecar_state.shutdown();
 
         // Shutdown the runtime
         if let Err(e) = self.runtime.shutdown().await {
@@ -178,13 +178,8 @@ pub async fn initialize(args: &Args) -> Result<CliContext> {
     if settings.sidecar.enabled {
         if let Err(e) = sidecar_state.initialize(workspace.clone()).await {
             tracing::warn!("Failed to initialize sidecar: {}", e);
-        } else {
-            // Initialize Layer1 processor for session state tracking
-            if let Err(e) = sidecar_state.initialize_layer1().await {
-                tracing::warn!("Failed to initialize Layer1 processor: {}", e);
-            } else if args.verbose {
-                eprintln!("[cli] Sidecar Layer1 processor initialized");
-            }
+        } else if args.verbose {
+            eprintln!("[cli] Sidecar initialized");
         }
     }
 

@@ -214,7 +214,7 @@ pub struct SessionEvent {
     /// Unique identifier for this event
     pub id: Uuid,
     /// Session this event belongs to
-    pub session_id: Uuid,
+    pub session_id: String,
     /// When this event occurred
     pub timestamp: DateTime<Utc>,
     /// The type and details of this event
@@ -242,7 +242,7 @@ pub struct SessionEvent {
 
 impl SessionEvent {
     /// Create a new session event
-    pub fn new(session_id: Uuid, event_type: EventType, content: String) -> Self {
+    pub fn new(session_id: String, event_type: EventType, content: String) -> Self {
         let files_modified = Self::extract_files_modified(&event_type);
         Self {
             id: Uuid::new_v4(),
@@ -270,7 +270,7 @@ impl SessionEvent {
     ///
     /// actual user message
     /// ```
-    pub fn user_prompt(session_id: Uuid, prompt: &str) -> Self {
+    pub fn user_prompt(session_id: String, prompt: &str) -> Self {
         let (cwd, clean_prompt) = parse_context_xml(prompt);
 
         let mut event = Self::new(
@@ -286,7 +286,7 @@ impl SessionEvent {
 
     /// Create a file edit event
     pub fn file_edit(
-        session_id: Uuid,
+        session_id: String,
         path: PathBuf,
         operation: FileOperation,
         summary: Option<String>,
@@ -340,18 +340,19 @@ impl SessionEvent {
 
     /// Create a tool call event
     pub fn tool_call(
-        session_id: Uuid,
+        session_id: String,
         tool_name: &str,
-        args_summary: &str,
+        args_summary: Option<String>,
         reasoning: Option<String>,
         success: bool,
     ) -> Self {
         let status = if success { "succeeded" } else { "failed" };
+        let args_str = args_summary.as_deref().unwrap_or("");
         Self::new(
             session_id,
             EventType::ToolCall {
                 tool_name: tool_name.to_string(),
-                args_summary: args_summary.to_string(),
+                args_summary: args_str.to_string(),
                 reasoning: reasoning.clone(),
                 success,
             },
@@ -359,7 +360,7 @@ impl SessionEvent {
                 "Tool {} {}: {}{}",
                 tool_name,
                 status,
-                truncate(args_summary, 200),
+                truncate(args_str, 200),
                 reasoning
                     .map(|r| format!(" ({})", truncate(&r, 100)))
                     .unwrap_or_default()
@@ -372,17 +373,17 @@ impl SessionEvent {
     /// This is the enhanced version that captures tool output, accessed files, and diffs.
     #[allow(clippy::too_many_arguments)]
     pub fn tool_call_with_output(
-        session_id: Uuid,
-        tool_name: &str,
-        args_summary: &str,
+        session_id: String,
+        tool_name: String,
+        args_summary: Option<String>,
+        reasoning: Option<String>,
         success: bool,
         tool_output: Option<String>,
-        files_accessed: Option<Vec<PathBuf>>,
-        files_modified: Vec<PathBuf>,
         diff: Option<String>,
     ) -> Self {
         // Create content summary
-        let content = format!("{} {}", tool_name, args_summary);
+        let args_str = args_summary.as_deref().unwrap_or("");
+        let content = format!("{} {}", tool_name, args_str);
 
         Self {
             id: Uuid::new_v4(),
@@ -390,22 +391,26 @@ impl SessionEvent {
             timestamp: Utc::now(),
             event_type: EventType::ToolCall {
                 tool_name: tool_name.to_string(),
-                args_summary: args_summary.to_string(),
-                reasoning: None,
+                args_summary: args_str.to_string(),
+                reasoning,
                 success,
             },
             content,
             cwd: None,
             tool_output: tool_output.map(|o| truncate(&o, 2000)),
-            files_accessed,
-            files_modified,
+            files_accessed: None,
+            files_modified: vec![],
             diff: diff.map(|d| truncate(&d, 4000)),
             embedding: None,
         }
     }
 
-    /// Create an agent reasoning event
-    pub fn reasoning(session_id: Uuid, content: &str, decision_type: Option<DecisionType>) -> Self {
+    /// Create a reasoning event
+    pub fn reasoning(
+        session_id: String,
+        content: &str,
+        decision_type: Option<DecisionType>,
+    ) -> Self {
         Self::new(
             session_id,
             EventType::AgentReasoning {
@@ -418,7 +423,7 @@ impl SessionEvent {
 
     /// Create a user feedback event
     pub fn feedback(
-        session_id: Uuid,
+        session_id: String,
         feedback_type: FeedbackType,
         target_tool: Option<String>,
         comment: Option<String>,
@@ -447,25 +452,19 @@ impl SessionEvent {
     }
 
     /// Create an error event
-    pub fn error(
-        session_id: Uuid,
-        error_message: &str,
-        recovery_action: Option<String>,
-        resolved: bool,
-    ) -> Self {
+    pub fn error(session_id: String, error_message: &str, recovery_action: Option<String>) -> Self {
         Self::new(
             session_id,
             EventType::ErrorRecovery {
                 error_message: error_message.to_string(),
                 recovery_action: recovery_action.clone(),
-                resolved,
+                resolved: false,
             },
             format!(
-                "Error{}: {}{}",
-                if resolved { " (resolved)" } else { "" },
+                "Error: {}{}",
                 truncate(error_message, 200),
                 recovery_action
-                    .map(|r| format!(" → {}", r))
+                    .map(|r| format!(" → {}", truncate(&r, 100)))
                     .unwrap_or_default()
             ),
         )
@@ -473,32 +472,30 @@ impl SessionEvent {
 
     /// Create a commit boundary event
     pub fn commit_boundary(
-        session_id: Uuid,
+        session_id: String,
         files: Vec<PathBuf>,
-        suggested_message: Option<String>,
+        message: Option<String>,
     ) -> Self {
         let file_count = files.len();
         Self::new(
             session_id,
             EventType::CommitBoundary {
-                suggested_message: suggested_message.clone(),
+                suggested_message: message.clone(),
                 files_in_scope: files,
             },
             format!(
-                "Commit boundary detected: {} file(s){}",
+                "Commit boundary: {} file(s){}",
                 file_count,
-                suggested_message
-                    .map(|m| format!(" - {}", truncate(&m, 100)))
-                    .unwrap_or_default()
+                message.map(|m| format!(" - {}", m)).unwrap_or_default()
             ),
         )
     }
 
     /// Create an AI response event
-    pub fn ai_response(session_id: Uuid, response: &str, duration_ms: Option<u64>) -> Self {
+    pub fn ai_response(session_id: String, response: &str) -> Self {
         // Truncate for storage but mark if truncated
         const MAX_RESPONSE_LEN: usize = 2000;
-        let truncated = response.chars().count() > MAX_RESPONSE_LEN;
+        let truncated = response.len() > MAX_RESPONSE_LEN;
         let content = truncate(response, MAX_RESPONSE_LEN);
 
         Self::new(
@@ -506,9 +503,9 @@ impl SessionEvent {
             EventType::AiResponse {
                 content: content.clone(),
                 truncated,
-                duration_ms,
+                duration_ms: None,
             },
-            format!("AI responded: {}", truncate(response, 500)),
+            content.to_string(),
         )
     }
 
@@ -981,9 +978,9 @@ mod tests {
 
     #[test]
     fn test_session_event_creation() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
 
-        let event = SessionEvent::user_prompt(session_id, "Add authentication");
+        let event = SessionEvent::user_prompt(session_id.clone(), "Add authentication");
         assert_eq!(event.session_id, session_id);
         assert!(event.content.contains("authentication"));
         assert!(event.embedding.is_none());
@@ -991,7 +988,7 @@ mod tests {
 
     #[test]
     fn test_file_edit_event() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         let path = PathBuf::from("/src/lib.rs");
 
         let event = SessionEvent::file_edit(session_id, path.clone(), FileOperation::Modify, None);
@@ -1024,7 +1021,7 @@ which files are in the current directory?"#;
 
     #[test]
     fn test_user_prompt_with_context() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         let input = r#"<context>
 <cwd>/Users/xlyk/Code/qbit</cwd>
 </context>
@@ -1082,15 +1079,14 @@ message without cwd"#;
 
     #[test]
     fn test_tool_call_with_output_basic() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         let event = SessionEvent::tool_call_with_output(
             session_id,
-            "read_file",
-            "path=src/main.rs",
+            "read_file".to_string(),
+            Some("path=src/main.rs".to_string()),
+            None,
             true,
             Some("fn main() { println!(\"Hello\"); }".to_string()),
-            Some(vec![PathBuf::from("src/main.rs")]),
-            vec![],
             None,
         );
 
@@ -1099,31 +1095,24 @@ message without cwd"#;
             event.tool_output,
             Some("fn main() { println!(\"Hello\"); }".to_string())
         );
-        assert_eq!(
-            event.files_accessed,
-            Some(vec![PathBuf::from("src/main.rs")])
-        );
-        assert!(event.files_modified.is_empty());
         assert!(event.diff.is_none());
     }
 
     #[test]
     fn test_tool_call_with_output_edit() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         let diff =
             "--- src/lib.rs\n+++ src/lib.rs\n@@ -1,1 +1,2 @@\n-old line\n+new line\n+added line";
         let event = SessionEvent::tool_call_with_output(
             session_id,
-            "edit_file",
-            "path=src/lib.rs",
+            "edit_file".to_string(),
+            Some("path=src/lib.rs".to_string()),
+            None,
             true,
             Some("Edit applied successfully".to_string()),
-            None,
-            vec![PathBuf::from("src/lib.rs")],
             Some(diff.to_string()),
         );
 
-        assert_eq!(event.files_modified, vec![PathBuf::from("src/lib.rs")]);
         assert!(event.diff.is_some());
         assert!(event.diff.as_ref().unwrap().contains("-old line"));
         assert!(event.diff.as_ref().unwrap().contains("+new line"));
@@ -1131,17 +1120,16 @@ message without cwd"#;
 
     #[test]
     fn test_tool_call_with_output_truncation() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         // Create content longer than 2000 chars
         let long_output = "x".repeat(3000);
         let event = SessionEvent::tool_call_with_output(
             session_id,
-            "read_file",
-            "path=big.txt",
+            "read_file".to_string(),
+            Some("path=big.txt".to_string()),
+            None,
             true,
             Some(long_output),
-            None,
-            vec![],
             None,
         );
 
@@ -1157,17 +1145,16 @@ message without cwd"#;
 
     #[test]
     fn test_tool_call_with_output_diff_truncation() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         // Create diff longer than 4000 chars
         let long_diff = "+".repeat(5000);
         let event = SessionEvent::tool_call_with_output(
             session_id,
-            "write",
-            "path=big.rs",
+            "write".to_string(),
+            Some("path=big.rs".to_string()),
+            None,
             true,
             None,
-            None,
-            vec![PathBuf::from("big.rs")],
             Some(long_diff),
         );
 
@@ -1183,7 +1170,7 @@ message without cwd"#;
 
     #[test]
     fn test_session_event_new_fields_initialized() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         let event = SessionEvent::new(
             session_id,
             EventType::UserPrompt {
@@ -1268,9 +1255,9 @@ message without cwd"#;
 
     #[test]
     fn test_event_serialization() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
         let event = SessionEvent::reasoning(
-            session_id,
+            session_id.clone(),
             "Choosing approach A",
             Some(DecisionType::ApproachChoice),
         );
@@ -1285,11 +1272,11 @@ message without cwd"#;
     #[test]
     fn test_commit_boundary_detector_file_tracking() {
         let mut detector = CommitBoundaryDetector::new();
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
 
         // Add some file edits
         let event1 = SessionEvent::file_edit(
-            session_id,
+            session_id.clone(),
             PathBuf::from("/src/lib.rs"),
             FileOperation::Modify,
             None,
@@ -1310,17 +1297,17 @@ message without cwd"#;
     #[test]
     fn test_commit_boundary_completion_signal() {
         let mut detector = CommitBoundaryDetector::with_thresholds(2, 60);
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
 
         // Add file edits
         detector.check_boundary(&SessionEvent::file_edit(
-            session_id,
+            session_id.clone(),
             PathBuf::from("/src/a.rs"),
             FileOperation::Modify,
             None,
         ));
         detector.check_boundary(&SessionEvent::file_edit(
-            session_id,
+            session_id.clone(),
             PathBuf::from("/src/b.rs"),
             FileOperation::Create,
             None,
@@ -1342,10 +1329,10 @@ message without cwd"#;
     #[test]
     fn test_commit_boundary_user_approval() {
         let mut detector = CommitBoundaryDetector::with_thresholds(1, 60);
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
 
         detector.check_boundary(&SessionEvent::file_edit(
-            session_id,
+            session_id.clone(),
             PathBuf::from("/src/lib.rs"),
             FileOperation::Modify,
             None,
@@ -1365,7 +1352,7 @@ message without cwd"#;
     #[test]
     fn test_commit_boundary_clear() {
         let mut detector = CommitBoundaryDetector::new();
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
 
         detector.check_boundary(&SessionEvent::file_edit(
             session_id,
@@ -1385,11 +1372,12 @@ message without cwd"#;
     fn test_session_export() {
         let session = SidecarSession::new(PathBuf::from("/project"), "Test request".into());
         let session_id = session.id;
+        let session_id_str = session_id.to_string();
 
         let events = vec![
-            SessionEvent::user_prompt(session_id, "Add feature"),
+            SessionEvent::user_prompt(session_id_str.clone(), "Add feature"),
             SessionEvent::file_edit(
-                session_id,
+                session_id_str,
                 PathBuf::from("/src/lib.rs"),
                 FileOperation::Modify,
                 None,
@@ -1419,19 +1407,19 @@ message without cwd"#;
 
     #[test]
     fn test_should_embed_filtering() {
-        let session_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
 
         // User prompts should be embedded
-        let user_prompt = SessionEvent::user_prompt(session_id, "Add authentication");
+        let user_prompt = SessionEvent::user_prompt(session_id.clone(), "Add authentication");
         assert!(user_prompt.should_embed(), "user_prompt should be embedded");
 
         // Agent reasoning should be embedded
-        let reasoning = SessionEvent::reasoning(session_id, "I'll use JWT for auth", None);
+        let reasoning = SessionEvent::reasoning(session_id.clone(), "I'll use JWT for auth", None);
         assert!(reasoning.should_embed(), "reasoning should be embedded");
 
         // File edits should NOT be embedded (structured, search by path)
         let file_edit = SessionEvent::file_edit(
-            session_id,
+            session_id.clone(),
             PathBuf::from("src/auth.rs"),
             FileOperation::Modify,
             None,
@@ -1443,13 +1431,12 @@ message without cwd"#;
 
         // Regular tool calls should NOT be embedded
         let tool_call = SessionEvent::tool_call_with_output(
-            session_id,
-            "write",
-            "path=test.rs",
+            session_id.clone(),
+            "write".to_string(),
+            Some("path=test.rs".to_string()),
+            None,
             true,
             Some("File written".to_string()),
-            None,
-            vec![PathBuf::from("test.rs")],
             None,
         );
         assert!(
@@ -1459,13 +1446,12 @@ message without cwd"#;
 
         // Read tool calls WITH output SHOULD be embedded
         let read_tool = SessionEvent::tool_call_with_output(
-            session_id,
-            "read_file",
-            "path=src/main.rs",
+            session_id.clone(),
+            "read_file".to_string(),
+            Some("path=src/main.rs".to_string()),
+            None,
             true,
             Some("fn main() { println!(\"Hello\"); }".to_string()),
-            Some(vec![PathBuf::from("src/main.rs")]),
-            vec![],
             None,
         );
         assert!(
@@ -1475,13 +1461,12 @@ message without cwd"#;
 
         // Read tool without output should NOT be embedded
         let read_no_output = SessionEvent::tool_call_with_output(
-            session_id,
-            "read_file",
-            "path=missing.rs",
+            session_id.clone(),
+            "read_file".to_string(),
+            Some("path=missing.rs".to_string()),
+            None,
             false,
             None, // No output
-            None,
-            vec![],
             None,
         );
         assert!(
@@ -1492,12 +1477,11 @@ message without cwd"#;
         // Grep tool with output should be embedded
         let grep_tool = SessionEvent::tool_call_with_output(
             session_id,
-            "grep",
-            "pattern=authenticate",
+            "grep".to_string(),
+            Some("pattern=authenticate".to_string()),
+            None,
             true,
             Some("src/auth.rs:1: fn authenticate".to_string()),
-            Some(vec![PathBuf::from("src/auth.rs")]),
-            vec![],
             None,
         );
         assert!(

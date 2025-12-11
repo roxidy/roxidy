@@ -68,7 +68,7 @@ class QbitClient:
     def __init__(
         self,
         base_url: str = "http://localhost:8080",
-        timeout: float = 300.0,
+        timeout: float = 120.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
     ):
@@ -79,7 +79,10 @@ class QbitClient:
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "QbitClient":
-        self._client = httpx.AsyncClient(timeout=self.timeout)
+        # Disable keepalive to ensure connections close immediately after each request.
+        # This prevents async cleanup issues when the GC runs in a different task context.
+        limits = httpx.Limits(keepalive_expiry=0)
+        self._client = httpx.AsyncClient(timeout=self.timeout, limits=limits)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
