@@ -1,22 +1,15 @@
-//! Session management for markdown-based sidecar storage.
+//! Session management for simplified sidecar storage.
 //!
 //! Each session is stored as a directory containing:
-//! - `meta.toml`: Machine-managed metadata
-//! - `state.md`: LLM-managed current state
-//! - `state.md.bak`: Previous state backup
-//! - `log.md`: Append-only event log
-//! - `events.jsonl`: Raw events (optional)
+//! - `state.md`: YAML frontmatter (metadata) + markdown body (context)
+//! - `patches/staged/`: Pending patches in git format-patch style
+//! - `patches/applied/`: Applied patches (moved after git am)
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
-
-use super::formats::{
-    format_log_entry, initial_log_template, initial_state_template, SessionMetaToml,
-};
 
 /// Session status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +43,7 @@ impl std::str::FromStr for SessionStatus {
     }
 }
 
-/// Session metadata (mirrors meta.toml but with typed status)
+/// Session metadata (stored in YAML frontmatter of state.md)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub session_id: String,
@@ -58,7 +51,9 @@ pub struct SessionMeta {
     pub updated_at: DateTime<Utc>,
     pub status: SessionStatus,
     pub cwd: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub git_root: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub git_branch: Option<String>,
     pub initial_request: String,
 }
@@ -89,12 +84,11 @@ pub struct Session {
 }
 
 impl Session {
-    /// File names
-    const META_FILE: &'static str = "meta.toml";
+    /// File/directory names
     const STATE_FILE: &'static str = "state.md";
-    const STATE_BACKUP: &'static str = "state.md.bak";
-    const LOG_FILE: &'static str = "log.md";
-    const EVENTS_FILE: &'static str = "events.jsonl";
+    const PATCHES_DIR: &'static str = "patches";
+    const STAGED_DIR: &'static str = "staged";
+    const APPLIED_DIR: &'static str = "applied";
 
     /// Create a new session
     pub async fn create(
@@ -110,36 +104,22 @@ impl Session {
             .await
             .context("Failed to create session directory")?;
 
+        // Create patches directories
+        fs::create_dir_all(dir.join(Self::PATCHES_DIR).join(Self::STAGED_DIR))
+            .await
+            .context("Failed to create staged patches directory")?;
+        fs::create_dir_all(dir.join(Self::PATCHES_DIR).join(Self::APPLIED_DIR))
+            .await
+            .context("Failed to create applied patches directory")?;
+
         // Create metadata
         let meta = SessionMeta::new(session_id.clone(), cwd, initial_request.clone());
 
-        // Write meta.toml
-        let meta_toml = SessionMetaToml::new(
-            meta.session_id.clone(),
-            meta.cwd.clone(),
-            meta.initial_request.clone(),
-        );
-        let meta_content = meta_toml.to_toml()?;
-        fs::write(dir.join(Self::META_FILE), &meta_content)
-            .await
-            .context("Failed to write meta.toml")?;
-
-        // Write initial state.md
-        let state_content = initial_state_template(&session_id, &initial_request);
+        // Write initial state.md with frontmatter
+        let state_content = Self::format_state_file(&meta, &initial_state_body(&initial_request));
         fs::write(dir.join(Self::STATE_FILE), &state_content)
             .await
             .context("Failed to write state.md")?;
-
-        // Write initial log.md
-        let log_content = initial_log_template(&session_id, &initial_request);
-        fs::write(dir.join(Self::LOG_FILE), &log_content)
-            .await
-            .context("Failed to write log.md")?;
-
-        // Create empty events.jsonl
-        fs::write(dir.join(Self::EVENTS_FILE), "")
-            .await
-            .context("Failed to create events.jsonl")?;
 
         tracing::info!("Created new session: {}", session_id);
 
@@ -154,23 +134,13 @@ impl Session {
             anyhow::bail!("Session directory does not exist: {}", session_id);
         }
 
-        // Read meta.toml
-        let meta_path = dir.join(Self::META_FILE);
-        let meta_content = fs::read_to_string(&meta_path)
+        // Read state.md and parse frontmatter
+        let state_path = dir.join(Self::STATE_FILE);
+        let content = fs::read_to_string(&state_path)
             .await
-            .context("Failed to read meta.toml")?;
-        let meta_toml = SessionMetaToml::from_toml(&meta_content)?;
+            .context("Failed to read state.md")?;
 
-        let meta = SessionMeta {
-            session_id: meta_toml.session_id,
-            created_at: meta_toml.created_at,
-            updated_at: meta_toml.updated_at,
-            status: meta_toml.status.parse()?,
-            cwd: meta_toml.context.cwd,
-            git_root: meta_toml.context.git_root,
-            git_branch: meta_toml.context.git_branch,
-            initial_request: meta_toml.context.initial_request,
-        };
+        let (meta, _body) = Self::parse_state_file(&content)?;
 
         Ok(Self { dir, meta })
     }
@@ -180,84 +150,50 @@ impl Session {
         &self.meta
     }
 
-    /// Read the current state.md content
+    /// Get the session directory path
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Get the staged patches directory path
+    pub fn staged_patches_dir(&self) -> PathBuf {
+        self.dir.join(Self::PATCHES_DIR).join(Self::STAGED_DIR)
+    }
+
+    /// Get the applied patches directory path
+    pub fn applied_patches_dir(&self) -> PathBuf {
+        self.dir.join(Self::PATCHES_DIR).join(Self::APPLIED_DIR)
+    }
+
+    /// Read the current state.md content (body only, without frontmatter)
     pub async fn read_state(&self) -> Result<String> {
+        let path = self.dir.join(Self::STATE_FILE);
+        let content = fs::read_to_string(&path)
+            .await
+            .context("Failed to read state.md")?;
+
+        let (_meta, body) = Self::parse_state_file(&content)?;
+        Ok(body)
+    }
+
+    /// Read the full state.md content (frontmatter + body)
+    pub async fn read_state_full(&self) -> Result<String> {
         let path = self.dir.join(Self::STATE_FILE);
         fs::read_to_string(&path)
             .await
             .context("Failed to read state.md")
     }
 
-    /// Read the log.md content
-    pub async fn read_log(&self) -> Result<String> {
-        let path = self.dir.join(Self::LOG_FILE);
-        fs::read_to_string(&path)
-            .await
-            .context("Failed to read log.md")
-    }
+    /// Update state.md body (preserves and updates frontmatter)
+    pub async fn update_state(&mut self, new_body: &str) -> Result<()> {
+        // Update timestamp
+        self.meta.updated_at = Utc::now();
 
-    /// Update state.md with backup
-    pub async fn update_state(&self, new_state: &str) -> Result<()> {
-        let state_path = self.dir.join(Self::STATE_FILE);
-        let backup_path = self.dir.join(Self::STATE_BACKUP);
-
-        // Backup current state
-        if state_path.exists() {
-            fs::copy(&state_path, &backup_path)
-                .await
-                .context("Failed to backup state.md")?;
-        }
-
-        // Write new state
-        fs::write(&state_path, new_state)
+        // Write new state file
+        let content = Self::format_state_file(&self.meta, new_body);
+        fs::write(self.dir.join(Self::STATE_FILE), &content)
             .await
             .context("Failed to write state.md")?;
-
-        // Update meta timestamp
-        self.touch_meta().await?;
-
-        Ok(())
-    }
-
-    /// Append to log.md
-    pub async fn append_log(&self, entry: &str) -> Result<()> {
-        let path = self.dir.join(Self::LOG_FILE);
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .context("Failed to open log.md")?;
-
-        file.write_all(entry.as_bytes())
-            .await
-            .context("Failed to append to log.md")?;
-
-        Ok(())
-    }
-
-    /// Append a simple log entry
-    pub async fn log_event(&self, event_type: &str, content: &str) -> Result<()> {
-        let entry = format_log_entry(&Utc::now(), event_type, content);
-        self.append_log(&entry).await
-    }
-
-    /// Append a raw event to events.jsonl
-    pub async fn append_event(&self, event_json: &str) -> Result<()> {
-        let path = self.dir.join(Self::EVENTS_FILE);
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .context("Failed to open events.jsonl")?;
-
-        file.write_all(event_json.as_bytes())
-            .await
-            .context("Failed to write event")?;
-        file.write_all(b"\n")
-            .await
-            .context("Failed to write newline")?;
 
         Ok(())
     }
@@ -266,43 +202,68 @@ impl Session {
     pub async fn complete(&mut self) -> Result<()> {
         self.meta.status = SessionStatus::Completed;
         self.meta.updated_at = Utc::now();
-        self.save_meta().await?;
 
-        // Add completion entry to log
-        self.log_event("Session End", "Session completed.").await?;
+        // Re-read current body and save with updated metadata
+        let body = self.read_state().await.unwrap_or_default();
+        let content = Self::format_state_file(&self.meta, &body);
+        fs::write(self.dir.join(Self::STATE_FILE), &content)
+            .await
+            .context("Failed to write state.md")?;
 
         tracing::info!("Session completed: {}", self.meta.session_id);
         Ok(())
     }
 
-    /// Update the meta.toml timestamp
-    async fn touch_meta(&self) -> Result<()> {
-        let path = self.dir.join(Self::META_FILE);
-        let content = fs::read_to_string(&path).await?;
-        let mut meta_toml = SessionMetaToml::from_toml(&content)?;
-        meta_toml.touch();
-        fs::write(&path, meta_toml.to_toml()?).await?;
-        Ok(())
+    /// Format state.md with YAML frontmatter
+    fn format_state_file(meta: &SessionMeta, body: &str) -> String {
+        let yaml = serde_yaml::to_string(meta).unwrap_or_default();
+        format!("---\n{}---\n\n{}", yaml, body)
     }
 
-    /// Save meta.toml
-    async fn save_meta(&self) -> Result<()> {
-        let meta_toml = SessionMetaToml {
-            session_id: self.meta.session_id.clone(),
-            created_at: self.meta.created_at,
-            updated_at: self.meta.updated_at,
-            status: self.meta.status.to_string(),
-            context: super::formats::SessionContextToml {
-                cwd: self.meta.cwd.clone(),
-                git_root: self.meta.git_root.clone(),
-                git_branch: self.meta.git_branch.clone(),
-                initial_request: self.meta.initial_request.clone(),
-            },
-        };
-        let content = meta_toml.to_toml()?;
-        fs::write(self.dir.join(Self::META_FILE), content).await?;
-        Ok(())
+    /// Parse state.md into metadata and body
+    fn parse_state_file(content: &str) -> Result<(SessionMeta, String)> {
+        // Check for frontmatter
+        if !content.starts_with("---\n") {
+            anyhow::bail!("state.md missing YAML frontmatter");
+        }
+
+        // Find end of frontmatter
+        let rest = &content[4..]; // Skip opening "---\n"
+        let end_idx = rest
+            .find("\n---")
+            .context("state.md missing frontmatter closing delimiter")?;
+
+        let yaml_content = &rest[..end_idx];
+        let body_start = end_idx + 4; // Skip "\n---"
+
+        // Skip any leading newlines in body
+        let body = rest[body_start..].trim_start_matches('\n').to_string();
+
+        // Parse YAML
+        let meta: SessionMeta =
+            serde_yaml::from_str(yaml_content).context("Failed to parse state.md frontmatter")?;
+
+        Ok((meta, body))
     }
+}
+
+/// Generate initial state body
+fn initial_state_body(initial_request: &str) -> String {
+    format!(
+        r#"# Goal
+{}
+
+## Progress
+Session started.
+
+## Files
+(none yet)
+
+## Open Questions
+(none yet)
+"#,
+        initial_request
+    )
 }
 
 /// List all sessions in the sessions directory
@@ -381,10 +342,9 @@ mod tests {
         assert_eq!(session.meta().status, SessionStatus::Active);
 
         // Verify files exist
-        assert!(sessions_dir.join("test-session/meta.toml").exists());
         assert!(sessions_dir.join("test-session/state.md").exists());
-        assert!(sessions_dir.join("test-session/log.md").exists());
-        assert!(sessions_dir.join("test-session/events.jsonl").exists());
+        assert!(sessions_dir.join("test-session/patches/staged").exists());
+        assert!(sessions_dir.join("test-session/patches/applied").exists());
 
         // Load session
         let loaded = Session::load(sessions_dir, "test-session").await.unwrap();
@@ -397,7 +357,7 @@ mod tests {
         let temp = setup_test_dir().await;
         let sessions_dir = temp.path();
 
-        let session = Session::create(
+        let mut session = Session::create(
             sessions_dir,
             "state-test".to_string(),
             PathBuf::from("/tmp"),
@@ -409,49 +369,16 @@ mod tests {
         // Read initial state
         let state = session.read_state().await.unwrap();
         assert!(state.contains("Test state ops"));
+        assert!(state.contains("# Goal"));
 
         // Update state
-        let new_state = "# Updated State\n\nNew content here.";
-        session.update_state(new_state).await.unwrap();
+        let new_body = "# Goal\nUpdated goal\n\n## Progress\nMade progress!";
+        session.update_state(new_body).await.unwrap();
 
         // Verify update
         let updated = session.read_state().await.unwrap();
-        assert_eq!(updated, new_state);
-
-        // Verify backup exists
-        assert!(sessions_dir.join("state-test/state.md.bak").exists());
-    }
-
-    #[tokio::test]
-    async fn test_session_log_operations() {
-        let temp = setup_test_dir().await;
-        let sessions_dir = temp.path();
-
-        let session = Session::create(
-            sessions_dir,
-            "log-test".to_string(),
-            PathBuf::from("/tmp"),
-            "Test log ops".to_string(),
-        )
-        .await
-        .unwrap();
-
-        // Append log entry
-        session
-            .log_event("File Read", "Read main.rs")
-            .await
-            .unwrap();
-        session
-            .log_event("Decision", "Chose approach A")
-            .await
-            .unwrap();
-
-        // Read log
-        let log = session.read_log().await.unwrap();
-        assert!(log.contains("Session Start"));
-        assert!(log.contains("File Read"));
-        assert!(log.contains("Read main.rs"));
-        assert!(log.contains("Decision"));
+        assert!(updated.contains("Updated goal"));
+        assert!(updated.contains("Made progress!"));
     }
 
     #[tokio::test]
@@ -508,37 +435,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_append_event() {
-        let temp = setup_test_dir().await;
-        let sessions_dir = temp.path();
+    async fn test_frontmatter_parsing() {
+        let content = r#"---
+session_id: test-123
+created_at: 2025-12-10T14:30:00Z
+updated_at: 2025-12-10T15:00:00Z
+status: active
+cwd: /home/user/project
+initial_request: Build something
+---
 
-        let session = Session::create(
-            sessions_dir,
-            "events-test".to_string(),
-            PathBuf::from("/tmp"),
-            "Test events".to_string(),
-        )
-        .await
-        .unwrap();
+# Goal
+Build something
 
-        // Append events
-        session
-            .append_event(r#"{"type":"user_prompt","content":"hello"}"#)
-            .await
-            .unwrap();
-        session
-            .append_event(r#"{"type":"file_read","path":"main.rs"}"#)
-            .await
-            .unwrap();
+## Progress
+Working on it.
+"#;
 
-        // Read events file
-        let events_content = fs::read_to_string(sessions_dir.join("events-test/events.jsonl"))
-            .await
-            .unwrap();
-
-        let lines: Vec<&str> = events_content.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("user_prompt"));
-        assert!(lines[1].contains("file_read"));
+        let (meta, body) = Session::parse_state_file(content).unwrap();
+        assert_eq!(meta.session_id, "test-123");
+        assert_eq!(meta.status, SessionStatus::Active);
+        assert!(body.contains("# Goal"));
+        assert!(body.contains("Working on it."));
     }
 }

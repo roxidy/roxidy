@@ -52,10 +52,12 @@ use settings::{
 };
 #[cfg(feature = "tauri")]
 use sidecar::{
-    sidecar_current_session, sidecar_end_session, sidecar_get_config,
-    sidecar_get_injectable_context, sidecar_get_session_log, sidecar_get_session_meta,
-    sidecar_get_session_state, sidecar_initialize, sidecar_list_sessions, sidecar_set_config,
-    sidecar_shutdown, sidecar_start_session, sidecar_status,
+    sidecar_apply_all_patches, sidecar_apply_patch, sidecar_current_session, sidecar_discard_patch,
+    sidecar_end_session, sidecar_get_applied_patches, sidecar_get_config,
+    sidecar_get_current_staged_patches, sidecar_get_injectable_context, sidecar_get_patch,
+    sidecar_get_session_meta, sidecar_get_session_state, sidecar_get_staged_patches,
+    sidecar_initialize, sidecar_list_sessions, sidecar_set_config, sidecar_shutdown,
+    sidecar_start_session, sidecar_status,
 };
 #[cfg(feature = "tauri")]
 use state::AppState;
@@ -268,12 +270,19 @@ pub fn run() {
             sidecar_current_session,
             sidecar_get_session_state,
             sidecar_get_injectable_context,
-            sidecar_get_session_log,
             sidecar_get_session_meta,
             sidecar_list_sessions,
             sidecar_get_config,
             sidecar_set_config,
             sidecar_shutdown,
+            // L2: Staged patches (git format-patch style)
+            sidecar_get_staged_patches,
+            sidecar_get_applied_patches,
+            sidecar_get_patch,
+            sidecar_discard_patch,
+            sidecar_get_current_staged_patches,
+            sidecar_apply_patch,
+            sidecar_apply_all_patches,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

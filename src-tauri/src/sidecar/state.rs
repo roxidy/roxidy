@@ -1,4 +1,4 @@
-//! Sidecar state management for markdown-based session tracking.
+//! Sidecar state management for simplified session tracking.
 //!
 //! This is the main entry point for the sidecar system. It manages:
 //! - Session lifecycle (create, end, get current)
@@ -99,11 +99,10 @@ impl SidecarState {
         let sessions_dir = config.sessions_dir();
         ensure_sessions_dir(&sessions_dir).await?;
 
-        // Create processor
+        // Create processor with simplified config
         let processor_config = ProcessorConfig {
             sessions_dir: sessions_dir.clone(),
-            use_llm: config.use_llm_for_state,
-            write_raw_events: config.write_raw_events,
+            generate_patches: true,
         };
         let processor = Processor::spawn(processor_config);
 
@@ -149,7 +148,6 @@ impl SidecarState {
 
         // Check if session already exists
         if state.current_session_id.is_some() {
-            // Return existing session ID instead of error
             return Ok(state.current_session_id.clone().unwrap());
         }
 
@@ -168,7 +166,6 @@ impl SidecarState {
         let req = initial_request.to_string();
         let cwd_clone = cwd.clone();
 
-        // Use tokio's spawn_blocking for the async file operations
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -211,7 +208,6 @@ impl SidecarState {
         let config = self.config.read().unwrap();
         let sessions_dir = config.sessions_dir();
 
-        // Load metadata synchronously
         let meta = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -277,7 +273,7 @@ impl SidecarState {
         *self.config.write().unwrap() = config;
     }
 
-    /// Get injectable context (state.md content) for current session
+    /// Get injectable context (state.md body) for current session
     pub async fn get_injectable_context(&self) -> Result<Option<String>> {
         let session_id = match self.current_session_id() {
             Some(id) => id,
@@ -290,18 +286,11 @@ impl SidecarState {
         Ok(Some(state))
     }
 
-    /// Get session state.md content
+    /// Get session state.md content (body only)
     pub async fn get_session_state(&self, session_id: &str) -> Result<String> {
         let sessions_dir = self.config.read().unwrap().sessions_dir();
         let session = Session::load(&sessions_dir, session_id).await?;
         session.read_state().await
-    }
-
-    /// Get session log.md content
-    pub async fn get_session_log(&self, session_id: &str) -> Result<String> {
-        let sessions_dir = self.config.read().unwrap().sessions_dir();
-        let session = Session::load(&sessions_dir, session_id).await?;
-        session.read_log().await
     }
 
     /// Get session metadata
@@ -319,12 +308,9 @@ impl SidecarState {
 
     /// Shutdown the sidecar
     pub fn shutdown(&self) {
-        // End current session if any
         let _ = self.end_session();
 
-        // Shutdown processor
         if let Some(processor) = self.processor.write().unwrap().take() {
-            // Use blocking shutdown since we're in sync context
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -355,7 +341,7 @@ mod tests {
             sessions_dir: Some(temp_dir.to_path_buf()),
             retention_days: 0,
             max_state_size: 16 * 1024,
-            write_raw_events: true,
+            write_raw_events: false,
             use_llm_for_state: false,
             capture_tool_calls: true,
             capture_reasoning: true,
@@ -391,15 +377,12 @@ mod tests {
 
         state.initialize(temp.path().to_path_buf()).await.unwrap();
 
-        // Start session
         let session_id = state.start_session("Test request").unwrap();
         assert!(!session_id.is_empty());
         assert!(state.current_session_id().is_some());
 
-        // Give time for async session creation
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        // End session
         let _meta = state.end_session().unwrap();
         assert!(state.current_session_id().is_none());
     }
