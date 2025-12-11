@@ -534,9 +534,7 @@ impl PtyManager {
 
             match output {
                 Ok(output) if output.status.success() => {
-                    let process_name = String::from_utf8_lossy(&output.stdout)
-                        .trim()
-                        .to_string();
+                    let process_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
                     if process_name.is_empty() {
                         Ok(None)

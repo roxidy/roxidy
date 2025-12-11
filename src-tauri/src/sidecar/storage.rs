@@ -819,8 +819,8 @@ impl SidecarStorage {
         Ok(IndexStatus {
             events_indexed: !events_indexes.is_empty(),
             checkpoints_indexed: !checkpoints_indexes.is_empty(),
-            events_count: events_table.count_rows(None).await? as usize,
-            checkpoints_count: checkpoints_table.count_rows(None).await? as usize,
+            events_count: events_table.count_rows(None).await?,
+            checkpoints_count: checkpoints_table.count_rows(None).await?,
         })
     }
 
@@ -844,9 +844,9 @@ impl SidecarStorage {
             .as_ref()
             .context("Sessions table not initialized")?;
 
-        let event_count = events_table.count_rows(None).await? as usize;
-        let checkpoint_count = checkpoints_table.count_rows(None).await? as usize;
-        let session_count = sessions_table.count_rows(None).await? as usize;
+        let event_count = events_table.count_rows(None).await?;
+        let checkpoint_count = checkpoints_table.count_rows(None).await?;
+        let session_count = sessions_table.count_rows(None).await?;
 
         // Estimate size from data directory
         let total_size = Self::dir_size(&self.data_dir).await.unwrap_or(0);

@@ -34,7 +34,7 @@ function SimpleSelect({
       id={id}
       value={value}
       onChange={(e) => onValueChange(e.target.value)}
-      className="w-full h-9 rounded-md border border-[#3b4261] bg-[#1f2335] px-3 py-1 text-sm text-[#c0caf5] focus:outline-none focus:ring-1 focus:ring-[#7aa2f7] cursor-pointer appearance-none"
+      className="w-full h-9 rounded-md border border-border bg-card px-3 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer appearance-none"
       style={{
         backgroundImage:
           "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23565f89' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")",
@@ -43,7 +43,7 @@ function SimpleSelect({
       }}
     >
       {options.map((opt) => (
-        <option key={opt.value} value={opt.value} className="bg-[#1f2335]">
+        <option key={opt.value} value={opt.value} className="bg-card">
           {opt.label}
         </option>
       ))}
@@ -159,7 +159,7 @@ export function AiSettings({
     <div className="space-y-6">
       {/* Default Provider */}
       <div className="space-y-2">
-        <label htmlFor="ai-default-provider" className="text-sm font-medium text-[#c0caf5]">
+        <label htmlFor="ai-default-provider" className="text-sm font-medium text-foreground">
           Default Provider
         </label>
         <SimpleSelect
@@ -170,12 +170,12 @@ export function AiSettings({
           }
           options={providerOptions}
         />
-        <p className="text-xs text-[#565f89]">The AI provider to use for conversations</p>
+        <p className="text-xs text-muted-foreground">The AI provider to use for conversations</p>
       </div>
 
       {/* Default Model */}
       <div className="space-y-2">
-        <label htmlFor="ai-default-model" className="text-sm font-medium text-[#c0caf5]">
+        <label htmlFor="ai-default-model" className="text-sm font-medium text-foreground">
           Default Model
         </label>
         <Input
@@ -183,18 +183,18 @@ export function AiSettings({
           value={settings.default_model}
           onChange={(e) => updateField("default_model", e.target.value)}
           placeholder="claude-opus-4-5@20251101"
-          className="bg-[#1f2335] border-[#3b4261] text-[#c0caf5]"
+          className="bg-card border-border text-foreground"
         />
-        <p className="text-xs text-[#565f89]">Model identifier for the selected provider</p>
+        <p className="text-xs text-muted-foreground">Model identifier for the selected provider</p>
       </div>
 
       {/* Vertex AI Settings */}
       {settings.default_provider === "vertex_ai" && (
-        <div className="space-y-4 p-4 rounded-lg bg-[#1f2335] border border-[#3b4261]">
-          <h4 className="text-sm font-medium text-[#7aa2f7]">Vertex AI Configuration</h4>
+        <div className="space-y-4 p-4 rounded-lg bg-card border border-border">
+          <h4 className="text-sm font-medium text-[var(--ansi-blue)]">Vertex AI Configuration</h4>
 
           <div className="space-y-2">
-            <label htmlFor="vertex-credentials-path" className="text-sm text-[#c0caf5]">
+            <label htmlFor="vertex-credentials-path" className="text-sm text-foreground">
               Credentials Path
             </label>
             <Input
@@ -202,12 +202,12 @@ export function AiSettings({
               value={settings.vertex_ai.credentials_path || ""}
               onChange={(e) => updateVertexAi("credentials_path", e.target.value)}
               placeholder="/path/to/service-account.json"
-              className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+              className="bg-background border-border text-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="vertex-project-id" className="text-sm text-[#c0caf5]">
+            <label htmlFor="vertex-project-id" className="text-sm text-foreground">
               Project ID
             </label>
             <Input
@@ -215,12 +215,12 @@ export function AiSettings({
               value={settings.vertex_ai.project_id || ""}
               onChange={(e) => updateVertexAi("project_id", e.target.value)}
               placeholder="your-project-id"
-              className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+              className="bg-background border-border text-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="vertex-location" className="text-sm text-[#c0caf5]">
+            <label htmlFor="vertex-location" className="text-sm text-foreground">
               Location
             </label>
             <Input
@@ -228,7 +228,7 @@ export function AiSettings({
               value={settings.vertex_ai.location || ""}
               onChange={(e) => updateVertexAi("location", e.target.value)}
               placeholder="us-east5"
-              className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+              className="bg-background border-border text-foreground"
             />
           </div>
         </div>
@@ -236,11 +236,11 @@ export function AiSettings({
 
       {/* OpenRouter Settings */}
       {settings.default_provider === "openrouter" && (
-        <div className="space-y-4 p-4 rounded-lg bg-[#1f2335] border border-[#3b4261]">
-          <h4 className="text-sm font-medium text-[#7aa2f7]">OpenRouter Configuration</h4>
+        <div className="space-y-4 p-4 rounded-lg bg-card border border-border">
+          <h4 className="text-sm font-medium text-[var(--ansi-blue)]">OpenRouter Configuration</h4>
 
           <div className="space-y-2">
-            <label htmlFor="openrouter-api-key" className="text-sm text-[#c0caf5]">
+            <label htmlFor="openrouter-api-key" className="text-sm text-foreground">
               API Key
             </label>
             <Input
@@ -249,9 +249,9 @@ export function AiSettings({
               value={settings.openrouter.api_key || ""}
               onChange={(e) => updateOpenRouter("api_key", e.target.value)}
               placeholder="sk-or-..."
-              className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+              className="bg-background border-border text-foreground"
             />
-            <p className="text-xs text-[#565f89]">
+            <p className="text-xs text-muted-foreground">
               Use $OPENROUTER_API_KEY to reference an environment variable
             </p>
           </div>
@@ -259,11 +259,11 @@ export function AiSettings({
       )}
 
       {/* API Keys */}
-      <div className="space-y-4 p-4 rounded-lg bg-[#1f2335] border border-[#3b4261]">
-        <h4 className="text-sm font-medium text-[#7aa2f7]">API Keys</h4>
+      <div className="space-y-4 p-4 rounded-lg bg-card border border-border">
+        <h4 className="text-sm font-medium text-[var(--ansi-blue)]">API Keys</h4>
 
         <div className="space-y-2">
-          <label htmlFor="api-key-tavily" className="text-sm text-[#c0caf5]">
+          <label htmlFor="api-key-tavily" className="text-sm text-foreground">
             Tavily (Web Search)
           </label>
           <Input
@@ -272,23 +272,23 @@ export function AiSettings({
             value={apiKeys.tavily || ""}
             onChange={(e) => onApiKeysChange({ ...apiKeys, tavily: e.target.value || null })}
             placeholder="tvly-..."
-            className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+            className="bg-background border-border text-foreground"
           />
-          <p className="text-xs text-[#565f89]">
+          <p className="text-xs text-muted-foreground">
             Use $TAVILY_API_KEY to reference an environment variable
           </p>
         </div>
       </div>
 
       {/* Synthesis Backend (Sidecar) */}
-      <div className="space-y-4 p-4 rounded-lg bg-[#1f2335] border border-[#3b4261]">
-        <h4 className="text-sm font-medium text-[#7aa2f7]">Commit Synthesis Backend</h4>
-        <p className="text-xs text-[#565f89]">
+      <div className="space-y-4 p-4 rounded-lg bg-card border border-border">
+        <h4 className="text-sm font-medium text-[var(--ansi-blue)]">Commit Synthesis Backend</h4>
+        <p className="text-xs text-muted-foreground">
           Choose the AI backend for generating commit messages and session summaries
         </p>
 
         <div className="space-y-2">
-          <label htmlFor="synthesis-backend" className="text-sm text-[#c0caf5]">
+          <label htmlFor="synthesis-backend" className="text-sm text-foreground">
             Backend
           </label>
           <SimpleSelect
@@ -303,10 +303,12 @@ export function AiSettings({
               { value: "template", label: "Template Only (No LLM)" },
             ]}
           />
-          {isChangingBackend && <p className="text-xs text-[#7aa2f7]">Switching backend...</p>}
+          {isChangingBackend && (
+            <p className="text-xs text-[var(--ansi-blue)]">Switching backend...</p>
+          )}
           {synthesisStatus && (
             <p
-              className={`text-xs ${synthesisStatus.startsWith("✓") ? "text-[#9ece6a]" : "text-[#f7768e]"}`}
+              className={`text-xs ${synthesisStatus.startsWith("✓") ? "text-[var(--ansi-green)]" : "text-[var(--ansi-red)]"}`}
             >
               {synthesisStatus}
             </p>
@@ -314,7 +316,7 @@ export function AiSettings({
         </div>
 
         {sidecarSettings.synthesis_backend === "local" && (
-          <div className="text-xs text-[#565f89] space-y-1">
+          <div className="text-xs text-muted-foreground space-y-1">
             <p>• Uses Qwen 2.5 0.5B model for on-device inference</p>
             <p>• Slower but works offline</p>
             <p>• Model downloads automatically on first use (~350MB)</p>
@@ -323,14 +325,14 @@ export function AiSettings({
 
         {sidecarSettings.synthesis_backend === "vertex_anthropic" && (
           <div className="space-y-3">
-            <div className="text-xs text-[#565f89] space-y-1">
+            <div className="text-xs text-muted-foreground space-y-1">
               <p>• Uses Claude via your Vertex AI configuration</p>
               <p>• Fast and high quality</p>
               <p>• Requires active Vertex AI credentials</p>
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="synthesis-vertex-model" className="text-sm text-[#c0caf5]">
+              <label htmlFor="synthesis-vertex-model" className="text-sm text-foreground">
                 Model
               </label>
               <SimpleSelect
@@ -352,11 +354,11 @@ export function AiSettings({
 
             {/* Optional: Override credentials for synthesis */}
             <details className="text-xs">
-              <summary className="text-[#565f89] cursor-pointer hover:text-[#c0caf5]">
+              <summary className="text-muted-foreground cursor-pointer hover:text-foreground">
                 Override Vertex AI credentials (optional)
               </summary>
-              <div className="mt-2 space-y-2 pl-2 border-l border-[#3b4261]">
-                <p className="text-[#565f89]">
+              <div className="mt-2 space-y-2 pl-2 border-l border-border">
+                <p className="text-muted-foreground">
                   By default, synthesis uses your main Vertex AI configuration above.
                 </p>
                 <Input
@@ -371,7 +373,7 @@ export function AiSettings({
                       },
                     })
                   }
-                  className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5] h-8"
+                  className="bg-background border-border text-foreground h-8"
                 />
                 <Input
                   placeholder="Location (leave empty to use main config)"
@@ -385,7 +387,7 @@ export function AiSettings({
                       },
                     })
                   }
-                  className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5] h-8"
+                  className="bg-background border-border text-foreground h-8"
                 />
               </div>
             </details>
@@ -394,13 +396,13 @@ export function AiSettings({
 
         {sidecarSettings.synthesis_backend === "openai" && (
           <div className="space-y-3">
-            <div className="text-xs text-[#565f89] space-y-1">
+            <div className="text-xs text-muted-foreground space-y-1">
               <p>• Uses OpenAI API</p>
               <p>• Fast and reliable</p>
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="synthesis-openai-model" className="text-sm text-[#c0caf5]">
+              <label htmlFor="synthesis-openai-model" className="text-sm text-foreground">
                 Model
               </label>
               <SimpleSelect
@@ -421,7 +423,7 @@ export function AiSettings({
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="synthesis-openai-key" className="text-sm text-[#c0caf5]">
+              <label htmlFor="synthesis-openai-key" className="text-sm text-foreground">
                 API Key
               </label>
               <Input
@@ -438,7 +440,7 @@ export function AiSettings({
                     },
                   })
                 }
-                className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+                className="bg-background border-border text-foreground"
               />
             </div>
           </div>
@@ -446,12 +448,12 @@ export function AiSettings({
 
         {sidecarSettings.synthesis_backend === "grok" && (
           <div className="space-y-3">
-            <div className="text-xs text-[#565f89] space-y-1">
+            <div className="text-xs text-muted-foreground space-y-1">
               <p>• Uses xAI Grok API</p>
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="synthesis-grok-model" className="text-sm text-[#c0caf5]">
+              <label htmlFor="synthesis-grok-model" className="text-sm text-foreground">
                 Model
               </label>
               <SimpleSelect
@@ -471,7 +473,7 @@ export function AiSettings({
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="synthesis-grok-key" className="text-sm text-[#c0caf5]">
+              <label htmlFor="synthesis-grok-key" className="text-sm text-foreground">
                 API Key
               </label>
               <Input
@@ -488,14 +490,14 @@ export function AiSettings({
                     },
                   })
                 }
-                className="bg-[#1a1b26] border-[#3b4261] text-[#c0caf5]"
+                className="bg-background border-border text-foreground"
               />
             </div>
           </div>
         )}
 
         {sidecarSettings.synthesis_backend === "template" && (
-          <div className="text-xs text-[#565f89] space-y-1">
+          <div className="text-xs text-muted-foreground space-y-1">
             <p>• Uses simple templates without LLM enhancement</p>
             <p>• Fastest option, works offline</p>
             <p>• Basic commit messages based on file changes</p>

@@ -622,8 +622,7 @@ describe("useTauriEvents", () => {
           processName: "npm",
           workingDirectory: "/Users/test/project",
         };
-        const displayName =
-          session.processName || session.workingDirectory.split("/").pop();
+        const displayName = session.processName || session.workingDirectory.split("/").pop();
         expect(displayName).toBe("npm");
       });
 

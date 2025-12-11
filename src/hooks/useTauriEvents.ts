@@ -44,8 +44,19 @@ interface SessionEndedEvent {
 // Commands that are typically fast and shouldn't trigger tab name updates
 // This is a minimal fallback - the main filtering is duration-based
 const FAST_COMMANDS = new Set([
-  'ls', 'pwd', 'cd', 'echo', 'cat', 'which', 'whoami',
-  'date', 'clear', 'exit', 'history', 'env', 'printenv',
+  "ls",
+  "pwd",
+  "cd",
+  "echo",
+  "cat",
+  "which",
+  "whoami",
+  "date",
+  "clear",
+  "exit",
+  "history",
+  "env",
+  "printenv",
 ]);
 
 function isFastCommand(command: string | null): boolean {
@@ -61,22 +72,22 @@ function isFastCommand(command: string | null): boolean {
  */
 function extractProcessName(command: string | null): string | null {
   if (!command) return null;
-  
+
   const trimmed = command.trim();
   if (!trimmed) return null;
 
   // Remove environment variable assignments at the start (e.g., "ENV=val command")
-  const withoutEnv = trimmed.replace(/^[A-Z_][A-Z0-9_]*=\S+\s+/g, '');
-  
+  const withoutEnv = trimmed.replace(/^[A-Z_][A-Z0-9_]*=\S+\s+/g, "");
+
   // Handle sudo/doas prefix
-  const withoutSudo = withoutEnv.replace(/^(sudo|doas)\s+/, '');
-  
+  const withoutSudo = withoutEnv.replace(/^(sudo|doas)\s+/, "");
+
   // Get the first word (the actual command)
   const firstWord = withoutSudo.split(/\s+/)[0];
-  
+
   // Strip path if present (e.g., "/usr/bin/npm" -> "npm")
-  const baseName = firstWord.split('/').pop() || firstWord;
-  
+  const baseName = firstWord.split("/").pop() || firstWord;
+
   return baseName;
 }
 
@@ -105,7 +116,7 @@ export function useTauriEvents() {
             break;
           case "command_start": {
             state.handleCommandStart(session_id, command);
-            
+
             // Skip process detection for known-fast commands
             if (isFastCommand(command)) {
               break;
@@ -126,12 +137,12 @@ export function useTauriEvents() {
               try {
                 // Check if something is still running (OS verification)
                 const osProcess = await ptyGetForegroundProcess(session_id);
-                
+
                 // If shell returned to foreground, the command finished quickly
-                if (!osProcess || ['zsh', 'bash', 'sh', 'fish'].includes(osProcess)) {
+                if (!osProcess || ["zsh", "bash", "sh", "fish"].includes(osProcess)) {
                   return; // Don't update tab name
                 }
-                
+
                 // Command is still running - use the command name we extracted
                 // This gives us "pnpm" instead of "node", "just" instead of child process
                 if (commandProcess) {
@@ -148,7 +159,7 @@ export function useTauriEvents() {
             processDetectionTimers.set(session_id, timer);
             break;
           }
-          case "command_end":
+          case "command_end": {
             if (exit_code !== null) {
               state.handleCommandEnd(session_id, exit_code);
             }
@@ -161,6 +172,7 @@ export function useTauriEvents() {
             // Clear process name when command ends
             state.setProcessName(session_id, null);
             break;
+          }
         }
       })
     );
