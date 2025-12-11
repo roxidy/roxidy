@@ -46,6 +46,7 @@ pub mod state;
 pub use capture::CaptureContext;
 #[cfg(feature = "tauri")]
 pub use commands::*;
+#[allow(unused_imports)]
 pub use config::SidecarConfig;
 
 pub use state::SidecarState;

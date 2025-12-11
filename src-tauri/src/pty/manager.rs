@@ -1,21 +1,27 @@
 #![allow(dead_code)]
 
+#[cfg(feature = "tauri")]
 use crate::error::{QbitError, Result};
+#[cfg(feature = "tauri")]
 use parking_lot::Mutex;
 #[cfg(feature = "tauri")]
-use portable_pty::{native_pty_system, CommandBuilder};
-use portable_pty::{Child, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "tauri")]
 use std::collections::HashMap;
 #[cfg(feature = "tauri")]
 use std::io::Read;
+#[cfg(feature = "tauri")]
 use std::io::Write;
+#[cfg(feature = "tauri")]
 use std::path::PathBuf;
+#[cfg(feature = "tauri")]
 use std::sync::Arc;
 #[cfg(feature = "tauri")]
 use std::thread;
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Emitter};
+#[cfg(feature = "tauri")]
 use uuid::Uuid;
 
 #[cfg(feature = "tauri")]

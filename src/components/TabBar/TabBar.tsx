@@ -3,12 +3,7 @@ import { Bot, Plus, Settings, Terminal, X } from "lucide-react";
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ptyDestroy } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { type Session, useStore } from "@/store";
@@ -45,7 +40,7 @@ export function TabBar({ onNewTab, onOpenSettings }: TabBarProps) {
       }
       removeSession(sessionId);
     },
-    [removeSession],
+    [removeSession]
   );
 
   return (
@@ -138,17 +133,16 @@ const TabItem = React.memo(function TabItem({
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   // Determine display name: custom name > process name > directory name
-  const { displayName, dirName, isCustomName, isProcessName } =
-    React.useMemo(() => {
-      const dir = session.workingDirectory.split(/[/\\]/).pop() || "Terminal";
-      const name = session.customName || session.processName || dir;
-      return {
-        displayName: name,
-        dirName: dir,
-        isCustomName: !!session.customName,
-        isProcessName: !session.customName && !!session.processName,
-      };
-    }, [session.customName, session.processName, session.workingDirectory]);
+  const { displayName, dirName, isCustomName, isProcessName } = React.useMemo(() => {
+    const dir = session.workingDirectory.split(/[/\\]/).pop() || "Terminal";
+    const name = session.customName || session.processName || dir;
+    return {
+      displayName: name,
+      dirName: dir,
+      isCustomName: !!session.customName,
+      isProcessName: !session.customName && !!session.processName,
+    };
+  }, [session.customName, session.processName, session.workingDirectory]);
 
   // Focus input when entering edit mode
   React.useEffect(() => {
@@ -165,7 +159,7 @@ const TabItem = React.memo(function TabItem({
       setIsEditing(true);
       setEditValue(session.customName || dirName);
     },
-    [session.customName, dirName],
+    [session.customName, dirName]
   );
 
   const handleSave = React.useCallback(() => {
@@ -184,21 +178,17 @@ const TabItem = React.memo(function TabItem({
         setIsEditing(false);
       }
     },
-    [handleSave],
+    [handleSave]
   );
 
   const ModeIcon = session.mode === "agent" ? Bot : Terminal;
   const modeColor =
-    session.mode === "agent"
-      ? "text-[var(--ansi-magenta)]"
-      : "text-[var(--ansi-blue)]";
+    session.mode === "agent" ? "text-[var(--ansi-magenta)]" : "text-[var(--ansi-blue)]";
 
   // Generate tooltip text showing full context
   const tooltipText = React.useMemo(() => {
-    if (isCustomName)
-      return `Custom name: ${displayName}\nDirectory: ${session.workingDirectory}`;
-    if (isProcessName)
-      return `Running: ${displayName}\nDirectory: ${session.workingDirectory}`;
+    if (isCustomName) return `Custom name: ${displayName}\nDirectory: ${session.workingDirectory}`;
+    if (isProcessName) return `Running: ${displayName}\nDirectory: ${session.workingDirectory}`;
     return session.workingDirectory;
   }, [isCustomName, isProcessName, displayName, session.workingDirectory]);
 
@@ -213,14 +203,14 @@ const TabItem = React.memo(function TabItem({
               "data-[state=active]:bg-accent data-[state=active]:text-foreground data-[state=active]:shadow-none",
               "data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-card data-[state=inactive]:hover:text-foreground",
               "border-none focus-visible:ring-0 focus-visible:ring-offset-0",
-              canClose && "pr-7", // Add padding for close button
+              canClose && "pr-7" // Add padding for close button
             )}
           >
             {/* Mode icon */}
             <ModeIcon
               className={cn(
                 "w-3.5 h-3.5 flex-shrink-0",
-                isActive ? modeColor : "text-muted-foreground",
+                isActive ? modeColor : "text-muted-foreground"
               )}
             />
 
@@ -236,7 +226,7 @@ const TabItem = React.memo(function TabItem({
                 onClick={(e) => e.stopPropagation()}
                 className={cn(
                   "truncate text-xs bg-transparent border-none outline-none",
-                  "focus:ring-1 focus:ring-primary rounded px-1 min-w-[60px] max-w-[140px]",
+                  "focus:ring-1 focus:ring-primary rounded px-1 min-w-[60px] max-w-[140px]"
                 )}
               />
             ) : (
@@ -244,7 +234,7 @@ const TabItem = React.memo(function TabItem({
                 type="button"
                 className={cn(
                   "truncate text-xs bg-transparent border-0 p-0 cursor-text",
-                  isProcessName && "text-[var(--ansi-yellow)]",
+                  isProcessName && "text-[var(--ansi-yellow)]"
                 )}
                 onDoubleClick={handleDoubleClick}
               >
@@ -261,7 +251,7 @@ const TabItem = React.memo(function TabItem({
               className={cn(
                 "absolute right-1 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity",
                 "hover:bg-primary/20 text-muted-foreground hover:text-foreground",
-                "z-10",
+                "z-10"
               )}
               title="Close tab"
             >
