@@ -86,8 +86,11 @@ pub struct Session {
 impl Session {
     /// File/directory names
     const STATE_FILE: &'static str = "state.md";
+    const LOG_FILE: &'static str = "log.md";
     const PATCHES_DIR: &'static str = "patches";
+    const ARTIFACTS_DIR: &'static str = "artifacts";
     const STAGED_DIR: &'static str = "staged";
+    const PENDING_DIR: &'static str = "pending";
     const APPLIED_DIR: &'static str = "applied";
 
     /// Create a new session
@@ -112,6 +115,14 @@ impl Session {
             .await
             .context("Failed to create applied patches directory")?;
 
+        // Create artifacts directories (L3)
+        fs::create_dir_all(dir.join(Self::ARTIFACTS_DIR).join(Self::PENDING_DIR))
+            .await
+            .context("Failed to create pending artifacts directory")?;
+        fs::create_dir_all(dir.join(Self::ARTIFACTS_DIR).join(Self::APPLIED_DIR))
+            .await
+            .context("Failed to create applied artifacts directory")?;
+
         // Create metadata
         let meta = SessionMeta::new(session_id.clone(), cwd, initial_request.clone());
 
@@ -120,6 +131,15 @@ impl Session {
         fs::write(dir.join(Self::STATE_FILE), &state_content)
             .await
             .context("Failed to write state.md")?;
+
+        // Write initial log.md (append-only event log)
+        let log_content = format!(
+            "# Session Log\n\n> Session started: {}\n\n",
+            meta.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
+        fs::write(dir.join(Self::LOG_FILE), &log_content)
+            .await
+            .context("Failed to write log.md")?;
 
         tracing::info!("Created new session: {}", session_id);
 
@@ -156,13 +176,27 @@ impl Session {
     }
 
     /// Get the staged patches directory path
+    #[allow(dead_code)]
     pub fn staged_patches_dir(&self) -> PathBuf {
         self.dir.join(Self::PATCHES_DIR).join(Self::STAGED_DIR)
     }
 
     /// Get the applied patches directory path
+    #[allow(dead_code)]
     pub fn applied_patches_dir(&self) -> PathBuf {
         self.dir.join(Self::PATCHES_DIR).join(Self::APPLIED_DIR)
+    }
+
+    /// Get the pending artifacts directory path (L3)
+    #[allow(dead_code)]
+    pub fn pending_artifacts_dir(&self) -> PathBuf {
+        self.dir.join(Self::ARTIFACTS_DIR).join(Self::PENDING_DIR)
+    }
+
+    /// Get the applied artifacts directory path (L3)
+    #[allow(dead_code)]
+    pub fn applied_artifacts_dir(&self) -> PathBuf {
+        self.dir.join(Self::ARTIFACTS_DIR).join(Self::APPLIED_DIR)
     }
 
     /// Read the current state.md content (body only, without frontmatter)
@@ -177,6 +211,7 @@ impl Session {
     }
 
     /// Read the full state.md content (frontmatter + body)
+    #[allow(dead_code)]
     pub async fn read_state_full(&self) -> Result<String> {
         let path = self.dir.join(Self::STATE_FILE);
         fs::read_to_string(&path)
@@ -184,7 +219,44 @@ impl Session {
             .context("Failed to read state.md")
     }
 
+    /// Read the log.md content (append-only event log)
+    pub async fn read_log(&self) -> Result<String> {
+        let path = self.dir.join(Self::LOG_FILE);
+        if path.exists() {
+            fs::read_to_string(&path)
+                .await
+                .context("Failed to read log.md")
+        } else {
+            // Return empty string if log doesn't exist (backwards compatibility)
+            Ok(String::new())
+        }
+    }
+
+    /// Append an entry to log.md
+    #[allow(dead_code)]
+    pub async fn append_log(&self, entry: &str) -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let path = self.dir.join(Self::LOG_FILE);
+        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+        let formatted = format!("\n---\n\n**{}**\n\n{}\n", timestamp, entry);
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await
+            .context("Failed to open log.md")?;
+
+        file.write_all(formatted.as_bytes())
+            .await
+            .context("Failed to append to log.md")?;
+
+        Ok(())
+    }
+
     /// Update state.md body (preserves and updates frontmatter)
+    #[allow(dead_code)]
     pub async fn update_state(&mut self, new_body: &str) -> Result<()> {
         // Update timestamp
         self.meta.updated_at = Utc::now();
@@ -345,6 +417,9 @@ mod tests {
         assert!(sessions_dir.join("test-session/state.md").exists());
         assert!(sessions_dir.join("test-session/patches/staged").exists());
         assert!(sessions_dir.join("test-session/patches/applied").exists());
+        // L3 artifact directories
+        assert!(sessions_dir.join("test-session/artifacts/pending").exists());
+        assert!(sessions_dir.join("test-session/artifacts/applied").exists());
 
         // Load session
         let loaded = Session::load(sessions_dir, "test-session").await.unwrap();

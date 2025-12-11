@@ -68,6 +68,9 @@ importers:
       '@xterm/xterm':
         specifier: ^5.5.0
         version: 5.5.0
+      ajv:
+        specifier: ^8.17.1
+        version: 8.17.1
       ansi-to-react:
         specifier: ^6.1.6
         version: 6.1.6(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -156,9 +159,6 @@ importers:
       '@vitest/ui':
         specifier: ^4.0.14
         version: 4.0.14(vitest@4.0.14)
-      ajv:
-        specifier: ^8.17.1
-        version: 8.17.1
       jsdom:
         specifier: ^27.2.0
         version: 27.2.0

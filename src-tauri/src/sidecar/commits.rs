@@ -87,8 +87,9 @@ pub struct StagedPatch {
     pub message: String,
     /// Files changed (parsed from diffstat)
     pub files: Vec<String>,
-    /// The raw patch content
+    /// The raw patch content (used internally, skipped in serialization)
     #[serde(skip)]
+    #[allow(dead_code)]
     pub patch_content: String,
 }
 
@@ -206,6 +207,7 @@ impl PatchManager {
     /// Create a patch from staged git changes
     ///
     /// This stages files and generates a patch using git format-patch style.
+    #[allow(dead_code)]
     pub async fn create_patch_from_staged(
         &self,
         git_root: &Path,
@@ -429,6 +431,70 @@ impl PatchManager {
         Ok(false)
     }
 
+    /// Update the commit message for a staged patch
+    ///
+    /// This rewrites the patch file with the new message while preserving the diff.
+    pub async fn update_patch_message(&self, id: u32, new_message: &str) -> Result<StagedPatch> {
+        let patch = self
+            .get_staged(id)
+            .await?
+            .context(format!("Patch {} not found in staged", id))?;
+
+        let old_patch_path = self.staged_dir().join(patch.filename());
+
+        // Read the old patch to extract the diff
+        let old_content = fs::read_to_string(&old_patch_path)
+            .await
+            .context("Failed to read patch file")?;
+
+        // Extract the diff portion (everything after the "---" separator line until "--" footer)
+        let diff = extract_diff_from_patch(&old_content);
+
+        // Create new patch content with updated message
+        let new_patch_content = format_patch_content(new_message, &diff);
+
+        // Update patch data
+        let new_subject = new_message.lines().next().unwrap_or("changes").to_string();
+        let updated_patch = StagedPatch {
+            meta: patch.meta.clone(),
+            subject: new_subject.clone(),
+            message: new_message.to_string(),
+            files: patch.files.clone(),
+            patch_content: new_patch_content.clone(),
+        };
+
+        // Calculate new filename (might change if subject changed)
+        let new_patch_path = self.staged_dir().join(updated_patch.filename());
+
+        // Write new patch file
+        fs::write(&new_patch_path, &new_patch_content)
+            .await
+            .context("Failed to write updated patch file")?;
+
+        // Remove old patch file if filename changed
+        if old_patch_path != new_patch_path && old_patch_path.exists() {
+            fs::remove_file(&old_patch_path).await.ok();
+        }
+
+        tracing::info!("Updated patch {} message: {}", id, new_subject);
+        Ok(updated_patch)
+    }
+
+    /// Get the raw diff content from a staged patch
+    pub async fn get_patch_diff(&self, id: u32) -> Result<String> {
+        let patch = self
+            .get_staged(id)
+            .await?
+            .context(format!("Patch {} not found in staged", id))?;
+
+        let patch_path = self.staged_dir().join(patch.filename());
+        let content = fs::read_to_string(&patch_path)
+            .await
+            .context("Failed to read patch file")?;
+
+        Ok(extract_diff_from_patch(&content))
+    }
+
     /// Apply a staged patch using git am
     pub async fn apply_patch(&self, id: u32, git_root: &Path) -> Result<String> {
         let patch = self
@@ -528,6 +594,7 @@ impl PatchManager {
 // =============================================================================
 
 /// Generate a format-patch style patch from staged changes
+#[allow(dead_code)]
 async fn generate_format_patch(git_root: &Path, message: &str) -> Result<String> {
     // Get the diff of staged changes
     let diff_output = Command::new("git")
@@ -639,6 +706,40 @@ fn extract_message_from_patch(patch_content: &str) -> String {
     message_lines.join("\n").trim().to_string()
 }
 
+/// Extract the diff portion from a patch file
+///
+/// The diff starts after the diffstat section (after "---" and file stats)
+/// and ends before the "--" footer line.
+fn extract_diff_from_patch(patch_content: &str) -> String {
+    let mut in_diff = false;
+    let mut diff_lines = Vec::new();
+    let mut found_separator = false;
+
+    for line in patch_content.lines() {
+        // Look for the "---" separator after the message
+        if line == "---" && !found_separator {
+            found_separator = true;
+            continue;
+        }
+
+        // After the separator, look for the diff start
+        if found_separator && line.starts_with("diff --git") {
+            in_diff = true;
+        }
+
+        // Stop at the footer
+        if line == "--" {
+            break;
+        }
+
+        if in_diff {
+            diff_lines.push(line);
+        }
+    }
+
+    diff_lines.join("\n")
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -664,6 +765,7 @@ fn slugify(title: &str) -> String {
 // =============================================================================
 
 /// System prompt for LLM-based commit message generation
+#[allow(dead_code)]
 pub const COMMIT_MESSAGE_PROMPT: &str = r#"You are generating a git commit message for the following changes.
 
 ## Guidelines

@@ -10,8 +10,10 @@ default:
 # ============================================
 
 # Start development server (frontend + backend)
-dev:
-    pnpm tauri dev
+# Usage: just dev [path]
+# Example: just dev ~/Code/my-project
+dev path="":
+    {{ if path == "" { "pnpm tauri dev" } else { "pnpm tauri dev -- " + path } }}
 
 # Start only the frontend dev server
 dev-fe:

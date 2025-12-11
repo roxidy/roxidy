@@ -8,13 +8,13 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 #[cfg(feature = "tauri")]
 use tauri::AppHandle;
 
 use super::config::SidecarConfig;
-use super::events::SessionEvent;
+use super::events::{SessionEvent, SidecarEvent};
 use super::processor::{Processor, ProcessorConfig};
 use super::session::{ensure_sessions_dir, Session, SessionMeta};
 
@@ -86,6 +86,23 @@ impl SidecarState {
         *self.app_handle.write().unwrap() = Some(handle);
     }
 
+    /// Emit a sidecar event to the frontend
+    #[cfg(feature = "tauri")]
+    pub fn emit_event(&self, event: SidecarEvent) {
+        use tauri::Emitter;
+        if let Some(handle) = self.app_handle.read().unwrap().as_ref() {
+            if let Err(e) = handle.emit("sidecar-event", &event) {
+                tracing::warn!("Failed to emit sidecar event: {}", e);
+            }
+        }
+    }
+
+    /// No-op emit_event for non-tauri builds
+    #[cfg(not(feature = "tauri"))]
+    pub fn emit_event(&self, _event: SidecarEvent) {
+        // No-op when not using tauri
+    }
+
     /// Initialize the sidecar system
     pub async fn initialize(&self, workspace: PathBuf) -> Result<()> {
         let config = self.config.read().unwrap().clone();
@@ -99,10 +116,28 @@ impl SidecarState {
         let sessions_dir = config.sessions_dir();
         ensure_sessions_dir(&sessions_dir).await?;
 
-        // Create processor with simplified config
+        // Create processor with synthesis config from sidecar config
+        let synthesis_config = super::synthesis::SynthesisConfig {
+            enabled: config.synthesis_enabled,
+            backend: config.synthesis_backend,
+            ..Default::default()
+        };
+
+        // Get app handle for processor to emit events
+        #[cfg(feature = "tauri")]
+        let app_handle_arc = self
+            .app_handle
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|h| Arc::new(h.clone()));
+
         let processor_config = ProcessorConfig {
             sessions_dir: sessions_dir.clone(),
             generate_patches: true,
+            synthesis: synthesis_config,
+            #[cfg(feature = "tauri")]
+            app_handle: app_handle_arc,
         };
         let processor = Processor::spawn(processor_config);
 
@@ -184,6 +219,11 @@ impl SidecarState {
             state.current_session_id = Some(session_id.clone());
         }
 
+        // Emit session started event
+        self.emit_event(SidecarEvent::SessionStarted {
+            session_id: session_id.clone(),
+        });
+
         tracing::info!("Started new session: {}", session_id);
         Ok(session_id)
     }
@@ -198,6 +238,11 @@ impl SidecarState {
         let Some(session_id) = session_id else {
             return Ok(None);
         };
+
+        // Emit session ended event
+        self.emit_event(SidecarEvent::SessionEnded {
+            session_id: session_id.clone(),
+        });
 
         // Signal processor to end session
         if let Some(processor) = self.processor.read().unwrap().as_ref() {
@@ -293,6 +338,13 @@ impl SidecarState {
         session.read_state().await
     }
 
+    /// Get session log.md content
+    pub async fn get_session_log(&self, session_id: &str) -> Result<String> {
+        let sessions_dir = self.config.read().unwrap().sessions_dir();
+        let session = Session::load(&sessions_dir, session_id).await?;
+        session.read_log().await
+    }
+
     /// Get session metadata
     pub async fn get_session_meta(&self, session_id: &str) -> Result<SessionMeta> {
         let sessions_dir = self.config.read().unwrap().sessions_dir();
@@ -345,6 +397,10 @@ mod tests {
             use_llm_for_state: false,
             capture_tool_calls: true,
             capture_reasoning: true,
+            synthesis_enabled: true,
+            synthesis_backend: crate::sidecar::synthesis::SynthesisBackend::Template,
+            artifact_synthesis_backend:
+                crate::sidecar::artifacts::ArtifactSynthesisBackend::Template,
         }
     }
 

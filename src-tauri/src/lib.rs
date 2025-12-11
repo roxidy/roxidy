@@ -52,12 +52,39 @@ use settings::{
 };
 #[cfg(feature = "tauri")]
 use sidecar::{
-    sidecar_apply_all_patches, sidecar_apply_patch, sidecar_current_session, sidecar_discard_patch,
-    sidecar_end_session, sidecar_get_applied_patches, sidecar_get_config,
-    sidecar_get_current_staged_patches, sidecar_get_injectable_context, sidecar_get_patch,
-    sidecar_get_session_meta, sidecar_get_session_state, sidecar_get_staged_patches,
-    sidecar_initialize, sidecar_list_sessions, sidecar_set_config, sidecar_shutdown,
-    sidecar_start_session, sidecar_status,
+    // L3: Artifact commands
+    sidecar_apply_all_artifacts,
+    // L2: Patch commands
+    sidecar_apply_all_patches,
+    sidecar_apply_artifact,
+    sidecar_apply_patch,
+    sidecar_current_session,
+    sidecar_discard_artifact,
+    sidecar_discard_patch,
+    sidecar_end_session,
+    sidecar_get_applied_artifacts,
+    sidecar_get_applied_patches,
+    sidecar_get_artifact,
+    sidecar_get_config,
+    sidecar_get_current_pending_artifacts,
+    sidecar_get_current_staged_patches,
+    sidecar_get_injectable_context,
+    sidecar_get_patch,
+    sidecar_get_pending_artifacts,
+    sidecar_get_session_log,
+    sidecar_get_session_meta,
+    sidecar_get_session_state,
+    sidecar_get_staged_patches,
+    sidecar_initialize,
+    sidecar_list_sessions,
+    sidecar_preview_artifact,
+    sidecar_regenerate_artifacts,
+    sidecar_regenerate_patch,
+    sidecar_set_config,
+    sidecar_shutdown,
+    sidecar_start_session,
+    sidecar_status,
+    sidecar_update_patch_message,
 };
 #[cfg(feature = "tauri")]
 use state::AppState;
@@ -68,6 +95,25 @@ use tauri::Manager;
 #[cfg(feature = "tauri")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Parse CLI arguments for workspace directory
+    // Usage: qbit [path] or pnpm tauri dev -- [path]
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        let path_arg = &args[1];
+        // Skip if it looks like a flag (starts with -)
+        if !path_arg.starts_with('-') {
+            // Expand ~ to home directory
+            let workspace = if path_arg.starts_with("~/") {
+                dirs::home_dir()
+                    .map(|home| home.join(&path_arg[2..]))
+                    .unwrap_or_else(|| std::path::PathBuf::from(path_arg))
+            } else {
+                std::path::PathBuf::from(path_arg)
+            };
+            std::env::set_var("QBIT_WORKSPACE", &workspace);
+        }
+    }
+
     // Install rustls crypto provider (required for rustls 0.23+)
     // This must be done before any TLS operations (e.g., LanceDB, reqwest)
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -128,9 +174,23 @@ pub fn run() {
                     return;
                 }
 
-                // Get workspace path (default to home directory)
-                let workspace = std::env::current_dir()
-                    .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default());
+                // Get workspace path from QBIT_WORKSPACE env var, or fall back to current_dir
+                let workspace = std::env::var("QBIT_WORKSPACE")
+                    .ok()
+                    .map(|p| {
+                        // Expand ~ to home directory
+                        if p.starts_with("~/") {
+                            dirs::home_dir()
+                                .map(|home| home.join(&p[2..]))
+                                .unwrap_or_else(|| std::path::PathBuf::from(&p))
+                        } else {
+                            std::path::PathBuf::from(&p)
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default())
+                    });
 
                 tracing::info!(
                     "[tauri-setup] Initializing sidecar for workspace: {:?}",
@@ -269,6 +329,7 @@ pub fn run() {
             sidecar_end_session,
             sidecar_current_session,
             sidecar_get_session_state,
+            sidecar_get_session_log,
             sidecar_get_injectable_context,
             sidecar_get_session_meta,
             sidecar_list_sessions,
@@ -283,6 +344,18 @@ pub fn run() {
             sidecar_get_current_staged_patches,
             sidecar_apply_patch,
             sidecar_apply_all_patches,
+            sidecar_regenerate_patch,
+            sidecar_update_patch_message,
+            // L3: Project artifacts (auto-maintained docs)
+            sidecar_get_pending_artifacts,
+            sidecar_get_applied_artifacts,
+            sidecar_get_artifact,
+            sidecar_discard_artifact,
+            sidecar_preview_artifact,
+            sidecar_get_current_pending_artifacts,
+            sidecar_apply_artifact,
+            sidecar_apply_all_artifacts,
+            sidecar_regenerate_artifacts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

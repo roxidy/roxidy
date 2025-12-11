@@ -262,7 +262,18 @@ impl PtyManager {
         cmd.env("TERM", "xterm-256color");
 
         let work_dir = working_directory.unwrap_or_else(|| {
-            // Try INIT_CWD first (set by pnpm/npm to original invocation directory)
+            // Try QBIT_WORKSPACE first (set explicitly by user)
+            if let Ok(workspace) = std::env::var("QBIT_WORKSPACE") {
+                // Expand ~ to home directory
+                if let Some(stripped) = workspace.strip_prefix("~/") {
+                    if let Some(home) = dirs::home_dir() {
+                        return home.join(stripped);
+                    }
+                }
+                return PathBuf::from(&workspace);
+            }
+
+            // Try INIT_CWD next (set by pnpm/npm to original invocation directory)
             // Then try current_dir, adjusting for src-tauri if needed
             // Fall back to home dir, then root
             if let Ok(init_cwd) = std::env::var("INIT_CWD") {

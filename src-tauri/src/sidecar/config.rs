@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use super::artifacts::ArtifactSynthesisBackend;
+use super::synthesis::SynthesisBackend;
+
 /// Sidecar configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidecarConfig {
@@ -29,6 +32,16 @@ pub struct SidecarConfig {
 
     /// Capture agent reasoning events
     pub capture_reasoning: bool,
+
+    /// Enable synthesis for commit messages
+    pub synthesis_enabled: bool,
+
+    /// Which synthesis backend to use for commit messages
+    pub synthesis_backend: SynthesisBackend,
+
+    /// Which synthesis backend to use for artifact generation (README.md, CLAUDE.md)
+    /// Defaults to the same backend as synthesis_backend
+    pub artifact_synthesis_backend: ArtifactSynthesisBackend,
 }
 
 impl Default for SidecarConfig {
@@ -42,6 +55,9 @@ impl Default for SidecarConfig {
             use_llm_for_state: false, // Start with rule-based, enable LLM later
             capture_tool_calls: true,
             capture_reasoning: true,
+            synthesis_enabled: true,
+            synthesis_backend: SynthesisBackend::Template,
+            artifact_synthesis_backend: ArtifactSynthesisBackend::Template,
         }
     }
 }
@@ -56,6 +72,17 @@ impl SidecarConfig {
 
     /// Create config from QbitSettings
     pub fn from_qbit_settings(settings: &crate::settings::schema::SidecarSettings) -> Self {
+        let backend = settings
+            .synthesis_backend
+            .parse()
+            .unwrap_or(SynthesisBackend::Template);
+
+        // Artifact synthesis uses the same backend as commit message synthesis by default
+        let artifact_backend = settings
+            .synthesis_backend
+            .parse()
+            .unwrap_or(ArtifactSynthesisBackend::Template);
+
         Self {
             enabled: settings.enabled,
             sessions_dir: None, // Use default
@@ -65,7 +92,32 @@ impl SidecarConfig {
             use_llm_for_state: false,
             capture_tool_calls: settings.capture_tool_calls,
             capture_reasoning: settings.capture_reasoning,
+            synthesis_enabled: settings.synthesis_enabled,
+            synthesis_backend: backend,
+            artifact_synthesis_backend: artifact_backend,
         }
+    }
+
+    /// Get artifact synthesis config from this config
+    #[allow(dead_code)]
+    pub fn artifact_synthesis_config(&self) -> super::artifacts::ArtifactSynthesisConfig {
+        super::artifacts::ArtifactSynthesisConfig {
+            backend: self.artifact_synthesis_backend,
+            ..Default::default()
+        }
+    }
+
+    /// Check if synthesis is enabled and using LLM (not template)
+    #[allow(dead_code)]
+    pub fn use_llm_synthesis(&self) -> bool {
+        self.synthesis_enabled && self.synthesis_backend != SynthesisBackend::Template
+    }
+
+    /// Check if artifact synthesis is enabled and using LLM (not template)
+    #[allow(dead_code)]
+    pub fn use_llm_artifact_synthesis(&self) -> bool {
+        self.synthesis_enabled
+            && self.artifact_synthesis_backend != ArtifactSynthesisBackend::Template
     }
 }
 

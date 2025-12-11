@@ -7,12 +7,19 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+#[cfg(feature = "tauri")]
+use tauri::AppHandle;
+
 use super::commits::{BoundaryReason, PatchManager};
-use super::events::{CommitBoundaryDetector, EventType, SessionEvent};
+use super::events::{CommitBoundaryDetector, EventType, SessionEvent, SidecarEvent};
 use super::session::Session;
+use super::synthesis::{
+    generate_template_message, SynthesisBackend, SynthesisConfig, SynthesisInput,
+};
 
 /// Event sent to the processor
 #[derive(Debug)]
@@ -29,12 +36,27 @@ pub enum ProcessorTask {
 }
 
 /// Configuration for the processor
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProcessorConfig {
     /// Directory containing sessions
     pub sessions_dir: PathBuf,
     /// Whether to generate staged patches (L2)
     pub generate_patches: bool,
+    /// Synthesis configuration for commit messages
+    pub synthesis: SynthesisConfig,
+    /// App handle for emitting events (Tauri only)
+    #[cfg(feature = "tauri")]
+    pub app_handle: Option<Arc<AppHandle>>,
+}
+
+impl std::fmt::Debug for ProcessorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessorConfig")
+            .field("sessions_dir", &self.sessions_dir)
+            .field("generate_patches", &self.generate_patches)
+            .field("synthesis", &self.synthesis)
+            .finish()
+    }
 }
 
 impl Default for ProcessorConfig {
@@ -42,7 +64,29 @@ impl Default for ProcessorConfig {
         Self {
             sessions_dir: super::session::default_sessions_dir(),
             generate_patches: true,
+            synthesis: SynthesisConfig::default(),
+            #[cfg(feature = "tauri")]
+            app_handle: None,
         }
+    }
+}
+
+impl ProcessorConfig {
+    /// Emit a sidecar event to the frontend
+    #[cfg(feature = "tauri")]
+    pub fn emit_event(&self, event: SidecarEvent) {
+        use tauri::Emitter;
+        if let Some(handle) = &self.app_handle {
+            if let Err(e) = handle.emit("sidecar-event", &event) {
+                tracing::warn!("Failed to emit sidecar event from processor: {}", e);
+            }
+        }
+    }
+
+    /// No-op emit_event for non-tauri builds
+    #[cfg(not(feature = "tauri"))]
+    pub fn emit_event(&self, _event: SidecarEvent) {
+        // No-op when not using tauri
     }
 }
 
@@ -281,13 +325,20 @@ async fn generate_patch(
         return Ok(());
     }
 
-    // Generate a simple commit message based on files
-    let message = generate_simple_message(&files);
+    // Generate commit message using synthesis
+    let message = generate_commit_message(config, &session, &files, &git_root).await;
 
     // Create patch
-    manager
+    let patch = manager
         .create_patch_from_changes(&git_root, &files, &message, reason)
         .await?;
+
+    // Emit patch created event
+    config.emit_event(SidecarEvent::PatchCreated {
+        session_id: session_id.to_string(),
+        patch_id: patch.meta.id,
+        subject: patch.subject.clone(),
+    });
 
     // Clear tracked changes
     session_state.file_tracker.clear();
@@ -296,15 +347,81 @@ async fn generate_patch(
     Ok(())
 }
 
-/// Generate a simple commit message from files
-fn generate_simple_message(files: &[PathBuf]) -> String {
-    if files.len() == 1 {
-        let file = &files[0];
-        let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-        format!("chore: update {}", name)
-    } else {
-        format!("chore: update {} files", files.len())
+/// Generate a commit message using the configured synthesis backend
+async fn generate_commit_message(
+    config: &ProcessorConfig,
+    session: &Session,
+    files: &[PathBuf],
+    git_root: &PathBuf,
+) -> String {
+    // If synthesis is disabled or set to template, use fast template-based generation
+    if !config.synthesis.enabled || config.synthesis.backend == SynthesisBackend::Template {
+        // Get diff for template-based analysis
+        let diff = get_diff_for_files(git_root, files)
+            .await
+            .unwrap_or_default();
+        return generate_template_message(files, &diff);
     }
+
+    // Try LLM synthesis
+    match generate_llm_commit_message(config, session, files, git_root).await {
+        Ok(message) => message,
+        Err(e) => {
+            tracing::warn!("LLM synthesis failed, falling back to template: {}", e);
+            // Fallback to template on error
+            let diff = get_diff_for_files(git_root, files)
+                .await
+                .unwrap_or_default();
+            generate_template_message(files, &diff)
+        }
+    }
+}
+
+/// Generate commit message using LLM synthesis
+async fn generate_llm_commit_message(
+    config: &ProcessorConfig,
+    session: &Session,
+    files: &[PathBuf],
+    git_root: &PathBuf,
+) -> Result<String> {
+    use super::synthesis::create_synthesizer;
+
+    // Get diff
+    let diff = get_diff_for_files(git_root, files).await?;
+
+    // Get session context
+    let session_context = session.read_state().await.ok();
+
+    // Create synthesizer
+    let synthesizer = create_synthesizer(&config.synthesis)?;
+
+    // Build input
+    let mut input = SynthesisInput::new(diff, files.to_vec());
+    if let Some(ctx) = session_context {
+        input = input.with_context(ctx);
+    }
+
+    // Generate message
+    let result = synthesizer.synthesize(&input).await?;
+    tracing::debug!("Generated commit message using {} backend", result.backend);
+
+    Ok(result.message)
+}
+
+/// Get git diff for specific files
+async fn get_diff_for_files(git_root: &PathBuf, files: &[PathBuf]) -> Result<String> {
+    use tokio::process::Command;
+
+    let mut cmd = Command::new("git");
+    cmd.arg("diff").arg("HEAD").arg("--").current_dir(git_root);
+
+    for file in files {
+        cmd.arg(file);
+    }
+
+    let output = cmd.output().await.context("Failed to run git diff")?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// Handle session end
@@ -325,6 +442,9 @@ mod tests {
         let config = ProcessorConfig {
             sessions_dir: temp.path().to_path_buf(),
             generate_patches: true,
+            synthesis: SynthesisConfig::default(),
+            #[cfg(feature = "tauri")]
+            app_handle: None,
         };
 
         let processor = Processor::spawn(config);
