@@ -41,15 +41,24 @@ Not one monolithic AI — a team of focused agents, each optimized for specific 
 
 | Agent | Purpose |
 |-------|---------|
-| **Code Analyzer** | Analyzes structure, identifies patterns, provides codebase insights |
-| **Code Explorer** | Maps and navigates codebases to build context for tasks |
-| **Research Agent** | Reads docs, searches the web, gathers information |
-| **Shell Command Executor** | Runs commands with security controls and allowlists |
-| **Code Writer** | Implements features and modifications based on specs |
+| **Code Analyzer** | Deep semantic analysis via Tree-sitter: structure, patterns, metrics |
+| **Code Explorer** | Maps codebases, traces dependencies, finds integration points |
+| **Code Writer** | Implements features with patch-based editing for large changes |
+| **Research Agent** | Web search and documentation lookup for external information |
+| **Shell Executor** | Runs commands, builds, tests with security controls |
 
 ### ⚡ Composable Workflows
 
 Chain agents together for complex tasks. The built-in `git_commit` workflow analyzes your changes and generates logical, well-organized commits automatically.
+
+### 📦 Sidecar Context System
+
+Automatic context capture and commit synthesis:
+
+- **Session Tracking** — Captures agent interactions, file changes, and decisions
+- **Staged Commits** — Auto-generates git format-patch files with conventional commit messages
+- **Project Artifacts** — Proposes README.md and CLAUDE.md updates based on changes
+- **LLM Synthesis** — Multiple backends (Vertex AI, OpenAI, Grok) or rule-based generation
 
 ### 🔧 Bring Your Own Model
 
@@ -126,13 +135,19 @@ Settings are stored in `~/.qbit/settings.toml` (auto-generated on first run).
 qbit/
 ├── src/                    # React frontend
 │   ├── components/         # UI components (shadcn + custom)
+│   │   └── Sidecar/        # Patch/artifact management panel
 │   ├── hooks/              # Tauri event subscriptions
 │   ├── lib/                # Typed invoke() wrappers
 │   └── store/              # Zustand state (single file)
 ├── src-tauri/src/          # Rust backend
 │   ├── ai/                 # Agent system, tools, workflows
+│   │   └── workflow/       # Composable workflow engine (graph-flow)
 │   ├── pty/                # PTY management, OSC parsing
-│   ├── sidecar/            # Context capture + LanceDB
+│   ├── sidecar/            # Context capture + commit synthesis
+│   │   ├── session.rs      # Session lifecycle (state.md)
+│   │   ├── patches.rs      # L2: Git format-patch staging
+│   │   ├── artifacts.rs    # L3: README/CLAUDE.md generation
+│   │   └── synthesis.rs    # LLM backends for commit messages
 │   ├── settings/           # TOML configuration
 │   └── cli/                # Headless CLI binary
 └── evals/                  # LLM evaluation framework (Python)
@@ -194,7 +209,10 @@ cargo build -p qbit --features cli --no-default-features --bin qbit-cli
 | Sub-agent system | ✅ Done |
 | Composable workflows | ✅ Done |
 | CLI binary (headless mode) | ✅ Done |
-| Sidecar context capture | ✅ Done |
+| Sidecar context capture (L1) | ✅ Done |
+| Staged commits with LLM synthesis (L2) | ✅ Done |
+| Project artifact generation (L3) | ✅ Done |
+| Sidecar UI panel | ✅ Done |
 | LLM evaluation framework | ✅ Done |
 | Interactive commands (vim, htop) | 🚧 In Progress |
 | Multi-provider support (OpenAI, Gemini, etc.) | 🚧 In Progress |

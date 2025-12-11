@@ -451,4 +451,178 @@ mod tests {
         let processor = Processor::spawn(config);
         processor.shutdown().await;
     }
+
+    #[test]
+    fn test_file_change_tracker_records_unique_paths() {
+        let mut tracker = FileChangeTracker::new();
+
+        tracker.record_change(PathBuf::from("src/main.rs"));
+        tracker.record_change(PathBuf::from("src/lib.rs"));
+        tracker.record_change(PathBuf::from("src/main.rs")); // duplicate
+
+        assert_eq!(tracker.get_files().len(), 2);
+        assert!(tracker.get_files().contains(&PathBuf::from("src/main.rs")));
+        assert!(tracker.get_files().contains(&PathBuf::from("src/lib.rs")));
+    }
+
+    #[test]
+    fn test_file_change_tracker_clear() {
+        let mut tracker = FileChangeTracker::new();
+
+        tracker.record_change(PathBuf::from("src/main.rs"));
+        assert!(!tracker.is_empty());
+
+        tracker.clear();
+        assert!(tracker.is_empty());
+    }
+
+    #[test]
+    fn test_is_write_tool() {
+        assert!(is_write_tool("write"));
+        assert!(is_write_tool("Write"));
+        assert!(is_write_tool("WRITE_FILE"));
+        assert!(is_write_tool("edit"));
+        assert!(is_write_tool("Edit_File"));
+        assert!(is_write_tool("create_file"));
+        assert!(is_write_tool("delete_file"));
+        assert!(!is_write_tool("read_file"));
+        assert!(!is_write_tool("grep"));
+    }
+
+    #[test]
+    fn test_parse_boundary_reason() {
+        assert!(matches!(
+            parse_boundary_reason("Completion signal detected"),
+            BoundaryReason::CompletionSignal
+        ));
+        assert!(matches!(
+            parse_boundary_reason("User approved changes"),
+            BoundaryReason::UserApproval
+        ));
+        assert!(matches!(
+            parse_boundary_reason("Session ended"),
+            BoundaryReason::SessionEnd
+        ));
+        assert!(matches!(
+            parse_boundary_reason("Pause in activity detected"),
+            BoundaryReason::ActivityPause
+        ));
+    }
+
+    #[test]
+    fn test_track_file_changes_from_file_edit_event() {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let mut state = SessionProcessorState::new();
+
+        let event = SessionEvent::file_edit(
+            session_id,
+            PathBuf::from("src/main.rs"),
+            super::super::events::FileOperation::Modify,
+            Some("Update main function".to_string()),
+        );
+
+        track_file_changes(&event, &mut state);
+
+        assert_eq!(state.file_tracker.get_files().len(), 1);
+        assert!(state
+            .file_tracker
+            .get_files()
+            .contains(&PathBuf::from("src/main.rs")));
+    }
+
+    #[test]
+    fn test_track_file_changes_from_tool_call_event() {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let mut state = SessionProcessorState::new();
+
+        // Create a tool call event with files_modified
+        let mut event = SessionEvent::tool_call_with_output(
+            session_id,
+            "write_file".to_string(),
+            Some("path=src/lib.rs".to_string()),
+            None,
+            true,
+            None,
+            None,
+        );
+        event.files_modified = vec![PathBuf::from("src/lib.rs")];
+
+        track_file_changes(&event, &mut state);
+
+        assert_eq!(state.file_tracker.get_files().len(), 1);
+        assert!(state
+            .file_tracker
+            .get_files()
+            .contains(&PathBuf::from("src/lib.rs")));
+    }
+
+    #[test]
+    fn test_commit_boundary_integration_with_processor_state() {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let mut state = SessionProcessorState::new();
+
+        // Add multiple file edits
+        for i in 0..3 {
+            let event = SessionEvent::file_edit(
+                session_id.clone(),
+                PathBuf::from(format!("src/file{}.rs", i)),
+                super::super::events::FileOperation::Modify,
+                None,
+            );
+            track_file_changes(&event, &mut state);
+
+            // Also feed to boundary detector
+            let _boundary = state.boundary_detector.check_boundary(&event);
+        }
+
+        // Now add reasoning with completion signal
+        let reasoning_event =
+            SessionEvent::reasoning(session_id.clone(), "Implementation is complete.", None);
+
+        // Check for boundary
+        let boundary = state.boundary_detector.check_boundary(&reasoning_event);
+
+        // Should trigger a boundary since we have >= min_events (3) and completion signal
+        assert!(
+            boundary.is_some(),
+            "Expected commit boundary to be detected after completion signal"
+        );
+
+        let boundary_info = boundary.unwrap();
+        assert_eq!(
+            boundary_info.files_in_scope.len(),
+            3,
+            "Boundary should include all 3 modified files"
+        );
+    }
+
+    #[test]
+    fn test_no_boundary_without_enough_files() {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let mut state = SessionProcessorState::new();
+
+        // Add only 2 file edits (less than min_events = 3)
+        for i in 0..2 {
+            let event = SessionEvent::file_edit(
+                session_id.clone(),
+                PathBuf::from(format!("src/file{}.rs", i)),
+                super::super::events::FileOperation::Modify,
+                None,
+            );
+            let _ = state.boundary_detector.check_boundary(&event);
+        }
+
+        // Add reasoning with completion signal
+        let reasoning_event =
+            SessionEvent::reasoning(session_id.clone(), "Implementation is complete.", None);
+
+        // Check for boundary
+        let boundary = state.boundary_detector.check_boundary(&reasoning_event);
+
+        // Should NOT trigger a boundary since we have < min_events
+        assert!(
+            boundary.is_none(),
+            "Should not detect boundary with fewer than min_events"
+        );
+    }
 }

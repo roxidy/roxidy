@@ -443,7 +443,7 @@ impl Default for SynthesisVertexSettings {
         Self {
             project_id: None,
             location: None,
-            model: "claude-sonnet-4-5-20250514".to_string(),
+            model: "claude-haiku-4-5@20251001".to_string(),
             credentials_path: None,
         }
     }

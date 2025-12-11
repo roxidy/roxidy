@@ -172,33 +172,44 @@ impl SidecarState {
     }
 
     /// Start a new session
+    ///
+    /// This method is thread-safe and atomic - if called concurrently, only one
+    /// session will be created and subsequent calls will return the existing session ID.
     pub fn start_session(&self, initial_request: &str) -> Result<String> {
         let config = self.config.read().unwrap();
         if !config.enabled {
             anyhow::bail!("Sidecar is disabled");
         }
+        let sessions_dir = config.sessions_dir();
+        drop(config);
 
-        let state = self.state.read().unwrap();
+        // Use write lock throughout to make check-and-set atomic
+        // This prevents race conditions where two threads could both pass the
+        // "session exists" check before either sets the session ID
+        let mut state = self.state.write().unwrap();
+
         if !state.initialized {
             anyhow::bail!("Sidecar not initialized");
         }
 
-        // Check if session already exists
-        if state.current_session_id.is_some() {
-            return Ok(state.current_session_id.clone().unwrap());
+        // Check if session already exists (atomic with the set below)
+        if let Some(ref existing_id) = state.current_session_id {
+            return Ok(existing_id.clone());
         }
 
         let cwd = state
             .workspace_path
             .clone()
             .unwrap_or_else(|| PathBuf::from("."));
+
+        // Generate session ID and set it atomically (while still holding the lock)
+        let session_id = uuid::Uuid::new_v4().to_string();
+        state.current_session_id = Some(session_id.clone());
+
+        // Release the lock before spawning the async work
         drop(state);
 
-        // Generate session ID
-        let session_id = uuid::Uuid::new_v4().to_string();
-
-        // Create session directory and files synchronously via blocking task
-        let sessions_dir = config.sessions_dir();
+        // Create session directory and files asynchronously
         let sid = session_id.clone();
         let req = initial_request.to_string();
         let cwd_clone = cwd.clone();
@@ -214,12 +225,6 @@ impl SidecarState {
                 }
             });
         });
-
-        // Update state
-        {
-            let mut state = self.state.write().unwrap();
-            state.current_session_id = Some(session_id.clone());
-        }
 
         // Emit session started event
         self.emit_event(SidecarEvent::SessionStarted {
@@ -447,5 +452,103 @@ mod tests {
         let status = state.status();
         assert!(status.enabled);
         assert!(!status.active_session);
+    }
+
+    #[tokio::test]
+    async fn test_start_session_idempotent() {
+        // Test that calling start_session when a session already exists
+        // returns the existing session ID (not a new one)
+        let temp = TempDir::new().unwrap();
+        let config = test_config(temp.path());
+        let state = SidecarState::with_config(config);
+
+        state.initialize(temp.path().to_path_buf()).await.unwrap();
+
+        // First call creates a session
+        let session_id_1 = state.start_session("First request").unwrap();
+        assert!(!session_id_1.is_empty());
+
+        // Second call should return the same session ID
+        let session_id_2 = state.start_session("Second request").unwrap();
+        assert_eq!(
+            session_id_1, session_id_2,
+            "start_session should be idempotent"
+        );
+
+        // Third call should also return the same session ID
+        let session_id_3 = state.start_session("Third request").unwrap();
+        assert_eq!(
+            session_id_1, session_id_3,
+            "start_session should be idempotent"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_session_concurrent_returns_same_id() {
+        // Test that concurrent calls to start_session all return the same session ID
+        // This verifies the race condition fix - the atomic check-and-set
+        use std::sync::Arc;
+
+        let temp = TempDir::new().unwrap();
+        let config = test_config(temp.path());
+        let state = Arc::new(SidecarState::with_config(config));
+
+        state.initialize(temp.path().to_path_buf()).await.unwrap();
+
+        // Spawn multiple concurrent tasks that all try to start a session
+        let mut handles = vec![];
+        for i in 0..10 {
+            let state_clone = Arc::clone(&state);
+            let handle =
+                tokio::spawn(async move { state_clone.start_session(&format!("Request {}", i)) });
+            handles.push(handle);
+        }
+
+        // Collect all results
+        let mut session_ids = vec![];
+        for handle in handles {
+            let result = handle.await.unwrap();
+            session_ids.push(result.unwrap());
+        }
+
+        // All session IDs should be the same
+        let first_id = &session_ids[0];
+        for (i, id) in session_ids.iter().enumerate() {
+            assert_eq!(
+                first_id, id,
+                "All concurrent start_session calls should return the same ID. \
+                 Call {} returned {} but expected {}",
+                i, id, first_id
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_end_session_allows_new_session() {
+        // Test that after ending a session, a new session can be started
+        let temp = TempDir::new().unwrap();
+        let config = test_config(temp.path());
+        let state = SidecarState::with_config(config);
+
+        state.initialize(temp.path().to_path_buf()).await.unwrap();
+
+        // Start first session
+        let session_id_1 = state.start_session("First session").unwrap();
+        assert!(!session_id_1.is_empty());
+
+        // Wait for session creation to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // End the session
+        let _ = state.end_session().unwrap();
+        assert!(state.current_session_id().is_none());
+
+        // Start a new session - should get a different ID
+        let session_id_2 = state.start_session("Second session").unwrap();
+        assert!(!session_id_2.is_empty());
+        assert_ne!(
+            session_id_1, session_id_2,
+            "After ending a session, a new session should have a different ID"
+        );
     }
 }

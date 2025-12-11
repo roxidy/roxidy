@@ -7,11 +7,26 @@ use crate::state::AppState;
 
 /// Clear the AI agent's conversation history.
 /// Call this when starting a new conversation or when the user wants to reset context.
+///
+/// This also ends the current sidecar session (if any) so that a new session
+/// will be started with the next prompt.
 #[tauri::command]
 pub async fn clear_ai_conversation(state: State<'_, AppState>) -> Result<(), String> {
     let bridge_guard = state.ai_state.get_bridge().await?;
     let bridge = bridge_guard.as_ref().unwrap();
     bridge.clear_conversation_history().await;
+
+    // End the sidecar session so a new one starts with the next prompt
+    if let Err(e) = state.sidecar_state.end_session() {
+        tracing::warn!(
+            "Failed to end sidecar session during conversation clear: {}",
+            e
+        );
+        // Don't fail the whole operation - sidecar is optional
+    } else {
+        tracing::debug!("Sidecar session ended during conversation clear");
+    }
+
     tracing::info!("AI conversation history cleared");
     Ok(())
 }

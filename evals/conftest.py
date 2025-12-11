@@ -36,9 +36,6 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_api: mark test as requiring API credentials"
     )
-    config.addinivalue_line(
-        "markers", "requires_sidecar: mark test as requiring sidecar database"
-    )
 
 
 def pytest_collection_modifyitems(config, items):

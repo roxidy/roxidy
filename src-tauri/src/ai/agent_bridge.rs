@@ -756,13 +756,47 @@ impl AgentBridge {
 }
 
 // ============================================================================
+// Drop Implementation for Session Cleanup
+// ============================================================================
+
+impl Drop for AgentBridge {
+    fn drop(&mut self) {
+        // Best-effort session finalization on drop.
+        // This ensures sessions are saved even if the bridge is replaced without
+        // explicit finalization (e.g., during model switching).
+        //
+        // We use try_write() because:
+        // 1. Drop cannot be async, so we can't use .await
+        // 2. If the lock is held, another operation is in progress and will handle cleanup
+        // 3. At drop time, we should typically be the only owner
+        if let Ok(mut guard) = self.session_manager.try_write() {
+            if let Some(ref mut manager) = guard.take() {
+                match manager.finalize() {
+                    Ok(path) => {
+                        tracing::debug!(
+                            "AgentBridge::drop - session finalized: {}",
+                            path.display()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("AgentBridge::drop - failed to finalize session: {}", e);
+                    }
+                }
+            }
+        } else {
+            tracing::debug!(
+                "AgentBridge::drop - could not acquire session_manager lock, skipping finalization"
+            );
+        }
+    }
+}
+
+// ============================================================================
 // Tests for CancellationToken support
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Note: CancellationToken is only available with the server feature
     #[cfg(feature = "server")]
     mod cancellation_tests {

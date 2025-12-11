@@ -23,6 +23,9 @@ pub async fn get_openrouter_api_key(state: State<'_, AppState>) -> Result<Option
 
 /// Initialize the AI agent with Anthropic on Google Cloud Vertex AI.
 ///
+/// If an existing AI agent is running, its session will be finalized and the
+/// sidecar session will be ended before the new agent is initialized.
+///
 /// # Arguments
 /// * `workspace` - Path to the workspace directory
 /// * `credentials_path` - Path to the service account JSON file
@@ -39,6 +42,20 @@ pub async fn init_ai_agent_vertex(
     location: String,
     model: String,
 ) -> Result<(), String> {
+    // Clean up existing session before replacing the bridge
+    // This ensures sessions are properly finalized when switching models
+    {
+        let bridge_guard = state.ai_state.bridge.read().await;
+        if bridge_guard.is_some() {
+            // End the sidecar session (the bridge's Drop impl will finalize its session)
+            if let Err(e) = state.sidecar_state.end_session() {
+                tracing::warn!("Failed to end sidecar session during agent reinit: {}", e);
+            } else {
+                tracing::debug!("Sidecar session ended during agent reinit");
+            }
+        }
+    }
+
     // Phase 5: Use runtime-based constructor
     // TauriRuntime handles event emission via Tauri's event system
     let runtime: Arc<dyn QbitRuntime> = Arc::new(TauriRuntime::new(app));
@@ -62,6 +79,7 @@ pub async fn init_ai_agent_vertex(
 
     configure_bridge(&mut bridge, &state);
 
+    // Replace the bridge (old bridge's Drop impl will finalize its session)
     *state.ai_state.bridge.write().await = Some(bridge);
 
     // Initialize sidecar with the workspace

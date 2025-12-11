@@ -4,9 +4,11 @@
 
 The sidecar system uses a layered architecture for context capture and synthesis:
 
-- **L1 (Event Capture)**: ✅ Implemented — Markdown-based session storage
-- **L2 (Staged Commits)**: ✅ Foundation complete — Git format-patch based commit staging
-- **L3 (Project Artifacts)**: Planned — Auto-maintained project documentation
+- **L1 (Event Capture)**: ✅ Complete — Markdown-based session storage (`state.md` with YAML frontmatter)
+- **L2 (Staged Commits)**: ✅ Complete — Git format-patch based commit staging with LLM synthesis
+- **L3 (Project Artifacts)**: ✅ Complete — Auto-maintained README.md/CLAUDE.md with LLM synthesis
+
+**Remaining:** End-to-end testing of the full L2 → L3 cascade flow.
 
 ## Current Architecture (L1 + L2)
 
@@ -128,15 +130,17 @@ Session events → CommitBoundaryDetector → boundary detected
 
 ### Commands (Tauri)
 
-| Command | Description |
-|---------|-------------|
-| `sidecar_get_staged_patches` | List all patches in `staged/` |
-| `sidecar_get_applied_patches` | List all patches in `applied/` |
-| `sidecar_get_patch(id)` | Read specific patch |
-| `sidecar_apply_patch(id)` | Execute `git am`, move to `applied/` |
-| `sidecar_apply_all_patches` | Apply all staged patches in order |
-| `sidecar_discard_patch(id)` | Delete patch files |
-| `sidecar_get_current_staged_patches` | Get staged patches for active session |
+| Command | Description | Status |
+|---------|-------------|--------|
+| `sidecar_get_staged_patches` | List all patches in `staged/` | ✅ |
+| `sidecar_get_applied_patches` | List all patches in `applied/` | ✅ |
+| `sidecar_get_patch(id)` | Read specific patch | ✅ |
+| `sidecar_apply_patch(id)` | Execute `git am`, move to `applied/`, trigger L3 | ✅ |
+| `sidecar_apply_all_patches` | Apply all staged patches in order, trigger L3 | ✅ |
+| `sidecar_discard_patch(id)` | Delete patch files | ✅ |
+| `sidecar_get_current_staged_patches` | Get staged patches for active session | ✅ |
+| `sidecar_regenerate_patch(id)` | Regenerate patch message using LLM | ✅ |
+| `sidecar_update_patch_message(id, msg)` | Manually update patch commit message | ✅ |
 
 ### Git Integration
 
@@ -252,17 +256,19 @@ You are updating a CLAUDE.md file (AI assistant instructions) based on recent ch
 Return the COMPLETE updated CLAUDE.md.
 ```
 
-### Commands
+### Commands (Tauri)
 
-| Command | Description |
-|---------|-------------|
-| `get_pending_artifacts` | List artifacts in `pending/` |
-| `get_artifact(name)` | Read specific artifact |
-| `preview_artifact(name)` | Show diff against current project file |
-| `apply_artifact(name)` | Copy to project, git stage, move to `applied/` |
-| `apply_all_artifacts` | Apply all pending artifacts |
-| `discard_artifact(name)` | Delete artifact file |
-| `regenerate_artifact(name)` | Re-run LLM generation |
+| Command | Description | Status |
+|---------|-------------|--------|
+| `sidecar_get_pending_artifacts` | List artifacts in `pending/` | ✅ |
+| `sidecar_get_applied_artifacts` | List artifacts in `applied/` | ✅ |
+| `sidecar_get_artifact(name)` | Read specific artifact | ✅ |
+| `sidecar_preview_artifact(name)` | Show diff against current project file | ✅ |
+| `sidecar_apply_artifact(name)` | Copy to project, git stage, move to `applied/` | ✅ |
+| `sidecar_apply_all_artifacts` | Apply all pending artifacts | ✅ |
+| `sidecar_discard_artifact(name)` | Delete artifact file | ✅ |
+| `sidecar_regenerate_artifacts` | Re-run LLM generation with backend override | ✅ |
+| `sidecar_get_current_pending_artifacts` | Get pending artifacts for active session | ✅ |
 
 ### Git Integration
 
@@ -290,28 +296,48 @@ When applying an artifact:
 3. ✅ Add SHA tracking in applied patches
 4. ✅ Implement `sidecar_apply_all_patches`
 
-### Phase 3: L2 LLM Integration (Next)
-1. ⬜ Add LLM prompt for commit message synthesis
-2. ⬜ Implement `regenerate_patch` command
-3. ⬜ Add configuration for LLM vs rule-based
-4. ⬜ Wire processor to auto-generate patches on boundary detection
+### Phase 3: L2 LLM Integration ✅
+1. ✅ Add LLM prompt for commit message synthesis (`synthesis.rs`)
+2. ✅ Implement `sidecar_regenerate_patch` command
+3. ✅ Implement `sidecar_update_patch_message` command (manual update)
+4. ✅ Add configuration for LLM vs rule-based (`SynthesisBackend` enum)
+5. ✅ Multiple LLM backends: Template, VertexAnthropic, OpenAI, Grok
+6. ✅ Wire processor to auto-generate patches on boundary detection (`CaptureContext` in `capture.rs`)
 
-### Phase 4: L3 Foundation
-1. ⬜ Add `artifacts/` directory structure to `Session`
-2. ⬜ Create `ArtifactFile` struct with metadata header parsing
-3. ⬜ Implement artifact generation (rule-based first)
-4. ⬜ Add commands: `get_pending_artifacts`, `discard_artifact`
+### Phase 4: L3 Foundation ✅
+1. ✅ Add `artifacts/` directory structure to `Session`
+2. ✅ Create `ArtifactFile` struct with metadata header parsing
+3. ✅ Create `ArtifactMeta` struct with HTML comment header format
+4. ✅ Implement `ArtifactManager` for artifact lifecycle
+5. ✅ Implement artifact generation (rule-based)
+6. ✅ Add commands: `sidecar_get_pending_artifacts`, `sidecar_get_applied_artifacts`, `sidecar_get_artifact`, `sidecar_discard_artifact`
 
-### Phase 5: L3 Git Integration
-1. ⬜ Implement `apply_artifact` with file copy + git add
-2. ⬜ Add artifact file movement (pending → applied)
-3. ⬜ Implement `preview_artifact` (diff view)
-4. ⬜ Wire L2 → L3 cascade (patch applied triggers artifact update)
+### Phase 5: L3 Git Integration ✅
+1. ✅ Implement `sidecar_apply_artifact` with file copy + git add
+2. ✅ Add artifact file movement (pending → applied)
+3. ✅ Implement `sidecar_preview_artifact` (diff view)
+4. ✅ Implement `sidecar_apply_all_artifacts`
+5. ✅ Wire L2 → L3 cascade (patch applied triggers artifact regeneration via `regenerate_from_patches_with_config`)
+6. ✅ Add `sidecar_get_current_pending_artifacts` for active session
 
-### Phase 6: L3 LLM Integration
-1. ⬜ Add LLM prompts for README.md synthesis
-2. ⬜ Add LLM prompts for CLAUDE.md synthesis
-3. ⬜ Implement `regenerate_artifact`
+### Phase 6: L3 LLM Integration ✅
+1. ✅ Add LLM prompts for README.md synthesis (`README_SYSTEM_PROMPT`, `README_USER_PROMPT`)
+2. ✅ Add LLM prompts for CLAUDE.md synthesis (`CLAUDE_MD_SYSTEM_PROMPT`, `CLAUDE_MD_USER_PROMPT`)
+3. ✅ Implement `sidecar_regenerate_artifacts` command with backend override
+4. ✅ Implement `synthesize_readme` and `synthesize_claude_md` async functions
+5. ✅ Multiple LLM backends: Template, VertexAnthropic, OpenAI, Grok
+6. ✅ Automatic fallback to template when LLM fails
+7. ✅ `ArtifactSynthesisConfig` with settings integration
+
+### Phase 7: Integration & Polish ✅ (Mostly Complete)
+1. ✅ Frontend UI for viewing/managing staged patches (`SidecarPanel.tsx`)
+2. ✅ Frontend UI for viewing/applying pending artifacts (`SidecarPanel.tsx`)
+3. ✅ TypeScript types and API wrappers (`src/lib/sidecar.ts`)
+4. ✅ Sidecar event hook (`useSidecarEvents.ts`) with type guards
+5. ✅ `SidecarEvent` enum with emission in commands (backend)
+6. ✅ Real-time UI updates via event subscription
+7. ✅ Merge conflicts resolved
+8. ⬜ End-to-end testing of L2 → L3 cascade flow
 
 ---
 
