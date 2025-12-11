@@ -121,7 +121,12 @@ interface TabItemProps {
   canClose: boolean;
 }
 
-const TabItem = React.memo(function TabItem({ session, isActive, onClose, canClose }: TabItemProps) {
+const TabItem = React.memo(function TabItem({
+  session,
+  isActive,
+  onClose,
+  canClose,
+}: TabItemProps) {
   const setCustomTabName = useStore((state) => state.setCustomTabName);
   const [isEditing, setIsEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState("");
@@ -225,15 +230,16 @@ const TabItem = React.memo(function TabItem({ session, isActive, onClose, canClo
                 )}
               />
             ) : (
-              <span
+              <button
+                type="button"
                 className={cn(
-                  "truncate text-xs",
+                  "truncate text-xs bg-transparent border-0 p-0 cursor-text",
                   isProcessName && "text-[var(--ansi-yellow)]"
                 )}
                 onDoubleClick={handleDoubleClick}
               >
                 {displayName}
-              </span>
+              </button>
             )}
           </TabsTrigger>
 
