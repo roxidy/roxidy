@@ -15,12 +15,9 @@
 //!       0001-*.patch  # Patch file
 //!       0001-*.meta.toml  # Patch metadata (timestamp, author, files)
 //!     applied/        # Applied patches (moved after git am)
-<<<<<<< HEAD
 //!   artifacts/
 //!     pending/        # Proposed documentation updates awaiting review
 //!     applied/        # Previously applied artifacts (archived)
-=======
->>>>>>> origin/sidecar-refactor
 //! ```
 //!
 //! ### state.md
@@ -33,14 +30,11 @@
 //! - Each patch is a standard .patch file applicable with `git am`
 //! - Metadata sidecar files track creation time, author, affected files
 //! - Staged patches await user review; applied patches are moved after commit
-<<<<<<< HEAD
 //!
 //! ### artifacts/
 //! Auto-maintained project documentation (L3):
 //! - Each artifact is a proposed update to README.md, CLAUDE.md, etc.
 //! - Pending artifacts await user review; applied artifacts are archived
-=======
->>>>>>> origin/sidecar-refactor
 
 pub mod artifacts;
 pub mod capture;

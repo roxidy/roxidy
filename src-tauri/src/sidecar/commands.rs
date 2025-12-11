@@ -1,23 +1,14 @@
 //! Tauri commands for the simplified sidecar system.
 //!
-<<<<<<< HEAD
 //! Provides interface between frontend and sidecar session/patch/artifact management.
-=======
-//! Provides interface between frontend and sidecar session/patch management.
->>>>>>> origin/sidecar-refactor
 
 use crate::state::AppState;
 use tauri::State;
 
-<<<<<<< HEAD
 use super::artifacts::{ArtifactFile, ArtifactManager};
 use super::commits::{PatchManager, StagedPatch};
 use super::config::SidecarConfig;
 use super::events::SidecarEvent;
-=======
-use super::commits::{PatchManager, StagedPatch};
-use super::config::SidecarConfig;
->>>>>>> origin/sidecar-refactor
 use super::session::{Session, SessionMeta};
 use super::state::SidecarStatus;
 
@@ -126,6 +117,20 @@ pub async fn sidecar_list_sessions(state: State<'_, AppState>) -> Result<Vec<Ses
         .map_err(|e| e.to_string())
 }
 
+/// Get the session log (append-only event log)
+#[tauri::command]
+pub async fn sidecar_get_session_log(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, String> {
+    let sessions_dir = state.sidecar_state.config().sessions_dir();
+    let session = Session::load(&sessions_dir, &session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    session.read_log().await.map_err(|e| e.to_string())
+}
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -223,7 +228,6 @@ pub async fn sidecar_discard_patch(
         .map_err(|e| e.to_string())?;
 
     let manager = PatchManager::new(session.dir().to_path_buf());
-<<<<<<< HEAD
     let discarded = manager
         .discard_patch(patch_id)
         .await
@@ -246,26 +250,14 @@ pub async fn sidecar_discard_patch(
 ///
 /// After successful application, triggers L3 artifact regeneration (L2 -> L3 cascade).
 /// Uses the configured artifact synthesis backend from settings.
-=======
-    manager
-        .discard_patch(patch_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Apply a staged patch using git am
->>>>>>> origin/sidecar-refactor
 #[tauri::command]
 pub async fn sidecar_apply_patch(
     state: State<'_, AppState>,
     session_id: String,
     patch_id: u32,
 ) -> Result<String, String> {
-<<<<<<< HEAD
     use super::artifacts::ArtifactSynthesisConfig;
 
-=======
->>>>>>> origin/sidecar-refactor
     let sessions_dir = state.sidecar_state.config().sessions_dir();
     let session = Session::load(&sessions_dir, &session_id)
         .await
@@ -288,7 +280,6 @@ pub async fn sidecar_apply_patch(
         })
         .ok_or_else(|| "No git repository found".to_string())?;
 
-<<<<<<< HEAD
     let patch_manager = PatchManager::new(session.dir().to_path_buf());
 
     // Get the patch subject before applying (for artifact regeneration)
@@ -340,26 +331,13 @@ pub async fn sidecar_apply_patch(
 ///
 /// After successful application of all patches, triggers L3 artifact regeneration (L2 -> L3 cascade).
 /// Uses the configured artifact synthesis backend from settings.
-=======
-    let manager = PatchManager::new(session.dir().to_path_buf());
-    manager
-        .apply_patch(patch_id, &git_root)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Apply all staged patches in order
->>>>>>> origin/sidecar-refactor
 #[tauri::command]
 pub async fn sidecar_apply_all_patches(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<Vec<(u32, String)>, String> {
-<<<<<<< HEAD
     use super::artifacts::ArtifactSynthesisConfig;
 
-=======
->>>>>>> origin/sidecar-refactor
     let sessions_dir = state.sidecar_state.config().sessions_dir();
     let session = Session::load(&sessions_dir, &session_id)
         .await
@@ -382,7 +360,6 @@ pub async fn sidecar_apply_all_patches(
         })
         .ok_or_else(|| "No git repository found".to_string())?;
 
-<<<<<<< HEAD
     let patch_manager = PatchManager::new(session.dir().to_path_buf());
 
     // Get all patch subjects before applying (for artifact regeneration)
@@ -435,13 +412,6 @@ pub async fn sidecar_apply_all_patches(
     }
 
     Ok(results)
-=======
-    let manager = PatchManager::new(session.dir().to_path_buf());
-    manager
-        .apply_all_patches(&git_root)
-        .await
-        .map_err(|e| e.to_string())
->>>>>>> origin/sidecar-refactor
 }
 
 /// Get staged patches for the current session
@@ -463,7 +433,6 @@ pub async fn sidecar_get_current_staged_patches(
     manager.list_staged().await.map_err(|e| e.to_string())
 }
 
-<<<<<<< HEAD
 /// Regenerate a patch's commit message using LLM synthesis
 ///
 /// Uses the configured synthesis backend to generate a new commit message
@@ -881,8 +850,6 @@ pub async fn sidecar_regenerate_artifacts(
         .collect())
 }
 
-=======
->>>>>>> origin/sidecar-refactor
 // =============================================================================
 // Tests
 // =============================================================================

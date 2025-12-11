@@ -12,16 +12,11 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-<<<<<<< HEAD
 #[cfg(feature = "tauri")]
 use tauri::AppHandle;
 
 use super::commits::{BoundaryReason, PatchManager};
 use super::events::{CommitBoundaryDetector, EventType, SessionEvent, SidecarEvent};
-=======
-use super::commits::{BoundaryReason, PatchManager};
-use super::events::{CommitBoundaryDetector, EventType, SessionEvent};
->>>>>>> origin/sidecar-refactor
 use super::session::Session;
 use super::synthesis::{
     generate_template_message, SynthesisBackend, SynthesisConfig, SynthesisInput,
@@ -48,7 +43,6 @@ pub struct ProcessorConfig {
     pub sessions_dir: PathBuf,
     /// Whether to generate staged patches (L2)
     pub generate_patches: bool,
-<<<<<<< HEAD
     /// Synthesis configuration for commit messages
     pub synthesis: SynthesisConfig,
     /// App handle for emitting events (Tauri only)
@@ -64,8 +58,6 @@ impl std::fmt::Debug for ProcessorConfig {
             .field("synthesis", &self.synthesis)
             .finish()
     }
-=======
->>>>>>> origin/sidecar-refactor
 }
 
 impl Default for ProcessorConfig {
@@ -73,17 +65,13 @@ impl Default for ProcessorConfig {
         Self {
             sessions_dir: super::session::default_sessions_dir(),
             generate_patches: true,
-<<<<<<< HEAD
             synthesis: SynthesisConfig::default(),
             #[cfg(feature = "tauri")]
             app_handle: None,
-=======
->>>>>>> origin/sidecar-refactor
         }
     }
 }
 
-<<<<<<< HEAD
 impl ProcessorConfig {
     /// Emit a sidecar event to the frontend
     #[cfg(feature = "tauri")]
@@ -103,8 +91,6 @@ impl ProcessorConfig {
     }
 }
 
-=======
->>>>>>> origin/sidecar-refactor
 /// Tracks file changes for patch generation
 #[derive(Debug, Default)]
 struct FileChangeTracker {
@@ -340,7 +326,6 @@ async fn generate_patch(
         return Ok(());
     }
 
-<<<<<<< HEAD
     // Generate commit message using synthesis
     let message = generate_commit_message(config, &session, &files, &git_root).await;
 
@@ -356,16 +341,6 @@ async fn generate_patch(
         subject: patch.subject.clone(),
     });
 
-=======
-    // Generate a simple commit message based on files
-    let message = generate_simple_message(&files);
-
-    // Create patch
-    manager
-        .create_patch_from_changes(&git_root, &files, &message, reason)
-        .await?;
-
->>>>>>> origin/sidecar-refactor
     // Clear tracked changes
     session_state.file_tracker.clear();
     session_state.boundary_detector.clear();
@@ -373,7 +348,6 @@ async fn generate_patch(
     Ok(())
 }
 
-<<<<<<< HEAD
 /// Generate a commit message using the configured synthesis backend
 async fn generate_commit_message(
     config: &ProcessorConfig,
@@ -451,19 +425,6 @@ async fn get_diff_for_files(git_root: &PathBuf, files: &[PathBuf]) -> Result<Str
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-=======
-/// Generate a simple commit message from files
-fn generate_simple_message(files: &[PathBuf]) -> String {
-    if files.len() == 1 {
-        let file = &files[0];
-        let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-        format!("chore: update {}", name)
-    } else {
-        format!("chore: update {} files", files.len())
-    }
-}
-
->>>>>>> origin/sidecar-refactor
 /// Handle session end
 async fn handle_end_session(config: &ProcessorConfig, session_id: &str) -> Result<()> {
     let mut session = Session::load(&config.sessions_dir, session_id).await?;
@@ -482,12 +443,9 @@ mod tests {
         let config = ProcessorConfig {
             sessions_dir: temp.path().to_path_buf(),
             generate_patches: true,
-<<<<<<< HEAD
             synthesis: SynthesisConfig::default(),
             #[cfg(feature = "tauri")]
             app_handle: None,
-=======
->>>>>>> origin/sidecar-refactor
         };
 
         let processor = Processor::spawn(config);

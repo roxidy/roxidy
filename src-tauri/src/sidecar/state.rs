@@ -118,7 +118,6 @@ impl SidecarState {
         let sessions_dir = config.sessions_dir();
         ensure_sessions_dir(&sessions_dir).await?;
 
-<<<<<<< HEAD
         // Create processor with synthesis config from sidecar config
         let synthesis_config = super::synthesis::SynthesisConfig {
             enabled: config.synthesis_enabled,
@@ -141,12 +140,6 @@ impl SidecarState {
             synthesis: synthesis_config,
             #[cfg(feature = "tauri")]
             app_handle: app_handle_arc,
-=======
-        // Create processor with simplified config
-        let processor_config = ProcessorConfig {
-            sessions_dir: sessions_dir.clone(),
-            generate_patches: true,
->>>>>>> origin/sidecar-refactor
         };
         let processor = Processor::spawn(processor_config);
 

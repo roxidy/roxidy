@@ -86,16 +86,11 @@ pub struct Session {
 impl Session {
     /// File/directory names
     const STATE_FILE: &'static str = "state.md";
-<<<<<<< HEAD
     const LOG_FILE: &'static str = "log.md";
     const PATCHES_DIR: &'static str = "patches";
     const ARTIFACTS_DIR: &'static str = "artifacts";
     const STAGED_DIR: &'static str = "staged";
     const PENDING_DIR: &'static str = "pending";
-=======
-    const PATCHES_DIR: &'static str = "patches";
-    const STAGED_DIR: &'static str = "staged";
->>>>>>> origin/sidecar-refactor
     const APPLIED_DIR: &'static str = "applied";
 
     /// Create a new session
@@ -120,7 +115,6 @@ impl Session {
             .await
             .context("Failed to create applied patches directory")?;
 
-<<<<<<< HEAD
         // Create artifacts directories (L3)
         fs::create_dir_all(dir.join(Self::ARTIFACTS_DIR).join(Self::PENDING_DIR))
             .await
@@ -129,8 +123,6 @@ impl Session {
             .await
             .context("Failed to create applied artifacts directory")?;
 
-=======
->>>>>>> origin/sidecar-refactor
         // Create metadata
         let meta = SessionMeta::new(session_id.clone(), cwd, initial_request.clone());
 
@@ -140,7 +132,6 @@ impl Session {
             .await
             .context("Failed to write state.md")?;
 
-<<<<<<< HEAD
         // Write initial log.md (append-only event log)
         let log_content = format!(
             "# Session Log\n\n> Session started: {}\n\n",
@@ -150,8 +141,6 @@ impl Session {
             .await
             .context("Failed to write log.md")?;
 
-=======
->>>>>>> origin/sidecar-refactor
         tracing::info!("Created new session: {}", session_id);
 
         Ok(Self { dir, meta })
@@ -187,24 +176,17 @@ impl Session {
     }
 
     /// Get the staged patches directory path
-<<<<<<< HEAD
     #[allow(dead_code)]
-=======
->>>>>>> origin/sidecar-refactor
     pub fn staged_patches_dir(&self) -> PathBuf {
         self.dir.join(Self::PATCHES_DIR).join(Self::STAGED_DIR)
     }
 
     /// Get the applied patches directory path
-<<<<<<< HEAD
     #[allow(dead_code)]
-=======
->>>>>>> origin/sidecar-refactor
     pub fn applied_patches_dir(&self) -> PathBuf {
         self.dir.join(Self::PATCHES_DIR).join(Self::APPLIED_DIR)
     }
 
-<<<<<<< HEAD
     /// Get the pending artifacts directory path (L3)
     #[allow(dead_code)]
     pub fn pending_artifacts_dir(&self) -> PathBuf {
@@ -217,8 +199,6 @@ impl Session {
         self.dir.join(Self::ARTIFACTS_DIR).join(Self::APPLIED_DIR)
     }
 
-=======
->>>>>>> origin/sidecar-refactor
     /// Read the current state.md content (body only, without frontmatter)
     pub async fn read_state(&self) -> Result<String> {
         let path = self.dir.join(Self::STATE_FILE);
@@ -231,10 +211,7 @@ impl Session {
     }
 
     /// Read the full state.md content (frontmatter + body)
-<<<<<<< HEAD
     #[allow(dead_code)]
-=======
->>>>>>> origin/sidecar-refactor
     pub async fn read_state_full(&self) -> Result<String> {
         let path = self.dir.join(Self::STATE_FILE);
         fs::read_to_string(&path)
@@ -242,7 +219,6 @@ impl Session {
             .context("Failed to read state.md")
     }
 
-<<<<<<< HEAD
     /// Read the log.md content (append-only event log)
     pub async fn read_log(&self) -> Result<String> {
         let path = self.dir.join(Self::LOG_FILE);
@@ -281,9 +257,6 @@ impl Session {
 
     /// Update state.md body (preserves and updates frontmatter)
     #[allow(dead_code)]
-=======
-    /// Update state.md body (preserves and updates frontmatter)
->>>>>>> origin/sidecar-refactor
     pub async fn update_state(&mut self, new_body: &str) -> Result<()> {
         // Update timestamp
         self.meta.updated_at = Utc::now();
@@ -444,12 +417,9 @@ mod tests {
         assert!(sessions_dir.join("test-session/state.md").exists());
         assert!(sessions_dir.join("test-session/patches/staged").exists());
         assert!(sessions_dir.join("test-session/patches/applied").exists());
-<<<<<<< HEAD
         // L3 artifact directories
         assert!(sessions_dir.join("test-session/artifacts/pending").exists());
         assert!(sessions_dir.join("test-session/artifacts/applied").exists());
-=======
->>>>>>> origin/sidecar-refactor
 
         // Load session
         let loaded = Session::load(sessions_dir, "test-session").await.unwrap();
