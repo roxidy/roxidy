@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use vte::{Params, Parser, Perform};
 
 /// Events extracted from OSC 133 sequences

@@ -144,6 +144,7 @@ impl QbitSessionMessage {
 }
 
 /// Qbit session snapshot containing conversation data.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QbitSessionSnapshot {
     /// Session metadata
@@ -363,6 +364,7 @@ impl QbitSessionManager {
 ///
 /// # Arguments
 /// * `limit` - Maximum number of sessions to return (0 for all)
+#[allow(dead_code)]
 pub async fn list_recent_sessions(limit: usize) -> Result<Vec<SessionListingInfo>> {
     let listings = session_archive::list_recent_sessions(limit).await?;
 
@@ -386,6 +388,7 @@ pub async fn list_recent_sessions(limit: usize) -> Result<Vec<SessionListingInfo
 }
 
 /// Find a session by its identifier.
+#[allow(dead_code)]
 pub async fn find_session(identifier: &str) -> Result<Option<SessionListingInfo>> {
     let listing = session_archive::find_session_by_identifier(identifier).await?;
 
@@ -406,6 +409,7 @@ pub async fn find_session(identifier: &str) -> Result<Option<SessionListingInfo>
 }
 
 /// Load a full session by identifier.
+#[allow(dead_code)]
 pub async fn load_session(identifier: &str) -> Result<Option<QbitSessionSnapshot>> {
     let listing = session_archive::find_session_by_identifier(identifier).await?;
 
@@ -448,6 +452,7 @@ pub async fn load_session(identifier: &str) -> Result<Option<QbitSessionSnapshot
 }
 
 /// Session listing information for display.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionListingInfo {
     pub identifier: String,
@@ -837,5 +842,116 @@ mod tests {
         assert_eq!(restored.content, original.content);
         assert_eq!(restored.tool_call_id, original.tool_call_id);
         assert_eq!(restored.tool_name, original.tool_name);
+    }
+
+    #[tokio::test]
+    async fn test_session_finalization_creates_persisted_session() {
+        // Test that finalizing a session creates a persistent file
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        std::env::set_var("VT_SESSION_DIR", temp_dir.path());
+
+        // Create and populate a session
+        let mut manager =
+            QbitSessionManager::new(temp_dir.path().to_path_buf(), "test-model", "test-provider")
+                .await
+                .expect("Failed to create manager");
+
+        manager.add_user_message("Test user message for finalization");
+        manager.add_assistant_message("Test assistant response");
+
+        // Finalize the session
+        let finalized_path = manager.finalize().expect("Failed to finalize session");
+
+        // Verify the file exists
+        assert!(
+            finalized_path.exists(),
+            "Finalized session file should exist"
+        );
+
+        // Verify the file is in the temp directory
+        assert!(
+            finalized_path.starts_with(temp_dir.path()),
+            "Session file should be in temp dir"
+        );
+
+        // Verify the file has expected content (JSON format)
+        let content = std::fs::read_to_string(&finalized_path).expect("Failed to read session");
+        assert!(
+            content.contains("test-model"),
+            "Session file should contain model name"
+        );
+        assert!(
+            content.contains("test-provider"),
+            "Session file should contain provider name"
+        );
+        // Check for message content or structure
+        assert!(
+            content.contains("messages") || content.contains("Test user message"),
+            "Session file should contain messages data"
+        );
+
+        std::env::remove_var("VT_SESSION_DIR");
+    }
+
+    #[tokio::test]
+    async fn test_session_finalization_is_one_shot() {
+        // Test that finalize() can only be called once - subsequent calls fail
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        std::env::set_var("VT_SESSION_DIR", temp_dir.path());
+
+        let mut manager =
+            QbitSessionManager::new(temp_dir.path().to_path_buf(), "test-model", "test-provider")
+                .await
+                .expect("Failed to create manager");
+
+        manager.add_user_message("Test message");
+
+        // First finalize should succeed
+        let result1 = manager.finalize();
+        assert!(result1.is_ok(), "First finalize should succeed");
+
+        // Second finalize should fail (archive already taken)
+        let result2 = manager.finalize();
+        assert!(
+            result2.is_err(),
+            "Second finalize should fail - session already finalized"
+        );
+
+        std::env::remove_var("VT_SESSION_DIR");
+    }
+
+    #[tokio::test]
+    async fn test_session_save_allows_incremental_persistence() {
+        // Test that save() can be called multiple times (unlike finalize)
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        std::env::set_var("VT_SESSION_DIR", temp_dir.path());
+
+        let mut manager =
+            QbitSessionManager::new(temp_dir.path().to_path_buf(), "test-model", "test-provider")
+                .await
+                .expect("Failed to create manager");
+
+        manager.add_user_message("First message");
+
+        // First save should succeed
+        let path1 = manager.save().expect("First save should succeed");
+        assert!(path1.exists());
+
+        // Add more messages and save again
+        manager.add_assistant_message("Response to first");
+        manager.add_user_message("Second message");
+
+        // Second save should also succeed
+        let path2 = manager.save().expect("Second save should succeed");
+        assert!(path2.exists());
+        assert_eq!(path1, path2, "Save should write to the same file");
+
+        // Finalize should still work after saves
+        let final_path = manager
+            .finalize()
+            .expect("Finalize should work after saves");
+        assert!(final_path.exists());
+
+        std::env::remove_var("VT_SESSION_DIR");
     }
 }

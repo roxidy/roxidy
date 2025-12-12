@@ -10,7 +10,8 @@ When working on this project, you have unique insight into how changes will affe
 
 ```bash
 # Development
-just dev              # Full app (frontend + Tauri backend)
+just dev              # Full app (in current directory)
+just dev ~/Code/foo   # Full app (opens in specified directory)
 just dev-fe           # Frontend only (Vite on port 1420)
 
 # Testing
@@ -137,6 +138,8 @@ TAVILY_API_KEY=your-key
 Settings file: `~/.qbit/settings.toml` (auto-generated on first run, see `src-tauri/src/settings/template.toml`)
 
 Sessions stored in: `~/.qbit/sessions/` (override with `VT_SESSION_DIR` env var)
+
+Workspace override: `just dev /path/to/project` or set `QBIT_WORKSPACE` env var
 
 ## Event System
 

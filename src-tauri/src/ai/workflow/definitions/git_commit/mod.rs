@@ -6,6 +6,8 @@
 //! 3. Organizes changes into logical commits
 //! 4. Generates git commands for each commit
 
+#![allow(unused)]
+
 mod analyzer;
 mod gatherer;
 mod organizer;

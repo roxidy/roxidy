@@ -10,8 +10,10 @@ default:
 # ============================================
 
 # Start development server (frontend + backend)
-dev:
-    pnpm tauri dev
+# Usage: just dev [path]
+# Example: just dev ~/Code/my-project
+dev path="":
+    {{ if path == "" { "pnpm tauri dev" } else { "pnpm tauri dev -- " + path } }}
 
 # Start only the frontend dev server
 dev-fe:
@@ -169,14 +171,15 @@ server-random:
 # ============================================
 
 # Run all evals (builds server, runs all tests)
+# QBIT_WORKSPACE is set to qbit-go-testbed for file operation tests
 eval *args:
     @just build-server
-    cd evals && QBIT_EVAL_MODEL="claude-haiku-4-5@20251001" RUN_API_TESTS=1 uv run pytest {{args}} -v
+    cd evals && QBIT_WORKSPACE="../qbit-go-testbed" QBIT_EVAL_MODEL="claude-haiku-4-5@20251001" RUN_API_TESTS=1 uv run pytest {{args}} -v
 
 # Run evals without LLM calls (fast, no API key needed)
 eval-fast *args:
     @just build-server
-    cd evals && uv run pytest -k "not requires_api" {{args}} -v
+    cd evals && QBIT_WORKSPACE="../qbit-go-testbed" uv run pytest -k "not requires_api" {{args}} -v
 
 # ============================================
 # Utilities

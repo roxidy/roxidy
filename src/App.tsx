@@ -6,7 +6,7 @@ import { MockDevTools } from "./components/MockDevTools";
 import { SessionBrowser } from "./components/SessionBrowser";
 import { SettingsDialog } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
-import { ContextPanel } from "./components/Sidecar";
+import { ContextPanel, SidecarNotifications, SidecarPanel } from "./components/Sidecar";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
 import { UnifiedInput } from "./components/UnifiedInput";
@@ -49,6 +49,7 @@ function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [sidecarPanelOpen, setSidecarPanelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageRoute>("main");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -293,6 +294,13 @@ function App() {
         return;
       }
 
+      // Cmd+Shift+P for sidecar panel (patches/artifacts)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "p") {
+        e.preventDefault();
+        setSidecarPanelOpen(true);
+        return;
+      }
+
       // Cmd+, for settings
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
@@ -472,6 +480,9 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Context Panel - integrated side panel, uses sidecar's current session */}
+        <ContextPanel open={contextPanelOpen} onOpenChange={setContextPanelOpen} />
       </div>
 
       {/* Status bar at the very bottom */}
@@ -494,12 +505,8 @@ function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      {/* Context Panel */}
-      <ContextPanel
-        sessionId={activeSessionId ?? undefined}
-        open={contextPanelOpen}
-        onOpenChange={setContextPanelOpen}
-      />
+      {/* Sidecar Panel (Patches & Artifacts) */}
+      <SidecarPanel open={sidecarPanelOpen} onOpenChange={setSidecarPanelOpen} />
 
       {/* Session Browser */}
       <SessionBrowser
@@ -510,6 +517,9 @@ function App() {
 
       {/* Settings Dialog */}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      {/* Sidecar event notifications */}
+      <SidecarNotifications />
 
       <Toaster
         position="bottom-right"

@@ -368,6 +368,7 @@ pub async fn get_sub_agent_tool_definitions(registry: &SubAgentRegistry) -> Vec<
 /// Get workflow tool definitions.
 ///
 /// Returns a tool for running multi-step AI workflows.
+#[allow(dead_code)]
 pub fn get_workflow_tool_definitions(
     workflow_registry: &super::workflow::WorkflowRegistry,
 ) -> Vec<ToolDefinition> {

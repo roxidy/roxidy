@@ -9,6 +9,7 @@ pub struct CliRuntime {
     event_tx: RwLock<mpsc::UnboundedSender<RuntimeEvent>>,
     auto_approve: bool,
     json_mode: bool,
+    #[allow(dead_code)]
     quiet_mode: bool,
 }
 

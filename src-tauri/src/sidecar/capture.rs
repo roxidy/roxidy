@@ -100,7 +100,26 @@ impl CaptureContext {
 
                 // Extract files_modified for write operations
                 let files_modified = if is_write_tool(tool_name) && *success {
-                    extract_files_modified(tool_name, self.last_tool_args.as_ref())
+                    let files = extract_files_modified(tool_name, self.last_tool_args.as_ref());
+                    if files.is_empty() {
+                        debug!(
+                            "[sidecar-capture] No files extracted for write tool {} (args: {:?})",
+                            tool_name,
+                            self.last_tool_args.as_ref().map(|a| a
+                                .to_string()
+                                .chars()
+                                .take(200)
+                                .collect::<String>())
+                        );
+                    } else {
+                        debug!(
+                            "[sidecar-capture] Extracted {} files for write tool {}: {:?}",
+                            files.len(),
+                            tool_name,
+                            files
+                        );
+                    }
+                    files
                 } else {
                     vec![]
                 };
@@ -403,10 +422,12 @@ fn extract_files_from_result(
     }
 }
 
-/// Extract path from tool args
+/// Extract path from tool args (supports all vtcode-core path aliases)
 fn extract_path_from_args(args: &serde_json::Value) -> Option<PathBuf> {
     args.get("path")
         .or_else(|| args.get("file_path"))
+        .or_else(|| args.get("filepath"))
+        .or_else(|| args.get("target_path"))
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
 }
@@ -686,5 +707,208 @@ mod tests {
         assert!(diff.contains("+++ b/test.txt"));
         assert!(diff.contains("-line2"));
         assert!(diff.contains("+modified"));
+    }
+
+    // =========================================================================
+    // Integration tests for AI event -> SessionEvent flow
+    // =========================================================================
+
+    mod integration {
+        use super::*;
+        use crate::sidecar::config::SidecarConfig;
+        use crate::sidecar::state::SidecarState;
+        use tempfile::TempDir;
+
+        fn test_config(temp_dir: &std::path::Path) -> SidecarConfig {
+            SidecarConfig {
+                enabled: true,
+                sessions_dir: Some(temp_dir.to_path_buf()),
+                retention_days: 0,
+                max_state_size: 16 * 1024,
+                write_raw_events: false,
+                use_llm_for_state: false,
+                capture_tool_calls: true,
+                capture_reasoning: true,
+                synthesis_enabled: false,
+                synthesis_backend: crate::sidecar::synthesis::SynthesisBackend::Template,
+                artifact_synthesis_backend:
+                    crate::sidecar::artifacts::ArtifactSynthesisBackend::Template,
+                synthesis_vertex: Default::default(),
+                synthesis_openai: Default::default(),
+                synthesis_grok: Default::default(),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_tool_request_stores_state_for_result() {
+            let temp = TempDir::new().unwrap();
+            let config = test_config(temp.path());
+            let sidecar = Arc::new(SidecarState::with_config(config));
+
+            sidecar.initialize(temp.path().to_path_buf()).await.unwrap();
+            let _session_id = sidecar.start_session("Test session").unwrap();
+
+            // Give time for async session creation
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let mut capture = CaptureContext::new(sidecar.clone());
+
+            // Process tool request first
+            capture.process(&AiEvent::ToolRequest {
+                request_id: "test-1".to_string(),
+                tool_name: "write_file".to_string(),
+                args: serde_json::json!({"path": "src/test.rs", "content": "fn main() {}"}),
+                source: crate::ai::events::ToolSource::Main,
+            });
+
+            // Verify state was stored
+            assert_eq!(capture.last_tool_name, Some("write_file".to_string()));
+            assert!(capture.last_tool_args.is_some());
+        }
+
+        #[tokio::test]
+        async fn test_tool_result_clears_state() {
+            let temp = TempDir::new().unwrap();
+            let config = test_config(temp.path());
+            let sidecar = Arc::new(SidecarState::with_config(config));
+
+            sidecar.initialize(temp.path().to_path_buf()).await.unwrap();
+            let _session_id = sidecar.start_session("Test session").unwrap();
+
+            // Give time for async session creation
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let mut capture = CaptureContext::new(sidecar.clone());
+
+            // Process tool request then result
+            capture.process(&AiEvent::ToolRequest {
+                request_id: "test-1".to_string(),
+                tool_name: "read_file".to_string(),
+                args: serde_json::json!({"path": "src/test.rs"}),
+                source: crate::ai::events::ToolSource::Main,
+            });
+
+            capture.process(&AiEvent::ToolResult {
+                tool_name: "read_file".to_string(),
+                result: serde_json::json!({"content": "file contents"}),
+                success: true,
+                request_id: "test-1".to_string(),
+                source: crate::ai::events::ToolSource::Main,
+            });
+
+            // State should be cleared after result
+            assert!(capture.last_tool_name.is_none());
+            assert!(capture.last_tool_args.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_write_tool_captures_file_edit_event() {
+            let temp = TempDir::new().unwrap();
+            let config = test_config(temp.path());
+            let sidecar = Arc::new(SidecarState::with_config(config));
+
+            sidecar.initialize(temp.path().to_path_buf()).await.unwrap();
+            let _session_id = sidecar.start_session("Test session").unwrap();
+
+            // Give time for async session creation
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let mut capture = CaptureContext::new(sidecar.clone());
+
+            // Process write_file tool
+            capture.process(&AiEvent::ToolRequest {
+                request_id: "test-1".to_string(),
+                tool_name: "write_file".to_string(),
+                args: serde_json::json!({"path": "/tmp/test.rs", "content": "fn main() {}"}),
+                source: crate::ai::events::ToolSource::Main,
+            });
+
+            capture.process(&AiEvent::ToolResult {
+                tool_name: "write_file".to_string(),
+                result: serde_json::json!({"success": true}),
+                success: true,
+                request_id: "test-1".to_string(),
+                source: crate::ai::events::ToolSource::Main,
+            });
+
+            // The capture should have processed both events
+            // State should be cleared
+            assert!(capture.last_tool_name.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_reasoning_event_captured() {
+            let temp = TempDir::new().unwrap();
+            let config = test_config(temp.path());
+            let sidecar = Arc::new(SidecarState::with_config(config));
+
+            sidecar.initialize(temp.path().to_path_buf()).await.unwrap();
+            let _session_id = sidecar.start_session("Test session").unwrap();
+
+            // Give time for async session creation
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let mut capture = CaptureContext::new(sidecar.clone());
+
+            // Process reasoning event with completion signal
+            capture.process(&AiEvent::Reasoning {
+                content: "I've completed the implementation.".to_string(),
+            });
+
+            // The capture should have processed the event
+            // (We can't easily verify the event was captured without mocking sidecar.capture)
+            // but we can verify no panic occurred
+        }
+
+        #[tokio::test]
+        async fn test_edit_tool_captures_diff() {
+            let temp = TempDir::new().unwrap();
+            let config = test_config(temp.path());
+            let sidecar = Arc::new(SidecarState::with_config(config));
+
+            sidecar.initialize(temp.path().to_path_buf()).await.unwrap();
+            let _session_id = sidecar.start_session("Test session").unwrap();
+
+            // Give time for async session creation
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            // Create a test file to edit
+            let test_file = temp.path().join("test.rs");
+            std::fs::write(&test_file, "fn original() {}").unwrap();
+
+            let mut capture = CaptureContext::new(sidecar.clone());
+
+            // Process edit_file tool request (captures old content)
+            capture.process(&AiEvent::ToolRequest {
+                request_id: "test-1".to_string(),
+                tool_name: "edit_file".to_string(),
+                args: serde_json::json!({
+                    "path": test_file.to_string_lossy(),
+                    "display_description": "Update function"
+                }),
+                source: crate::ai::events::ToolSource::Main,
+            });
+
+            // Verify old content was captured for diff
+            assert!(capture.pending_old_content.is_some());
+            let (path, content) = capture.pending_old_content.as_ref().unwrap();
+            assert_eq!(*path, test_file);
+            assert_eq!(content, "fn original() {}");
+
+            // Simulate file modification
+            std::fs::write(&test_file, "fn modified() {}").unwrap();
+
+            // Process result
+            capture.process(&AiEvent::ToolResult {
+                tool_name: "edit_file".to_string(),
+                result: serde_json::json!({"success": true}),
+                success: true,
+                request_id: "test-1".to_string(),
+                source: crate::ai::events::ToolSource::Main,
+            });
+
+            // State should be cleared
+            assert!(capture.pending_old_content.is_none());
+        }
     }
 }

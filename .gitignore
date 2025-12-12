@@ -72,6 +72,9 @@ Thumbs.db
 
 mistral-testbed/target/
 
+# Test workspace for evals
+qbit-go-testbed/
+
 # Python
 *.egg-info/
 *.pyc

@@ -700,20 +700,28 @@ impl AgentBridge {
             self.save_session().await;
         }
 
-        // End sidecar capture session
+        // Capture AI response in sidecar session
         if let Some(ref sidecar) = self.sidecar_state {
-            match sidecar.end_session() {
-                Ok(Some(session)) => {
-                    tracing::info!("Sidecar session {} ended", session.session_id);
-                }
-                Ok(None) => {
-                    tracing::debug!("No active sidecar session to end");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to end sidecar session: {}", e);
+            use crate::sidecar::events::SessionEvent;
+
+            if let Some(session_id) = sidecar.current_session_id() {
+                if !accumulated_response.is_empty() {
+                    let response_event =
+                        SessionEvent::ai_response(session_id, &accumulated_response);
+                    sidecar.capture(response_event);
+                    tracing::debug!(
+                        "[agent] Captured AI response in sidecar ({} chars)",
+                        accumulated_response.len()
+                    );
                 }
             }
         }
+
+        // Note: Sidecar session is NOT ended here - it persists across prompts in the
+        // same conversation. The session is only ended when:
+        // 1. The AgentBridge is dropped (see Drop impl)
+        // 2. The conversation is explicitly cleared
+        // 3. A new conversation/session is started
 
         // Emit completion event
         self.emit_event(AiEvent::Completed {
@@ -910,13 +918,69 @@ impl AgentBridge {
 }
 
 // ============================================================================
+// Drop Implementation for Session Cleanup
+// ============================================================================
+
+impl Drop for AgentBridge {
+    fn drop(&mut self) {
+        // Best-effort session finalization on drop.
+        // This ensures sessions are saved even if the bridge is replaced without
+        // explicit finalization (e.g., during model switching).
+        //
+        // We use try_write() because:
+        // 1. Drop cannot be async, so we can't use .await
+        // 2. If the lock is held, another operation is in progress and will handle cleanup
+        // 3. At drop time, we should typically be the only owner
+        if let Ok(mut guard) = self.session_manager.try_write() {
+            if let Some(ref mut manager) = guard.take() {
+                match manager.finalize() {
+                    Ok(path) => {
+                        tracing::debug!(
+                            "AgentBridge::drop - session finalized: {}",
+                            path.display()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("AgentBridge::drop - failed to finalize session: {}", e);
+                    }
+                }
+            }
+        } else {
+            tracing::debug!(
+                "AgentBridge::drop - could not acquire session_manager lock, skipping finalization"
+            );
+        }
+
+        // End sidecar session on bridge drop.
+        // This ensures the sidecar session is properly finalized when:
+        // - The conversation is cleared
+        // - The AgentBridge is replaced (e.g., model switching)
+        // - The application shuts down
+        if let Some(ref sidecar) = self.sidecar_state {
+            match sidecar.end_session() {
+                Ok(Some(session)) => {
+                    tracing::debug!(
+                        "AgentBridge::drop - sidecar session {} ended",
+                        session.session_id
+                    );
+                }
+                Ok(None) => {
+                    tracing::debug!("AgentBridge::drop - no active sidecar session to end");
+                }
+                Err(e) => {
+                    tracing::warn!("AgentBridge::drop - failed to end sidecar session: {}", e);
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Tests for CancellationToken support
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Note: CancellationToken is only available with the server feature
     #[cfg(feature = "server")]
     mod cancellation_tests {

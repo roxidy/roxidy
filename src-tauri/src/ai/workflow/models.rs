@@ -458,6 +458,7 @@ pub trait WorkflowLlmExecutor: Send + Sync {
 ///     fn state_key(&self) -> &str { "my_workflow_state" }
 /// }
 /// ```
+#[allow(dead_code)]
 pub trait WorkflowDefinition: Send + Sync {
     /// Unique name for this workflow (e.g., "git_commit", "code_review")
     fn name(&self) -> &str;
@@ -499,6 +500,7 @@ pub struct WorkflowInfo {
 }
 
 /// Response from starting a workflow.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartWorkflowResponse {
     /// Unique session ID for this workflow execution
@@ -508,6 +510,7 @@ pub struct StartWorkflowResponse {
 }
 
 /// Response from a workflow step.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStepResponse {
     /// Output from the step (if any)
@@ -521,6 +524,7 @@ pub struct WorkflowStepResponse {
 }
 
 /// Response from getting workflow state.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStateResponse {
     /// The workflow's current state as JSON

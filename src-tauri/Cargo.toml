@@ -74,6 +74,9 @@ url = "2.5"
 rig-anthropic-vertex = { path = "crates/rig-anthropic-vertex" }
 rig-core = "^0.23.1"
 
+# Google Cloud authentication (for sidecar Vertex AI synthesis)
+gcp_auth = "0.12"
+
 # Graph-based workflow execution for multi-agent systems
 graph-flow = "0.4"
 async-trait = "0.1"
@@ -106,6 +109,7 @@ tokio-stream = { version = "0.1", optional = true }
 tokio-util = { version = "0.7", optional = true }
 dashmap = { version = "6", optional = true }
 base64 = { version = "0.22", optional = true }
+serde_yaml = "0.9.34"
 
 [features]
 default = ["tauri"]

@@ -71,12 +71,23 @@ pub struct Args {
 impl Args {
     /// Resolve the workspace path to an absolute path.
     ///
+    /// Priority:
+    /// 1. QBIT_WORKSPACE environment variable (if set)
+    /// 2. CLI argument (defaults to ".")
+    ///
     /// Returns an error if the path does not exist or is not a directory.
     pub fn resolve_workspace(&self) -> anyhow::Result<PathBuf> {
-        let canonical = self.workspace.canonicalize().map_err(|e| {
+        // Check QBIT_WORKSPACE env var first
+        let workspace_path = if let Ok(env_workspace) = std::env::var("QBIT_WORKSPACE") {
+            PathBuf::from(env_workspace)
+        } else {
+            self.workspace.clone()
+        };
+
+        let canonical = workspace_path.canonicalize().map_err(|e| {
             anyhow::anyhow!(
                 "Workspace '{}' does not exist or is not accessible: {}",
-                self.workspace.display(),
+                workspace_path.display(),
                 e
             )
         })?;

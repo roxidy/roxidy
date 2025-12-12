@@ -51,6 +51,9 @@ pub async fn execute_sub_agent(
     let start_time = std::time::Instant::now();
     let agent_id = &agent_def.id;
 
+    // Track files modified by this sub-agent
+    let mut files_modified: Vec<String> = vec![];
+
     // Extract task and additional context from args
     let task = args
         .get("task")
@@ -133,6 +136,7 @@ pub async fn execute_sub_agent(
                     context: sub_context,
                     success: false,
                     duration_ms: start_time.elapsed().as_millis() as u64,
+                    files_modified: files_modified.clone(),
                 });
             }
         };
@@ -187,19 +191,33 @@ pub async fn execute_sub_agent(
             let tool_id = tool_call.id.clone();
 
             // Execute the tool
-            let (result_value, _success) = if tool_name == "web_fetch" {
+            let (result_value, success) = if tool_name == "web_fetch" {
                 execute_web_fetch_tool(tool_name, &tool_args).await
             } else if tool_name.starts_with("web_search") || tool_name == "web_extract" {
                 execute_tavily_tool(ctx.tavily_state, tool_name, &tool_args).await
             } else {
                 let mut registry = ctx.tool_registry.write().await;
-                let result = registry.execute_tool(tool_name, tool_args).await;
+                let result = registry.execute_tool(tool_name, tool_args.clone()).await;
 
                 match &result {
                     Ok(v) => (v.clone(), true),
                     Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
                 }
             };
+
+            // Track files modified by write tools
+            if success && is_write_tool(tool_name) {
+                if let Some(file_path) = extract_file_path(tool_name, &tool_args) {
+                    if !files_modified.contains(&file_path) {
+                        tracing::debug!(
+                            "[sub-agent] Tracking modified file: {} (tool: {})",
+                            file_path,
+                            tool_name
+                        );
+                        files_modified.push(file_path);
+                    }
+                }
+            }
 
             let result_text = serde_json::to_string(&result_value).unwrap_or_default();
             tool_results.push(UserContent::ToolResult(ToolResult {
@@ -226,11 +244,83 @@ pub async fn execute_sub_agent(
         duration_ms,
     });
 
+    if !files_modified.is_empty() {
+        tracing::info!(
+            "[sub-agent] {} modified {} files: {:?}",
+            agent_id,
+            files_modified.len(),
+            files_modified
+        );
+    }
+
     Ok(SubAgentResult {
         agent_id: agent_id.to_string(),
         response: accumulated_response,
         context: sub_context,
         success: true,
         duration_ms,
+        files_modified,
     })
+}
+
+/// Check if a tool modifies files
+fn is_write_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "write_file"
+            | "create_file"
+            | "edit_file"
+            | "delete_file"
+            | "delete_path"
+            | "rename_file"
+            | "move_file"
+            | "move_path"
+            | "copy_path"
+            | "create_directory"
+            | "apply_patch"
+    )
+}
+
+/// Extract file path from tool arguments
+fn extract_file_path(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+    match tool_name {
+        "write_file" | "create_file" | "edit_file" | "read_file" | "delete_file" => {
+            args.get("path")
+                .or_else(|| args.get("file_path"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        }
+        "apply_patch" => {
+            // Extract file paths from patch content
+            args.get("patch")
+                .and_then(|v| v.as_str())
+                .and_then(|patch| {
+                    // Look for "*** Update File:" or "*** Add File:" lines
+                    for line in patch.lines() {
+                        if let Some(path) = line.strip_prefix("*** Update File:") {
+                            return Some(path.trim().to_string());
+                        }
+                        if let Some(path) = line.strip_prefix("*** Add File:") {
+                            return Some(path.trim().to_string());
+                        }
+                    }
+                    None
+                })
+        }
+        "rename_file" | "move_file" | "move_path" | "copy_path" => {
+            args.get("destination")
+                .or_else(|| args.get("to"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        }
+        "delete_path" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "create_directory" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        _ => None,
+    }
 }

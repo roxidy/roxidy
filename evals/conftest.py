@@ -4,20 +4,20 @@ This module provides:
 - Pytest hooks and markers
 - Server lifecycle fixtures
 - Session and runner fixtures
-- Sidecar database fixtures
 - DeepEval model fixtures
 
 Fixtures:
     runner: StreamingRunner for executing prompts (most common)
     qbit_server: QbitClient connected to the server
     streaming_session: (session_id, client) tuple
-    sidecar_db: LanceDB connection
     eval_model: DeepEval GPTModel instance
 """
 
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -36,9 +36,35 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_api: mark test as requiring API credentials"
     )
-    config.addinivalue_line(
-        "markers", "requires_sidecar: mark test as requiring sidecar database"
-    )
+
+
+# =============================================================================
+# Session Isolation (prevent polluting ~/.qbit/sessions)
+# =============================================================================
+
+# Module-level temp directory for eval sessions (created once per pytest run)
+_eval_sessions_dir = None
+
+
+def get_eval_sessions_dir():
+    """Get or create the temp directory for eval sessions.
+
+    This directory is used to isolate eval sessions from the user's
+    ~/.qbit/sessions directory. It's cleaned up at the end of the pytest run.
+    """
+    global _eval_sessions_dir
+    if _eval_sessions_dir is None:
+        _eval_sessions_dir = tempfile.mkdtemp(prefix="qbit_eval_sessions_")
+    return _eval_sessions_dir
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Clean up temp sessions directory after all tests complete."""
+    global _eval_sessions_dir
+    if _eval_sessions_dir is not None and os.path.exists(_eval_sessions_dir):
+        shutil.rmtree(_eval_sessions_dir, ignore_errors=True)
+        print(f"\nRunning teardown with pytest sessionfinish...")
+    _eval_sessions_dir = None
 
 
 def pytest_collection_modifyitems(config, items):
@@ -53,6 +79,19 @@ def pytest_collection_modifyitems(config, items):
 # =============================================================================
 # DeepEval Model Fixture
 # =============================================================================
+
+
+@pytest.fixture(scope="session")
+def eval_sessions_dir():
+    """Get the sessions directory used by the test server.
+
+    This returns the temp directory where the server stores sidecar sessions,
+    allowing tests to verify session creation and management.
+
+    Returns:
+        Path to the sessions directory (same as VT_SESSION_DIR env var).
+    """
+    return get_eval_sessions_dir()
 
 
 @pytest.fixture(scope="session")
@@ -71,25 +110,6 @@ def eval_model():
 
 
 # =============================================================================
-# Sidecar Database Fixture
-# =============================================================================
-
-
-@pytest.fixture(scope="function")
-def sidecar_db():
-    """Connect to the sidecar LanceDB database.
-
-    Returns:
-        LanceDB connection, or None if database doesn't exist.
-    """
-    try:
-        from sidecar import connect_db
-        return connect_db()
-    except (FileNotFoundError, ImportError):
-        return None
-
-
-# =============================================================================
 # Server Fixtures
 # =============================================================================
 
@@ -101,6 +121,10 @@ def qbit_server_info():
     This is a session-scoped fixture that starts one server for all tests.
     The server runs on a random port to avoid conflicts.
 
+    Environment variables passed to server:
+        QBIT_WORKSPACE: Workspace directory for file operations (from env)
+        VT_SESSION_DIR: Temp directory to prevent polluting ~/.qbit/sessions
+
     Yields:
         Base URL string (e.g., "http://127.0.0.1:54321")
     """
@@ -110,12 +134,29 @@ def qbit_server_info():
     if not os.path.exists(binary_path):
         pytest.skip(f"Binary not found at {binary_path}. Run: just build-server")
 
+    # Build environment for server process
+    server_env = os.environ.copy()
+
+    # Use temp directory for sessions to prevent polluting ~/.qbit/sessions
+    server_env["VT_SESSION_DIR"] = get_eval_sessions_dir()
+
+    # Pass through QBIT_WORKSPACE if set (for file operation tests)
+    if "QBIT_WORKSPACE" in os.environ:
+        # Resolve relative path from evals/ directory
+        workspace = os.environ["QBIT_WORKSPACE"]
+        if not os.path.isabs(workspace):
+            # Resolve relative to evals/ directory
+            evals_dir = os.path.dirname(os.path.abspath(__file__))
+            workspace = os.path.abspath(os.path.join(evals_dir, workspace))
+        server_env["QBIT_WORKSPACE"] = workspace
+
     # Start server on random port
     proc = subprocess.Popen(
         [str(binary_path), "--server", "--port", "0"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=server_env,
     )
 
     try:

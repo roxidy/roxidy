@@ -3,6 +3,8 @@
 //! Each workflow type is defined in its own submodule and implements
 //! the `WorkflowDefinition` trait.
 
+#![allow(unused)]
+
 pub mod git_commit;
 
 use std::sync::Arc;

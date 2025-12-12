@@ -47,6 +47,7 @@ impl WorkflowRegistry {
     }
 
     /// Get a workflow definition by name.
+    #[allow(dead_code)]
     pub fn get(&self, name: &str) -> Option<Arc<dyn WorkflowDefinition>> {
         self.definitions.get(name).cloned()
     }

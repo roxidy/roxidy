@@ -6,14 +6,13 @@ requires-python = ">=3.10"
 dependencies = [
     "pytest>=7.0",
     "pytest-timeout>=2.0",
-    "pytest-xdist>=3.0",  # Parallel test execution across workers
-    "pytest-asyncio>=0.23.0",  # Async test support
+    "pytest-xdist>=3.0",      # Parallel test execution across workers
+    "pytest-asyncio>=0.23.0", # Async test support
     "python-dotenv>=1.0",
     "deepeval>=2.0",
-    "lancedb>=0.3.0",  # Sidecar database queries
-    "pandas>=2.0",  # DataFrame operations for sidecar queries
-    "httpx>=0.27.0",  # Async HTTP client for qbit_client
+    "httpx>=0.27.0",          # Async HTTP client for qbit_client
     "toml>=0.10.2",
+    "pyyaml>=6.0.3",
 ]
 
 [tool.pytest.ini_options]
@@ -28,9 +27,9 @@ timeout = 180
 timeout_method = "thread"
 # pytest-asyncio mode: auto marks all async test functions
 asyncio_mode = "auto"
-# Default fixture scope for async fixtures - class scope allows sharing LLM calls
+# Use class-scoped event loops for async fixtures and tests
+# This allows class-scoped fixtures to share LLM calls across tests in the same class
 asyncio_default_fixture_loop_scope = "class"
+asyncio_default_test_loop_scope = "class"
 # Suppress httpx/httpcore async cleanup warnings (known issue with pytest-asyncio)
-filterwarnings = [
-    "ignore::pytest.PytestUnraisableExceptionWarning",
-]
+filterwarnings = ["ignore::pytest.PytestUnraisableExceptionWarning"]
