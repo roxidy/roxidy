@@ -28,7 +28,7 @@ const VERTEX_MODELS = [
 // Available OpenRouter models (fixed list per spec)
 const OPENROUTER_MODELS = [
   { id: "mistralai/devstral-2512", name: "Devstral 2512", provider: "openrouter" as const },
-  { id: "deepseek/deepseek-chat-v3-0324", name: "Deepseek v3", provider: "openrouter" as const },
+  { id: "deepseek/deepseek-v3.2", name: "Deepseek v3.2", provider: "openrouter" as const },
   { id: "z-ai/glm-4.6", name: "GLM 4.6", provider: "openrouter" as const },
 ];
 

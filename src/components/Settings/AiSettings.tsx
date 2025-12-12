@@ -10,7 +10,7 @@ import type {
 // OpenRouter models (fixed list matching StatusBar)
 const OPENROUTER_MODELS = [
   { id: "mistralai/devstral-2512", name: "Devstral 2512" },
-  { id: "deepseek/deepseek-chat-v3-0324", name: "Deepseek v3" },
+  { id: "deepseek/deepseek-v3.2", name: "Deepseek v3.2" },
   { id: "z-ai/glm-4.6", name: "GLM 4.6" },
 ];
 
