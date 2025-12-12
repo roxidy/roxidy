@@ -12,6 +12,7 @@
 //! - `grok` - Grok API (xAI)
 
 use anyhow::{bail, Context, Result};
+use gcp_auth::{CustomServiceAccount, TokenProvider};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -19,6 +20,9 @@ use crate::settings::schema::{
     QbitSettings, SidecarSettings, SynthesisGrokSettings, SynthesisOpenAiSettings,
     SynthesisVertexSettings,
 };
+
+/// OAuth2 scope for Vertex AI
+const VERTEX_AI_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 
 // =============================================================================
 // Prompt Templates
@@ -73,30 +77,31 @@ pub const COMMIT_MESSAGE_USER_PROMPT: &str = r#"Generate a commit message for th
 Generate a conventional commit message for these changes."#;
 
 /// System prompt for LLM-based state.md updates
-pub const STATE_UPDATE_SYSTEM_PROMPT: &str = r#"You maintain a session state file that tracks goals and change rationale for an AI coding agent.
+pub const STATE_UPDATE_SYSTEM_PROMPT: &str = r#"
+You maintain a session state file that tracks goals and change rationale for an AI coding agent.
 
-This file is used to generate commit messages.
+The end goal is to create a comprehensive overview of this coding sessions goals, intents, and the changes that were made.
 
 ## Rules
-- Goals: Extract from user prompts. What the user wants accomplished this session.
+- Goals: Extract the user's intent and goals from the user prompts. Provide a breakdown of their goals and intents as a list of bullet points.
 - Changes: Each file change gets a reason. Why was this change made?
-- Be concise.
 
-## Format
-```markdown
+## Output
+Return the complete updated state.md file. Nothing else.
+Use the format below.
+
+<format>
 # Session State
 Updated: {timestamp}
 
 ## Goals
-- {goal from user}
+{user's goals and intents}
 
 ## Changes
 - `{file path}` — {why this change was made}
 - `{file path}` — {why this change was made}
-```
-
-## Output
-Return the complete updated state.md file. Nothing else."#;
+</format>
+"#;
 
 /// User prompt template for state.md updates
 pub const STATE_UPDATE_USER_PROMPT: &str = r#"<current_state>
@@ -571,7 +576,7 @@ impl VertexAnthropicSynthesizer {
         })
     }
 
-    /// Get an access token using gcloud or service account
+    /// Get an access token using service account credentials
     async fn get_access_token(&self) -> Result<String> {
         // Try service account credentials first
         if let Some(creds_path) = &self.credentials_path {
@@ -583,31 +588,33 @@ impl VertexAnthropicSynthesizer {
             return self.get_token_from_service_account(&creds_path).await;
         }
 
-        // Fall back to gcloud CLI
-        self.get_token_from_gcloud().await
+        // Fall back to application default credentials
+        self.get_token_from_default().await
     }
 
-    async fn get_token_from_service_account(&self, _creds_path: &str) -> Result<String> {
-        // For now, fall back to gcloud - full service account auth requires more setup
-        // TODO: Implement proper service account JWT auth
-        self.get_token_from_gcloud().await
-    }
+    async fn get_token_from_service_account(&self, creds_path: &str) -> Result<String> {
+        let service_account = CustomServiceAccount::from_file(creds_path)
+            .context("Failed to load service account credentials")?;
 
-    async fn get_token_from_gcloud(&self) -> Result<String> {
-        let output = tokio::process::Command::new("gcloud")
-            .args(["auth", "print-access-token"])
-            .output()
+        let token = service_account
+            .token(&[VERTEX_AI_SCOPE])
             .await
-            .context("Failed to run gcloud auth print-access-token")?;
+            .context("Failed to get access token from service account")?;
 
-        if !output.status.success() {
-            bail!(
-                "gcloud auth failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        Ok(token.as_str().to_string())
+    }
 
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    async fn get_token_from_default(&self) -> Result<String> {
+        let provider = gcp_auth::provider()
+            .await
+            .context("Failed to get default credentials provider")?;
+
+        let token = provider
+            .token(&[VERTEX_AI_SCOPE])
+            .await
+            .context("Failed to get access token from default credentials")?;
+
+        Ok(token.as_str().to_string())
     }
 }
 
@@ -920,37 +927,45 @@ impl VertexAnthropicStateSynthesizer {
         })
     }
 
+    /// Get an access token using service account credentials
     async fn get_access_token(&self) -> Result<String> {
+        // Try service account credentials first
         if let Some(creds_path) = &self.credentials_path {
             return self.get_token_from_service_account(creds_path).await;
         }
 
+        // Fall back to GOOGLE_APPLICATION_CREDENTIALS
         if let Ok(creds_path) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
             return self.get_token_from_service_account(&creds_path).await;
         }
 
-        self.get_token_from_gcloud().await
+        // Fall back to application default credentials
+        self.get_token_from_default().await
     }
 
-    async fn get_token_from_service_account(&self, _creds_path: &str) -> Result<String> {
-        self.get_token_from_gcloud().await
-    }
+    async fn get_token_from_service_account(&self, creds_path: &str) -> Result<String> {
+        let service_account = CustomServiceAccount::from_file(creds_path)
+            .context("Failed to load service account credentials")?;
 
-    async fn get_token_from_gcloud(&self) -> Result<String> {
-        let output = tokio::process::Command::new("gcloud")
-            .args(["auth", "print-access-token"])
-            .output()
+        let token = service_account
+            .token(&[VERTEX_AI_SCOPE])
             .await
-            .context("Failed to run gcloud auth print-access-token")?;
+            .context("Failed to get access token from service account")?;
 
-        if !output.status.success() {
-            bail!(
-                "gcloud auth failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        Ok(token.as_str().to_string())
+    }
 
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    async fn get_token_from_default(&self) -> Result<String> {
+        let provider = gcp_auth::provider()
+            .await
+            .context("Failed to get default credentials provider")?;
+
+        let token = provider
+            .token(&[VERTEX_AI_SCOPE])
+            .await
+            .context("Failed to get access token from default credentials")?;
+
+        Ok(token.as_str().to_string())
     }
 }
 
@@ -966,6 +981,21 @@ impl StateSynthesizer for VertexAnthropicStateSynthesizer {
             self.location, self.project_id, self.location, self.model
         );
 
+        let user_prompt = input.build_prompt();
+
+        // Log the prompts being used
+        tracing::info!(
+            "[synthesis] State synthesis request:\n  event_type={}\n  files={:?}\n  current_state_len={}",
+            input.event_type,
+            input.files,
+            input.current_state.len()
+        );
+        tracing::debug!(
+            "[synthesis] System prompt:\n{}\n\n[synthesis] User prompt:\n{}",
+            STATE_UPDATE_SYSTEM_PROMPT,
+            user_prompt
+        );
+
         let request_body = serde_json::json!({
             "anthropic_version": "vertex-2023-10-16",
             "max_tokens": 1500,
@@ -973,7 +1003,7 @@ impl StateSynthesizer for VertexAnthropicStateSynthesizer {
             "messages": [
                 {
                     "role": "user",
-                    "content": input.build_prompt()
+                    "content": user_prompt
                 }
             ]
         });
@@ -999,6 +1029,13 @@ impl StateSynthesizer for VertexAnthropicStateSynthesizer {
             .context("Invalid response format from Vertex AI")?
             .trim()
             .to_string();
+
+        // Log the LLM response
+        tracing::info!(
+            "[synthesis] State synthesis response (len={}):\n{}",
+            state_body.len(),
+            state_body
+        );
 
         Ok(StateSynthesisResult {
             state_body,

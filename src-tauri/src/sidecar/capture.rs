@@ -100,7 +100,26 @@ impl CaptureContext {
 
                 // Extract files_modified for write operations
                 let files_modified = if is_write_tool(tool_name) && *success {
-                    extract_files_modified(tool_name, self.last_tool_args.as_ref())
+                    let files = extract_files_modified(tool_name, self.last_tool_args.as_ref());
+                    if files.is_empty() {
+                        debug!(
+                            "[sidecar-capture] No files extracted for write tool {} (args: {:?})",
+                            tool_name,
+                            self.last_tool_args.as_ref().map(|a| a
+                                .to_string()
+                                .chars()
+                                .take(200)
+                                .collect::<String>())
+                        );
+                    } else {
+                        debug!(
+                            "[sidecar-capture] Extracted {} files for write tool {}: {:?}",
+                            files.len(),
+                            tool_name,
+                            files
+                        );
+                    }
+                    files
                 } else {
                     vec![]
                 };
@@ -714,6 +733,9 @@ mod tests {
                 synthesis_backend: crate::sidecar::synthesis::SynthesisBackend::Template,
                 artifact_synthesis_backend:
                     crate::sidecar::artifacts::ArtifactSynthesisBackend::Template,
+                synthesis_vertex: Default::default(),
+                synthesis_openai: Default::default(),
+                synthesis_grok: Default::default(),
             }
         }
 

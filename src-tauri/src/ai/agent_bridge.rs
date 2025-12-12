@@ -692,6 +692,23 @@ impl AgentBridge {
             self.save_session().await;
         }
 
+        // Capture AI response in sidecar session
+        if let Some(ref sidecar) = self.sidecar_state {
+            use crate::sidecar::events::SessionEvent;
+
+            if let Some(session_id) = sidecar.current_session_id() {
+                if !accumulated_response.is_empty() {
+                    let response_event =
+                        SessionEvent::ai_response(session_id, &accumulated_response);
+                    sidecar.capture(response_event);
+                    tracing::debug!(
+                        "[agent] Captured AI response in sidecar ({} chars)",
+                        accumulated_response.len()
+                    );
+                }
+            }
+        }
+
         // Note: Sidecar session is NOT ended here - it persists across prompts in the
         // same conversation. The session is only ended when:
         // 1. The AgentBridge is dropped (see Drop impl)

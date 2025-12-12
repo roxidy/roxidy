@@ -42,6 +42,10 @@ pub struct SubAgentResult {
 
     /// Execution duration in milliseconds
     pub duration_ms: u64,
+
+    /// Files modified by this sub-agent during execution
+    #[serde(default)]
+    pub files_modified: Vec<String>,
 }
 
 /// Definition of a specialized sub-agent
@@ -503,12 +507,14 @@ mod tests {
             context: SubAgentContext::default(),
             success: true,
             duration_ms: 1500,
+            files_modified: vec!["main.go".to_string()],
         };
 
         assert_eq!(result.agent_id, "test_agent");
         assert_eq!(result.response, "Task completed");
         assert!(result.success);
         assert_eq!(result.duration_ms, 1500);
+        assert_eq!(result.files_modified, vec!["main.go".to_string()]);
     }
 
     // ===========================================

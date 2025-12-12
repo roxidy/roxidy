@@ -397,7 +397,8 @@ pub async fn execute_tool_direct(
                         "agent_id": result.agent_id,
                         "response": result.response,
                         "success": result.success,
-                        "duration_ms": result.duration_ms
+                        "duration_ms": result.duration_ms,
+                        "files_modified": result.files_modified
                     }),
                     success: result.success,
                 });
@@ -769,12 +770,6 @@ pub async fn run_agentic_loop(
                             }
                         }
                         StreamedAssistantContent::ToolCallDelta { id, delta } => {
-                            tracing::debug!(
-                                "Received tool call delta #{}: id={}, {} chars",
-                                chunk_count,
-                                id,
-                                delta.len()
-                            );
                             // If we don't have a current tool ID but the delta has one, use it
                             if current_tool_id.is_none() && !id.is_empty() {
                                 current_tool_id = Some(id);

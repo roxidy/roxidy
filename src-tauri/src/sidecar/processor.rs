@@ -166,28 +166,44 @@ impl SessionProcessorState {
 /// Event processor
 pub struct Processor {
     task_tx: mpsc::Sender<ProcessorTask>,
+    /// Handle to the processor task, used to await completion during shutdown
+    task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Processor {
     /// Create a new processor and spawn its background task
     pub fn spawn(config: ProcessorConfig) -> Self {
+        tracing::info!(
+            "[processor] Spawning processor: synthesis.enabled={}, synthesis.backend={:?}",
+            config.synthesis.enabled,
+            config.synthesis.backend
+        );
+
         let (task_tx, task_rx) = mpsc::channel(256);
 
-        tokio::spawn(async move {
+        let task_handle = tokio::spawn(async move {
             run_processor(config, task_rx).await;
         });
 
-        Self { task_tx }
+        Self {
+            task_tx,
+            task_handle: Some(task_handle),
+        }
     }
 
     /// Process an event (non-blocking, queues for async processing)
     pub fn process_event(&self, session_id: String, event: SessionEvent) {
+        tracing::info!(
+            "[processor] Queuing event: type={}, session={}",
+            event.event_type.name(),
+            session_id
+        );
         let task = ProcessorTask::ProcessEvent {
             session_id,
             event: Box::new(event),
         };
         if let Err(e) = self.task_tx.try_send(task) {
-            tracing::warn!("Failed to queue event for processing: {}", e);
+            tracing::warn!("[processor] Failed to queue event for processing: {}", e);
         }
     }
 
@@ -199,9 +215,21 @@ impl Processor {
         }
     }
 
-    /// Shutdown the processor
-    pub async fn shutdown(&self) {
+    /// Shutdown the processor and wait for it to complete all pending work
+    ///
+    /// This sends a shutdown signal and then waits for the processor task to finish,
+    /// ensuring that any pending operations (like patch generation) complete.
+    pub async fn shutdown(mut self) {
+        // Send shutdown signal
         let _ = self.task_tx.send(ProcessorTask::Shutdown).await;
+
+        // Wait for the processor task to actually finish
+        if let Some(handle) = self.task_handle.take() {
+            match handle.await {
+                Ok(()) => tracing::debug!("Processor task completed successfully"),
+                Err(e) => tracing::warn!("Processor task panicked: {}", e),
+            }
+        }
     }
 }
 
@@ -223,9 +251,27 @@ async fn run_processor(config: ProcessorConfig, mut task_rx: mpsc::Receiver<Proc
                 }
             }
             ProcessorTask::EndSession { session_id } => {
+                tracing::info!(
+                    "[processor] EndSession task received for session: {}",
+                    session_id
+                );
+
                 // Generate final patch if there are pending changes
                 if let Some(session_state) = session_states.get_mut(&session_id) {
+                    let file_count = session_state.file_tracker.get_files().len();
+                    tracing::info!(
+                        "[processor] Session {} ending: generate_patches={}, file_tracker has {} file(s)",
+                        session_id,
+                        config.generate_patches,
+                        file_count
+                    );
+
                     if config.generate_patches && !session_state.file_tracker.is_empty() {
+                        tracing::info!(
+                            "[processor] Generating patch for session {} with {} file(s)",
+                            session_id,
+                            file_count
+                        );
                         if let Err(e) = generate_patch(
                             &config,
                             &session_id,
@@ -240,7 +286,22 @@ async fn run_processor(config: ProcessorConfig, mut task_rx: mpsc::Receiver<Proc
                                 e
                             );
                         }
+                    } else if !config.generate_patches {
+                        tracing::debug!(
+                            "[processor] Patch generation disabled for session {}",
+                            session_id
+                        );
+                    } else {
+                        tracing::debug!(
+                            "[processor] No files tracked for session {}, skipping patch generation",
+                            session_id
+                        );
                     }
+                } else {
+                    tracing::warn!(
+                        "[processor] No session state found for session {}, cannot generate patch",
+                        session_id
+                    );
                 }
 
                 if let Err(e) = handle_end_session(&config, &session_id).await {
@@ -297,11 +358,20 @@ async fn update_session_files(
     event: &SessionEvent,
     session_state: &mut SessionProcessorState,
 ) -> Result<()> {
+    tracing::info!(
+        "[processor] update_session_files called: event_type={}, session_id={}",
+        event.event_type.name(),
+        session_id
+    );
+
     // Load session
     let mut session = match Session::load(&config.sessions_dir, session_id).await {
-        Ok(s) => s,
+        Ok(s) => {
+            tracing::debug!("[processor] Session {} loaded successfully", session_id);
+            s
+        }
         Err(e) => {
-            tracing::debug!("Could not load session {} for update: {}", session_id, e);
+            tracing::warn!("[processor] Could not load session {} for update: {}", session_id, e);
             return Ok(());
         }
     };
@@ -323,8 +393,7 @@ async fn update_session_files(
                 tracing::warn!("Failed to append to log: {}", e);
             }
 
-            // Update state.md with changes list
-            update_state_with_changes(&mut session, session_state).await?;
+            // Note: State synthesis happens on AiResponse, not per-file-edit
         }
         EventType::ToolCall {
             tool_name,
@@ -358,7 +427,7 @@ async fn update_session_files(
                 tracing::warn!("Failed to append to log: {}", e);
             }
 
-            // Track tool call for progress
+            // Track tool call for progress (state will be synthesized on AiResponse)
             session_state.record_tool_call(tool_name, *success);
 
             // Track files from tool call
@@ -366,8 +435,8 @@ async fn update_session_files(
                 session_state.record_modified_file(path.clone());
             }
 
-            // Update state.md with progress and files
-            update_state_full(&mut session, session_state).await?;
+            // Note: State synthesis happens on AiResponse, not per-tool-call
+            // This avoids intermediate template updates and reduces LLM calls
         }
         EventType::UserPrompt { intent, .. } => {
             // Log user prompts
@@ -379,6 +448,32 @@ async fn update_session_files(
             let log_entry = format!("**User**: {}", truncated);
             if let Err(e) = session.append_log(&log_entry).await {
                 tracing::warn!("Failed to append to log: {}", e);
+            }
+
+            // Update state.md with new user request via LLM synthesis
+            tracing::info!(
+                "[processor] UserPrompt received, synthesis.enabled={}, backend={:?}",
+                config.synthesis.enabled,
+                config.synthesis.backend
+            );
+            if config.synthesis.enabled {
+                tracing::info!("[processor] Calling synthesize_state_update for user_prompt");
+                if let Err(e) = synthesize_state_update(
+                    config,
+                    &mut session,
+                    session_state,
+                    "user_prompt",
+                    intent,
+                )
+                .await
+                {
+                    tracing::error!(
+                        "[sidecar] LLM state synthesis failed for user prompt: {}",
+                        e
+                    );
+                }
+            } else {
+                tracing::warn!("[processor] Synthesis disabled, skipping state update for user_prompt");
             }
         }
         EventType::AiResponse { content, .. } => {
@@ -394,7 +489,13 @@ async fn update_session_files(
             }
 
             // Trigger LLM-based state synthesis on AI responses (completed turns)
-            if config.synthesis.enabled && config.synthesis.backend != SynthesisBackend::Template {
+            tracing::info!(
+                "[processor] AiResponse received, synthesis.enabled={}, backend={:?}",
+                config.synthesis.enabled,
+                config.synthesis.backend
+            );
+            if config.synthesis.enabled {
+                tracing::info!("[processor] Calling synthesize_state_update for ai_response");
                 if let Err(e) = synthesize_state_update(
                     config,
                     &mut session,
@@ -404,20 +505,13 @@ async fn update_session_files(
                 )
                 .await
                 {
-                    tracing::warn!(
-                        "LLM state synthesis failed, falling back to template: {}",
+                    tracing::error!(
+                        "[sidecar] LLM state synthesis failed for AI response: {}",
                         e
                     );
-                    // Fall back to template-based update
-                    if let Err(e) = update_state_full(&mut session, session_state).await {
-                        tracing::warn!("Template state update failed: {}", e);
-                    }
                 }
             } else {
-                // Template mode - just update files and progress sections
-                if let Err(e) = update_state_full(&mut session, session_state).await {
-                    tracing::warn!("Template state update failed: {}", e);
-                }
+                tracing::warn!("[processor] Synthesis disabled, skipping state update for ai_response");
             }
         }
         _ => {
@@ -438,138 +532,49 @@ fn format_operation(op: &super::events::FileOperation) -> &'static str {
     }
 }
 
-/// Update state.md with current changes list
-async fn update_state_with_changes(
-    session: &mut Session,
-    session_state: &SessionProcessorState,
-) -> Result<()> {
-    // Read current state body
-    let current_body = session.read_state().await.unwrap_or_default();
-
-    // Build new body with updated changes section
-    let new_body = update_changes_section(&current_body, &session_state.all_modified_files);
-
-    // Write updated state
-    session.update_state(&new_body).await?;
-
-    Ok(())
-}
-
-/// Update the "## Changes" section in state.md body
-fn update_changes_section(body: &str, files: &[PathBuf]) -> String {
-    // Find and replace the Changes section
-    let changes_header = "## Changes";
-    let next_section = "\n## ";
-
-    if let Some(changes_start) = body.find(changes_header) {
-        let after_header = changes_start + changes_header.len();
-        let changes_end = body[after_header..]
-            .find(next_section)
-            .map(|i| after_header + i)
-            .unwrap_or(body.len());
-
-        // Build new changes section
-        let changes_content = if files.is_empty() {
-            "\n(none yet)\n".to_string()
-        } else {
-            let file_list: Vec<String> = files
-                .iter()
-                .map(|p| format!("- `{}` — modified", p.display()))
-                .collect();
-            format!("\n{}\n", file_list.join("\n"))
-        };
-
-        format!(
-            "{}{}{}{}",
-            &body[..changes_start],
-            changes_header,
-            changes_content,
-            &body[changes_end..]
-        )
-    } else {
-        // No Changes section found, return as-is
-        body.to_string()
-    }
-}
-
-/// Update state.md with both progress and changes
-async fn update_state_full(
-    session: &mut Session,
-    session_state: &SessionProcessorState,
-) -> Result<()> {
-    // Read current state body
-    let current_body = session.read_state().await.unwrap_or_default();
-
-    // Update progress section first, then changes section
-    let with_progress = update_progress_section(&current_body, &session_state.completed_tools);
-    let new_body = update_changes_section(&with_progress, &session_state.all_modified_files);
-
-    // Write updated state
-    session.update_state(&new_body).await?;
-
-    Ok(())
-}
-
-/// Update the "## Progress" section in state.md body
-fn update_progress_section(body: &str, tools: &[String]) -> String {
-    let progress_header = "## Progress";
-    let next_section = "\n## ";
-
-    if let Some(progress_start) = body.find(progress_header) {
-        let after_header = progress_start + progress_header.len();
-        let progress_end = body[after_header..]
-            .find(next_section)
-            .map(|i| after_header + i)
-            .unwrap_or(body.len());
-
-        // Build new progress section
-        let progress_content = if tools.is_empty() {
-            "\nSession started.\n".to_string()
-        } else {
-            // Show recent tools (last 10 to keep it readable)
-            let recent_tools: Vec<&String> = tools.iter().rev().take(10).collect();
-            let tool_list: Vec<String> = recent_tools
-                .iter()
-                .rev()
-                .map(|t| format!("- {}", t))
-                .collect();
-            format!(
-                "\nSession started. {} tool calls completed.\n\n**Recent activity:**\n{}\n",
-                tools.len(),
-                tool_list.join("\n")
-            )
-        };
-
-        format!(
-            "{}{}{}{}",
-            &body[..progress_start],
-            progress_header,
-            progress_content,
-            &body[progress_end..]
-        )
-    } else {
-        // No Progress section found, return as-is
-        body.to_string()
-    }
-}
-
 /// Synthesize an updated state.md using LLM
 async fn synthesize_state_update(
     config: &ProcessorConfig,
     session: &mut Session,
-    session_state: &SessionProcessorState,
+    _session_state: &SessionProcessorState,
     event_type: &str,
     event_details: &str,
 ) -> Result<()> {
+    tracing::info!(
+        "[sidecar] Synthesizing state update via LLM (event_type={}, backend={:?})",
+        event_type,
+        config.synthesis.backend
+    );
+
     // Read current state
     let current_state = session.read_state().await.unwrap_or_default();
 
-    // Get files involved from session state
-    let files: Vec<String> = session_state
-        .all_modified_files
+    // Get files from git diff (more reliable than tracking tool calls)
+    let git_changes = get_git_changes(&session.meta().cwd).await;
+    let files: Vec<String> = git_changes
         .iter()
-        .map(|p| p.display().to_string())
+        .map(|gc| {
+            if gc.diff.is_empty() {
+                gc.path.clone()
+            } else {
+                // Include truncated diff info for context
+                let diff_preview = if gc.diff.len() > 200 {
+                    format!("{} (+{} lines)", gc.path, gc.diff.lines().count())
+                } else {
+                    format!("{}\n{}", gc.path, gc.diff)
+                };
+                diff_preview
+            }
+        })
         .collect();
+
+    if !files.is_empty() {
+        tracing::info!(
+            "[sidecar] Git detected {} modified files: {:?}",
+            files.len(),
+            git_changes.iter().map(|g| &g.path).collect::<Vec<_>>()
+        );
+    }
 
     // Create synthesis input
     let input = StateSynthesisInput::new(
@@ -586,19 +591,224 @@ async fn synthesize_state_update(
     // Write updated state
     session.update_state(&result.state_body).await?;
 
-    tracing::debug!("State synthesized using {} backend", result.backend);
+    tracing::info!(
+        "[sidecar] State synthesized successfully using {} backend",
+        result.backend
+    );
 
     Ok(())
+}
+
+/// Represents a git change with file path and optional diff
+#[derive(Debug)]
+struct GitChange {
+    path: String,
+    diff: String,
+}
+
+/// Get modified files and their diffs using git
+async fn get_git_changes(cwd: &std::path::Path) -> Vec<GitChange> {
+    // First check if this is a git repo
+    let is_git = tokio::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(cwd)
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !is_git {
+        tracing::debug!("[sidecar] Not a git repository, skipping git diff");
+        return vec![];
+    }
+
+    // Get list of modified files (staged + unstaged + untracked)
+    let output = match tokio::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("[sidecar] Failed to run git status: {}", e);
+            return vec![];
+        }
+    };
+
+    if !output.status.success() {
+        return vec![];
+    }
+
+    let status_output = String::from_utf8_lossy(&output.stdout);
+    let mut changes = Vec::new();
+
+    for line in status_output.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+
+        let status = &line[0..2];
+        let path = line[3..].trim().to_string();
+
+        // Skip binary files and build artifacts
+        if is_binary_or_artifact(&path) {
+            tracing::debug!("[sidecar] Skipping binary/artifact: {}", path);
+            continue;
+        }
+
+        // Skip deleted files for diff
+        if status.contains('D') {
+            changes.push(GitChange {
+                path: path.clone(),
+                diff: "(deleted)".to_string(),
+            });
+            continue;
+        }
+
+        // Check if git considers this file binary
+        if is_git_binary(cwd, &path).await {
+            tracing::debug!("[sidecar] Skipping git-detected binary: {}", path);
+            continue;
+        }
+
+        // Get diff for this file
+        let diff = get_file_diff(cwd, &path).await;
+        changes.push(GitChange { path, diff });
+    }
+
+    changes
+}
+
+/// Check if a file is likely a binary or build artifact based on path/extension
+fn is_binary_or_artifact(path: &str) -> bool {
+    let path_lower = path.to_lowercase();
+
+    // Common binary extensions
+    let binary_extensions = [
+        ".exe", ".dll", ".so", ".dylib", ".a", ".o", ".obj",
+        ".pyc", ".pyo", ".class", ".jar", ".war",
+        ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx",
+        ".wasm", ".node",
+    ];
+
+    // Common build artifact directories
+    let artifact_dirs = [
+        "node_modules/", "target/", "build/", "dist/", "out/",
+        ".git/", "__pycache__/", ".pytest_cache/", ".mypy_cache/",
+        "vendor/", "bin/", "obj/",
+    ];
+
+    // Check extensions
+    for ext in &binary_extensions {
+        if path_lower.ends_with(ext) {
+            return true;
+        }
+    }
+
+    // Check artifact directories
+    for dir in &artifact_dirs {
+        if path_lower.contains(dir) {
+            return true;
+        }
+    }
+
+    // Files without extension in root are often binaries (Go, C, etc.)
+    // But only if they don't look like common config files
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    if !filename.contains('.') {
+        // Allow common extensionless config files
+        let allowed_extensionless = [
+            "Makefile", "Dockerfile", "Jenkinsfile", "Vagrantfile",
+            "README", "LICENSE", "CHANGELOG", "AUTHORS", "CONTRIBUTORS",
+            "Gemfile", "Rakefile", "Procfile", "Brewfile",
+            ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig",
+        ];
+        if !allowed_extensionless.iter().any(|&f| filename == f || filename.starts_with('.')) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if git considers a file binary using diff --numstat
+async fn is_git_binary(cwd: &std::path::Path, file_path: &str) -> bool {
+    let output = tokio::process::Command::new("git")
+        .args(["diff", "--numstat", "HEAD", "--", file_path])
+        .current_dir(cwd)
+        .output()
+        .await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            // Binary files show as "-\t-\t<filename>" in numstat
+            stdout.starts_with("-\t-\t")
+        }
+        _ => false,
+    }
+}
+
+/// Get the diff for a specific file
+async fn get_file_diff(cwd: &std::path::Path, file_path: &str) -> String {
+    // Try staged diff first, then unstaged
+    let output = tokio::process::Command::new("git")
+        .args(["diff", "HEAD", "--", file_path])
+        .current_dir(cwd)
+        .output()
+        .await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let diff = String::from_utf8_lossy(&o.stdout).to_string();
+            if diff.is_empty() {
+                // File might be untracked, just note it as new
+                "(new file)".to_string()
+            } else {
+                // Truncate very long diffs
+                if diff.len() > 2000 {
+                    format!(
+                        "{}...\n(truncated, {} more lines)",
+                        &diff[..2000],
+                        diff.lines().count().saturating_sub(50)
+                    )
+                } else {
+                    diff
+                }
+            }
+        }
+        _ => "(unable to get diff)".to_string(),
+    }
 }
 
 /// Track file changes from an event
 fn track_file_changes(event: &SessionEvent, session_state: &mut SessionProcessorState) {
     match &event.event_type {
         EventType::FileEdit { path, .. } => {
+            tracing::debug!(
+                "[processor] FileEdit event for path: {:?}, tracking change",
+                path
+            );
             session_state.file_tracker.record_change(path.clone());
         }
         EventType::ToolCall { tool_name, .. } => {
             if is_write_tool(tool_name) {
+                if event.files_modified.is_empty() {
+                    tracing::debug!(
+                        "[processor] ToolCall {} is write tool but files_modified is empty",
+                        tool_name
+                    );
+                } else {
+                    tracing::debug!(
+                        "[processor] ToolCall {} tracking {} file(s): {:?}",
+                        tool_name,
+                        event.files_modified.len(),
+                        event.files_modified
+                    );
+                }
                 for path in &event.files_modified {
                     session_state.file_tracker.record_change(path.clone());
                 }
@@ -606,6 +816,10 @@ fn track_file_changes(event: &SessionEvent, session_state: &mut SessionProcessor
         }
         _ => {}
     }
+    tracing::debug!(
+        "[processor] File tracker now has {} file(s)",
+        session_state.file_tracker.get_files().len()
+    );
 }
 
 /// Check if a tool is a write tool
@@ -639,6 +853,12 @@ async fn generate_patch(
     session_state: &mut SessionProcessorState,
     reason: BoundaryReason,
 ) -> Result<()> {
+    tracing::info!(
+        "[processor] generate_patch called for session {} with reason {:?}",
+        session_id,
+        reason
+    );
+
     let session = Session::load(&config.sessions_dir, session_id)
         .await
         .context("Failed to load session")?;
@@ -649,20 +869,40 @@ async fn generate_patch(
         .clone()
         .unwrap_or_else(|| session.meta().cwd.clone());
 
+    tracing::debug!(
+        "[processor] Using git_root: {:?} for patch generation",
+        git_root
+    );
+
     let manager = PatchManager::new(session.dir().to_path_buf());
 
     let files = session_state.file_tracker.get_files();
     if files.is_empty() {
+        tracing::debug!("[processor] No files in file_tracker, skipping patch creation");
         return Ok(());
     }
 
+    tracing::info!(
+        "[processor] Creating patch with {} file(s): {:?}",
+        files.len(),
+        files
+    );
+
     // Generate commit message using synthesis
     let message = generate_commit_message(config, &session, &files, &git_root).await;
+
+    tracing::debug!("[processor] Generated commit message: {}", message);
 
     // Create patch
     let patch = manager
         .create_patch_from_changes(&git_root, &files, &message, reason)
         .await?;
+
+    tracing::info!(
+        "[processor] Patch {} created successfully for session {}",
+        patch.meta.id,
+        session_id
+    );
 
     // Emit patch created event
     config.emit_event(SidecarEvent::PatchCreated {
@@ -955,4 +1195,5 @@ mod tests {
             "Should not detect boundary with fewer than min_events"
         );
     }
+
 }

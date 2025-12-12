@@ -15,7 +15,9 @@ Fixtures:
 
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -36,6 +38,35 @@ def pytest_configure(config):
     )
 
 
+# =============================================================================
+# Session Isolation (prevent polluting ~/.qbit/sessions)
+# =============================================================================
+
+# Module-level temp directory for eval sessions (created once per pytest run)
+_eval_sessions_dir = None
+
+
+def get_eval_sessions_dir():
+    """Get or create the temp directory for eval sessions.
+
+    This directory is used to isolate eval sessions from the user's
+    ~/.qbit/sessions directory. It's cleaned up at the end of the pytest run.
+    """
+    global _eval_sessions_dir
+    if _eval_sessions_dir is None:
+        _eval_sessions_dir = tempfile.mkdtemp(prefix="qbit_eval_sessions_")
+    return _eval_sessions_dir
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Clean up temp sessions directory after all tests complete."""
+    global _eval_sessions_dir
+    if _eval_sessions_dir is not None and os.path.exists(_eval_sessions_dir):
+        shutil.rmtree(_eval_sessions_dir, ignore_errors=True)
+        print(f"\nRunning teardown with pytest sessionfinish...")
+    _eval_sessions_dir = None
+
+
 def pytest_collection_modifyitems(config, items):
     """Skip API tests unless explicitly enabled."""
     if os.environ.get("RUN_API_TESTS", "").lower() not in ("1", "true", "yes"):
@@ -48,6 +79,19 @@ def pytest_collection_modifyitems(config, items):
 # =============================================================================
 # DeepEval Model Fixture
 # =============================================================================
+
+
+@pytest.fixture(scope="session")
+def eval_sessions_dir():
+    """Get the sessions directory used by the test server.
+
+    This returns the temp directory where the server stores sidecar sessions,
+    allowing tests to verify session creation and management.
+
+    Returns:
+        Path to the sessions directory (same as VT_SESSION_DIR env var).
+    """
+    return get_eval_sessions_dir()
 
 
 @pytest.fixture(scope="session")
@@ -79,6 +123,7 @@ def qbit_server_info():
 
     Environment variables passed to server:
         QBIT_WORKSPACE: Workspace directory for file operations (from env)
+        VT_SESSION_DIR: Temp directory to prevent polluting ~/.qbit/sessions
 
     Yields:
         Base URL string (e.g., "http://127.0.0.1:54321")
@@ -90,8 +135,12 @@ def qbit_server_info():
         pytest.skip(f"Binary not found at {binary_path}. Run: just build-server")
 
     # Build environment for server process
-    # Pass through QBIT_WORKSPACE if set (for file operation tests)
     server_env = os.environ.copy()
+
+    # Use temp directory for sessions to prevent polluting ~/.qbit/sessions
+    server_env["VT_SESSION_DIR"] = get_eval_sessions_dir()
+
+    # Pass through QBIT_WORKSPACE if set (for file operation tests)
     if "QBIT_WORKSPACE" in os.environ:
         # Resolve relative path from evals/ directory
         workspace = os.environ["QBIT_WORKSPACE"]

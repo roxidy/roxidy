@@ -17,13 +17,8 @@ from client import QbitClient
 
 
 # =============================================================================
-# Fixtures
+# Helpers
 # =============================================================================
-
-
-def get_sessions_dir() -> Path:
-    """Get the qbit sessions directory."""
-    return Path.home() / ".qbit" / "sessions"
 
 
 def find_recent_session_dirs(sessions_dir: Path, prefix: str = "") -> list[Path]:
@@ -81,9 +76,9 @@ class TestSessionUniqueness:
     """Tests verifying that sessions are unique and not duplicated."""
 
     @pytest.mark.asyncio
-    async def test_single_prompt_creates_single_session(self, qbit_server):
+    async def test_single_prompt_creates_single_session(self, qbit_server, eval_sessions_dir):
         """Verify that a single prompt creates exactly one sidecar session."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -110,9 +105,9 @@ class TestSessionUniqueness:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_multiple_prompts_same_sidecar_session(self, qbit_server):
+    async def test_multiple_prompts_same_sidecar_session(self, qbit_server, eval_sessions_dir):
         """Verify multiple prompts in same conversation use same sidecar session."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -160,9 +155,9 @@ class TestSessionLifecycle:
     """Tests for session lifecycle management."""
 
     @pytest.mark.asyncio
-    async def test_session_active_during_conversation(self, qbit_server):
+    async def test_session_active_during_conversation(self, qbit_server, eval_sessions_dir):
         """Verify sidecar session remains active during conversation."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -188,9 +183,9 @@ class TestSessionLifecycle:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_session_updated_on_subsequent_prompts(self, qbit_server):
+    async def test_session_updated_on_subsequent_prompts(self, qbit_server, eval_sessions_dir):
         """Verify session updated_at changes with subsequent prompts."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -235,9 +230,9 @@ class TestSessionContinuity:
     """Tests verifying session continuity across prompts."""
 
     @pytest.mark.asyncio
-    async def test_session_id_consistent_across_prompts(self, qbit_server):
+    async def test_session_id_consistent_across_prompts(self, qbit_server, eval_sessions_dir):
         """Verify the same session_id is used across all prompts."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -266,9 +261,9 @@ class TestSessionContinuity:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_log_exists_and_session_reused(self, qbit_server):
+    async def test_log_exists_and_session_reused(self, qbit_server, eval_sessions_dir):
         """Verify log.md exists and session is reused across prompts."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -315,10 +310,10 @@ class TestSessionIsolation:
 
     @pytest.mark.asyncio
     async def test_different_server_sessions_have_different_sidecar_sessions(
-        self, qbit_server
+        self, qbit_server, eval_sessions_dir
     ):
         """Verify different server sessions create different sidecar sessions."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Create two separate server sessions
@@ -365,13 +360,13 @@ class TestSessionEdgeCases:
     """Edge case tests for session management."""
 
     @pytest.mark.asyncio
-    async def test_rapid_successive_prompts_single_session(self, qbit_server):
+    async def test_rapid_successive_prompts_single_session(self, qbit_server, eval_sessions_dir):
         """Verify rapid successive prompts don't create duplicate sessions.
 
         This tests the race condition fix - rapid calls should all use
         the same session due to the atomic check-and-set.
         """
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -394,9 +389,9 @@ class TestSessionEdgeCases:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_session_survives_error(self, qbit_server):
+    async def test_session_survives_error(self, qbit_server, eval_sessions_dir):
         """Verify session continues to work after an error."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()

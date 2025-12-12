@@ -44,11 +44,6 @@ def parse_state_frontmatter(session_dir: Path) -> dict:
 # =============================================================================
 
 
-def get_sessions_dir() -> Path:
-    """Get the qbit sessions directory."""
-    return Path.home() / ".qbit" / "sessions"
-
-
 def find_recent_session_dirs(sessions_dir: Path, prefix: str = "") -> list[Path]:
     """Find session directories (not JSON files) in the sessions dir."""
     if not sessions_dir.exists():
@@ -75,9 +70,9 @@ class TestSidecarSessionStructure:
     """Tests for sidecar session file structure."""
 
     @pytest.mark.asyncio
-    async def test_session_creates_directory_structure(self, qbit_server):
+    async def test_session_creates_directory_structure(self, qbit_server, eval_sessions_dir):
         """Verify that running a prompt creates proper session directory."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
 
         # Get existing session dirs before test
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
@@ -109,9 +104,9 @@ class TestSidecarSessionStructure:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_state_md_metadata(self, qbit_server):
+    async def test_state_md_metadata(self, qbit_server, eval_sessions_dir):
         """Verify state.md has required metadata in YAML frontmatter."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -150,9 +145,9 @@ class TestSidecarSessionStructure:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_state_md_structure(self, qbit_server):
+    async def test_state_md_structure(self, qbit_server, eval_sessions_dir):
         """Verify state.md has expected structure."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -182,9 +177,9 @@ class TestSidecarSessionStructure:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_log_md_has_entries(self, qbit_server):
+    async def test_log_md_has_entries(self, qbit_server, eval_sessions_dir):
         """Verify log.md captures events."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -225,9 +220,9 @@ class TestSidecarSessionLifecycle:
     """Tests for session lifecycle management."""
 
     @pytest.mark.asyncio
-    async def test_multiple_prompts_same_session(self, qbit_server):
+    async def test_multiple_prompts_same_session(self, qbit_server, eval_sessions_dir):
         """Verify multiple prompts use the same session directory."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -259,9 +254,9 @@ class TestSidecarSessionLifecycle:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_events_jsonl_created(self, qbit_server):
+    async def test_events_jsonl_created(self, qbit_server, eval_sessions_dir):
         """Verify events.jsonl is created for raw event storage (if enabled)."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -295,9 +290,9 @@ class TestSidecarContentCapture:
     """Tests for verifying sidecar captures correct content."""
 
     @pytest.mark.asyncio
-    async def test_initial_request_captured(self, qbit_server):
+    async def test_initial_request_captured(self, qbit_server, eval_sessions_dir):
         """Verify initial request is captured in state.md frontmatter."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         test_prompt = "Calculate the factorial of 5"
@@ -323,9 +318,9 @@ class TestSidecarContentCapture:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_working_directory_captured(self, qbit_server):
+    async def test_working_directory_captured(self, qbit_server, eval_sessions_dir):
         """Verify working directory is captured."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -358,9 +353,9 @@ class TestSidecarDynamicUpdates:
     """Tests verifying sidecar updates state.md and log.md during event processing."""
 
     @pytest.mark.asyncio
-    async def test_state_updated_at_changes_after_tool_use(self, qbit_server):
+    async def test_state_updated_at_changes_after_tool_use(self, qbit_server, eval_sessions_dir):
         """Verify state.md updated_at timestamp changes after tool execution."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -391,9 +386,9 @@ class TestSidecarDynamicUpdates:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_log_captures_tool_calls(self, qbit_server):
+    async def test_log_captures_tool_calls(self, qbit_server, eval_sessions_dir):
         """Verify log.md captures tool call events."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -427,9 +422,9 @@ class TestSidecarDynamicUpdates:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_log_captures_user_prompts(self, qbit_server):
+    async def test_log_captures_user_prompts(self, qbit_server, eval_sessions_dir):
         """Verify log.md captures user prompt events."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -472,7 +467,7 @@ class TestSidecarEdgeCases:
     """Edge case tests for sidecar system."""
 
     @pytest.mark.asyncio
-    async def test_empty_prompt_handling(self, qbit_server):
+    async def test_empty_prompt_handling(self, qbit_server, eval_sessions_dir):
         """Verify system handles edge cases gracefully."""
         session_id = await qbit_server.create_session()
         try:
@@ -485,9 +480,9 @@ class TestSidecarEdgeCases:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_state_backup_created(self, qbit_server):
+    async def test_state_backup_created(self, qbit_server, eval_sessions_dir):
         """Verify state.md.bak is created after state updates."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -526,9 +521,9 @@ class TestSidecarPatches:
     """Tests for patch file generation (L2 layer)."""
 
     @pytest.mark.asyncio
-    async def test_patches_directory_structure_created(self, qbit_server):
+    async def test_patches_directory_structure_created(self, qbit_server, eval_sessions_dir):
         """Verify patches directory structure is created with session."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -558,13 +553,13 @@ class TestSidecarPatches:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_patch_created_on_file_modification(self, qbit_server):
+    async def test_patch_created_on_file_modification(self, qbit_server, eval_sessions_dir):
         """Verify patch file is created when agent modifies a file.
 
         Note: Patches are only created when a commit boundary is detected.
         This may skip if no boundary is triggered during the test.
         """
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Use workspace-relative path (file will be created inside workspace)
@@ -617,9 +612,9 @@ class TestSidecarPatches:
                 pass
 
     @pytest.mark.asyncio
-    async def test_patch_meta_file_format(self, qbit_server):
+    async def test_patch_meta_file_format(self, qbit_server, eval_sessions_dir):
         """Verify patch meta files have correct TOML format if created."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Use workspace-relative path (file will be created inside workspace)
@@ -677,9 +672,9 @@ class TestSidecarStateContent:
     """Tests for verifying state.md content format and updates."""
 
     @pytest.mark.asyncio
-    async def test_state_has_goals_section(self, qbit_server):
+    async def test_state_has_goals_section(self, qbit_server, eval_sessions_dir):
         """Verify state.md has a Goals section with user's goal."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Use workspace-relative path (file will be created inside workspace)
@@ -719,9 +714,9 @@ class TestSidecarStateContent:
                 pass
 
     @pytest.mark.asyncio
-    async def test_state_has_changes_section(self, qbit_server):
+    async def test_state_has_changes_section(self, qbit_server, eval_sessions_dir):
         """Verify state.md has a Changes section after file modification."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Use workspace-relative path (file will be created inside workspace)
@@ -761,9 +756,9 @@ class TestSidecarStateContent:
                 pass
 
     @pytest.mark.asyncio
-    async def test_state_changes_include_file_path(self, qbit_server):
+    async def test_state_changes_include_file_path(self, qbit_server, eval_sessions_dir):
         """Verify Changes section includes the modified file path."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Use workspace-relative path (file will be created inside workspace)
@@ -807,9 +802,9 @@ class TestSidecarStateContent:
                 pass
 
     @pytest.mark.asyncio
-    async def test_state_has_session_state_header(self, qbit_server):
+    async def test_state_has_session_state_header(self, qbit_server, eval_sessions_dir):
         """Verify state.md has the expected header structure."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -845,9 +840,9 @@ class TestSidecarStateContent:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_state_goal_reflects_user_intent(self, qbit_server):
+    async def test_state_goal_reflects_user_intent(self, qbit_server, eval_sessions_dir):
         """Verify Goals section captures the user's actual intent."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Use a distinctive goal that should be captured
@@ -887,9 +882,9 @@ class TestSidecarStateContent:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_state_updated_after_file_edit(self, qbit_server):
+    async def test_state_updated_after_file_edit(self, qbit_server, eval_sessions_dir):
         """Verify state.md is updated when files are edited."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         # Use workspace-relative path (file will be created inside workspace)
@@ -957,9 +952,9 @@ class TestSidecarArtifacts:
     """Tests for artifact file generation (L3 layer - README.md, CLAUDE.md)."""
 
     @pytest.mark.asyncio
-    async def test_artifacts_directory_structure_created(self, qbit_server):
+    async def test_artifacts_directory_structure_created(self, qbit_server, eval_sessions_dir):
         """Verify artifacts directory structure is created with session."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()
@@ -989,9 +984,9 @@ class TestSidecarArtifacts:
             await qbit_server.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_session_directory_complete_structure(self, qbit_server):
+    async def test_session_directory_complete_structure(self, qbit_server, eval_sessions_dir):
         """Verify complete session directory structure is created."""
-        sessions_dir = get_sessions_dir()
+        sessions_dir = Path(eval_sessions_dir)
         existing_dirs = set(find_recent_session_dirs(sessions_dir))
 
         session_id = await qbit_server.create_session()

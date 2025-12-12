@@ -122,8 +122,16 @@ impl SidecarState {
         let synthesis_config = super::synthesis::SynthesisConfig {
             enabled: config.synthesis_enabled,
             backend: config.synthesis_backend,
-            ..Default::default()
+            vertex: config.synthesis_vertex.clone(),
+            openai: config.synthesis_openai.clone(),
+            grok: config.synthesis_grok.clone(),
         };
+
+        tracing::info!(
+            "[sidecar-state] Creating synthesis config: enabled={}, backend={:?}",
+            synthesis_config.enabled,
+            synthesis_config.backend
+        );
 
         // Get app handle for processor to emit events
         #[cfg(feature = "tauri")]
@@ -291,6 +299,7 @@ impl SidecarState {
     pub fn capture(&self, event: SessionEvent) {
         let config = self.config.read().unwrap();
         if !config.enabled {
+            tracing::trace!("[sidecar-state] Sidecar disabled, skipping event capture");
             return;
         }
 
@@ -298,6 +307,7 @@ impl SidecarState {
         if !config.capture_tool_calls
             && matches!(event.event_type, super::events::EventType::ToolCall { .. })
         {
+            tracing::trace!("[sidecar-state] Tool call capture disabled, skipping");
             return;
         }
         if !config.capture_reasoning
@@ -306,12 +316,23 @@ impl SidecarState {
                 super::events::EventType::AgentReasoning { .. }
             )
         {
+            tracing::trace!("[sidecar-state] Reasoning capture disabled, skipping");
             return;
         }
+
+        // Log event being captured (INFO level to ensure visibility)
+        tracing::info!(
+            "[sidecar-state] Capturing event: {} for session {} (files_modified: {})",
+            event.event_type.name(),
+            event.session_id,
+            event.files_modified.len()
+        );
 
         // Forward to processor
         if let Some(processor) = self.processor.read().unwrap().as_ref() {
             processor.process_event(event.session_id.clone(), event);
+        } else {
+            tracing::warn!("[sidecar-state] No processor available, event not forwarded");
         }
     }
 
@@ -359,17 +380,28 @@ impl SidecarState {
     }
 
     /// Shutdown the sidecar
+    ///
+    /// This waits for the processor to finish any pending work (like patch generation)
+    /// before returning. The processor handles EndSession which generates patches.
     pub fn shutdown(&self) {
         let _ = self.end_session();
 
         if let Some(processor) = self.processor.write().unwrap().take() {
-            std::thread::spawn(move || {
+            // Spawn a thread with its own runtime to shutdown the processor.
+            // The processor.shutdown() now awaits the task handle, ensuring all
+            // pending work (including patch generation) completes before returning.
+            let handle = std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .unwrap();
                 rt.block_on(processor.shutdown());
             });
+
+            // Wait for the processor to finish all pending work
+            if let Err(e) = handle.join() {
+                tracing::warn!("Processor shutdown thread panicked: {:?}", e);
+            }
         }
 
         tracing::info!("Sidecar shutdown complete");
@@ -401,6 +433,9 @@ mod tests {
             synthesis_backend: crate::sidecar::synthesis::SynthesisBackend::Template,
             artifact_synthesis_backend:
                 crate::sidecar::artifacts::ArtifactSynthesisBackend::Template,
+            synthesis_vertex: Default::default(),
+            synthesis_openai: Default::default(),
+            synthesis_grok: Default::default(),
         }
     }
 

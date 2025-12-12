@@ -393,8 +393,18 @@ pub async fn list_sessions(sessions_dir: &Path) -> Result<Vec<SessionMeta>> {
     Ok(sessions)
 }
 
-/// Get the default sessions directory
+/// Get the default sessions directory.
+///
+/// Respects the `VT_SESSION_DIR` environment variable for overriding
+/// the default location (useful for testing/evals to avoid polluting
+/// the user's session history).
 pub fn default_sessions_dir() -> PathBuf {
+    // Check for override via environment variable
+    if let Ok(dir) = std::env::var("VT_SESSION_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    // Default to ~/.qbit/sessions
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".qbit")

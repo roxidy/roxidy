@@ -8060,6 +8060,7 @@ dependencies = [
  "dotenvy",
  "fastembed",
  "futures",
+ "gcp_auth",
  "graph-flow",
  "ignore",
  "lancedb",

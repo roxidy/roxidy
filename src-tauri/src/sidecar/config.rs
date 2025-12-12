@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 use super::artifacts::ArtifactSynthesisBackend;
 use super::synthesis::SynthesisBackend;
+use crate::settings::schema::{
+    SynthesisGrokSettings, SynthesisOpenAiSettings, SynthesisVertexSettings,
+};
 
 /// Sidecar configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +45,15 @@ pub struct SidecarConfig {
     /// Which synthesis backend to use for artifact generation (README.md, CLAUDE.md)
     /// Defaults to the same backend as synthesis_backend
     pub artifact_synthesis_backend: ArtifactSynthesisBackend,
+
+    /// Vertex AI settings for synthesis
+    pub synthesis_vertex: SynthesisVertexSettings,
+
+    /// OpenAI settings for synthesis
+    pub synthesis_openai: SynthesisOpenAiSettings,
+
+    /// Grok settings for synthesis
+    pub synthesis_grok: SynthesisGrokSettings,
 }
 
 impl Default for SidecarConfig {
@@ -58,6 +70,9 @@ impl Default for SidecarConfig {
             synthesis_enabled: true,
             synthesis_backend: SynthesisBackend::Template,
             artifact_synthesis_backend: ArtifactSynthesisBackend::Template,
+            synthesis_vertex: SynthesisVertexSettings::default(),
+            synthesis_openai: SynthesisOpenAiSettings::default(),
+            synthesis_grok: SynthesisGrokSettings::default(),
         }
     }
 }
@@ -95,6 +110,9 @@ impl SidecarConfig {
             synthesis_enabled: settings.synthesis_enabled,
             synthesis_backend: backend,
             artifact_synthesis_backend: artifact_backend,
+            synthesis_vertex: settings.synthesis_vertex.clone(),
+            synthesis_openai: settings.synthesis_openai.clone(),
+            synthesis_grok: settings.synthesis_grok.clone(),
         }
     }
 
