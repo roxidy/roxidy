@@ -4,14 +4,12 @@ This module provides:
 - Pytest hooks and markers
 - Server lifecycle fixtures
 - Session and runner fixtures
-- Sidecar database fixtures
 - DeepEval model fixtures
 
 Fixtures:
     runner: StreamingRunner for executing prompts (most common)
     qbit_server: QbitClient connected to the server
     streaming_session: (session_id, client) tuple
-    sidecar_db: LanceDB connection
     eval_model: DeepEval GPTModel instance
 """
 
@@ -68,25 +66,6 @@ def eval_model():
 
 
 # =============================================================================
-# Sidecar Database Fixture
-# =============================================================================
-
-
-@pytest.fixture(scope="function")
-def sidecar_db():
-    """Connect to the sidecar LanceDB database.
-
-    Returns:
-        LanceDB connection, or None if database doesn't exist.
-    """
-    try:
-        from sidecar import connect_db
-        return connect_db()
-    except (FileNotFoundError, ImportError):
-        return None
-
-
-# =============================================================================
 # Server Fixtures
 # =============================================================================
 
@@ -98,6 +77,9 @@ def qbit_server_info():
     This is a session-scoped fixture that starts one server for all tests.
     The server runs on a random port to avoid conflicts.
 
+    Environment variables passed to server:
+        QBIT_WORKSPACE: Workspace directory for file operations (from env)
+
     Yields:
         Base URL string (e.g., "http://127.0.0.1:54321")
     """
@@ -107,12 +89,25 @@ def qbit_server_info():
     if not os.path.exists(binary_path):
         pytest.skip(f"Binary not found at {binary_path}. Run: just build-server")
 
+    # Build environment for server process
+    # Pass through QBIT_WORKSPACE if set (for file operation tests)
+    server_env = os.environ.copy()
+    if "QBIT_WORKSPACE" in os.environ:
+        # Resolve relative path from evals/ directory
+        workspace = os.environ["QBIT_WORKSPACE"]
+        if not os.path.isabs(workspace):
+            # Resolve relative to evals/ directory
+            evals_dir = os.path.dirname(os.path.abspath(__file__))
+            workspace = os.path.abspath(os.path.join(evals_dir, workspace))
+        server_env["QBIT_WORKSPACE"] = workspace
+
     # Start server on random port
     proc = subprocess.Popen(
         [str(binary_path), "--server", "--port", "0"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=server_env,
     )
 
     try:

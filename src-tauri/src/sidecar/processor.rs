@@ -128,6 +128,10 @@ struct SessionProcessorState {
     boundary_detector: CommitBoundaryDetector,
     /// File change tracker for patch generation
     file_tracker: FileChangeTracker,
+    /// All files modified during session (for state.md updates)
+    all_modified_files: Vec<PathBuf>,
+    /// Event count for this session
+    event_count: u32,
 }
 
 impl SessionProcessorState {
@@ -135,6 +139,15 @@ impl SessionProcessorState {
         Self {
             boundary_detector: CommitBoundaryDetector::new(),
             file_tracker: FileChangeTracker::new(),
+            all_modified_files: Vec::new(),
+            event_count: 0,
+        }
+    }
+
+    /// Record a modified file (deduplicates)
+    fn record_modified_file(&mut self, path: PathBuf) {
+        if !self.all_modified_files.contains(&path) {
+            self.all_modified_files.push(path);
         }
     }
 }
@@ -240,7 +253,9 @@ async fn handle_event(
     event: &SessionEvent,
     session_state: &mut SessionProcessorState,
 ) -> Result<()> {
-    // Track file changes for L2 patch generation
+    session_state.event_count += 1;
+
+    // Track file changes for L2 patch generation and state updates
     if config.generate_patches {
         track_file_changes(event, session_state);
 
@@ -253,12 +268,167 @@ async fn handle_event(
         }
     }
 
+    // Update state.md and log.md for significant events
+    update_session_files(config, session_id, event, session_state).await?;
+
     tracing::debug!(
         "Processed event for session {}: {:?}",
         session_id,
         event.event_type.name()
     );
     Ok(())
+}
+
+/// Update session state.md and log.md based on event
+async fn update_session_files(
+    config: &ProcessorConfig,
+    session_id: &str,
+    event: &SessionEvent,
+    session_state: &mut SessionProcessorState,
+) -> Result<()> {
+    // Load session
+    let mut session = match Session::load(&config.sessions_dir, session_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!("Could not load session {} for update: {}", session_id, e);
+            return Ok(());
+        }
+    };
+
+    // Track modified files and update state.md
+    match &event.event_type {
+        EventType::FileEdit {
+            path, operation, ..
+        } => {
+            session_state.record_modified_file(path.clone());
+
+            // Append to log for file operations
+            let log_entry = format!(
+                "**File {}**: `{}`",
+                format_operation(operation),
+                path.display()
+            );
+            if let Err(e) = session.append_log(&log_entry).await {
+                tracing::warn!("Failed to append to log: {}", e);
+            }
+
+            // Update state.md with file list
+            update_state_with_files(&mut session, session_state).await?;
+        }
+        EventType::ToolCall {
+            tool_name, success, ..
+        } => {
+            // Log tool calls
+            let status = if *success { "✓" } else { "✗" };
+            let log_entry = format!("**Tool**: {} {}", tool_name, status);
+            if let Err(e) = session.append_log(&log_entry).await {
+                tracing::warn!("Failed to append to log: {}", e);
+            }
+
+            // Track files from tool call
+            for path in &event.files_modified {
+                session_state.record_modified_file(path.clone());
+            }
+
+            // Update state.md if files were modified
+            if !event.files_modified.is_empty() {
+                update_state_with_files(&mut session, session_state).await?;
+            }
+        }
+        EventType::UserPrompt { intent, .. } => {
+            // Log user prompts
+            let truncated = if intent.len() > 100 {
+                format!("{}...", &intent[..100])
+            } else {
+                intent.clone()
+            };
+            let log_entry = format!("**User**: {}", truncated);
+            if let Err(e) = session.append_log(&log_entry).await {
+                tracing::warn!("Failed to append to log: {}", e);
+            }
+        }
+        EventType::AiResponse { content, .. } => {
+            // Log agent responses (truncated)
+            let truncated = if content.len() > 100 {
+                format!("{}...", &content[..100])
+            } else {
+                content.clone()
+            };
+            let log_entry = format!("**Agent**: {}", truncated);
+            if let Err(e) = session.append_log(&log_entry).await {
+                tracing::warn!("Failed to append to log: {}", e);
+            }
+        }
+        _ => {
+            // Other events don't need state/log updates
+        }
+    }
+
+    Ok(())
+}
+
+/// Format file operation for display
+fn format_operation(op: &super::events::FileOperation) -> &'static str {
+    match op {
+        super::events::FileOperation::Create => "created",
+        super::events::FileOperation::Modify => "modified",
+        super::events::FileOperation::Delete => "deleted",
+        super::events::FileOperation::Rename { .. } => "renamed",
+    }
+}
+
+/// Update state.md with current file list
+async fn update_state_with_files(
+    session: &mut Session,
+    session_state: &SessionProcessorState,
+) -> Result<()> {
+    // Read current state body
+    let current_body = session.read_state().await.unwrap_or_default();
+
+    // Build new body with updated files section
+    let new_body = update_files_section(&current_body, &session_state.all_modified_files);
+
+    // Write updated state
+    session.update_state(&new_body).await?;
+
+    Ok(())
+}
+
+/// Update the "## Files" section in state.md body
+fn update_files_section(body: &str, files: &[PathBuf]) -> String {
+    // Find and replace the Files section
+    let files_header = "## Files";
+    let next_section = "\n## ";
+
+    if let Some(files_start) = body.find(files_header) {
+        let after_header = files_start + files_header.len();
+        let files_end = body[after_header..]
+            .find(next_section)
+            .map(|i| after_header + i)
+            .unwrap_or(body.len());
+
+        // Build new files section
+        let files_content = if files.is_empty() {
+            "\n(none yet)\n".to_string()
+        } else {
+            let file_list: Vec<String> = files
+                .iter()
+                .map(|p| format!("- `{}`", p.display()))
+                .collect();
+            format!("\n{}\n", file_list.join("\n"))
+        };
+
+        format!(
+            "{}{}{}{}",
+            &body[..files_start],
+            files_header,
+            files_content,
+            &body[files_end..]
+        )
+    } else {
+        // No Files section found, return as-is
+        body.to_string()
+    }
 }
 
 /// Track file changes from an event

@@ -233,7 +233,6 @@ impl Session {
     }
 
     /// Append an entry to log.md
-    #[allow(dead_code)]
     pub async fn append_log(&self, entry: &str) -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
@@ -256,7 +255,6 @@ impl Session {
     }
 
     /// Update state.md body (preserves and updates frontmatter)
-    #[allow(dead_code)]
     pub async fn update_state(&mut self, new_body: &str) -> Result<()> {
         // Update timestamp
         self.meta.updated_at = Utc::now();

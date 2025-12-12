@@ -692,20 +692,11 @@ impl AgentBridge {
             self.save_session().await;
         }
 
-        // End sidecar capture session
-        if let Some(ref sidecar) = self.sidecar_state {
-            match sidecar.end_session() {
-                Ok(Some(session)) => {
-                    tracing::info!("Sidecar session {} ended", session.session_id);
-                }
-                Ok(None) => {
-                    tracing::debug!("No active sidecar session to end");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to end sidecar session: {}", e);
-                }
-            }
-        }
+        // Note: Sidecar session is NOT ended here - it persists across prompts in the
+        // same conversation. The session is only ended when:
+        // 1. The AgentBridge is dropped (see Drop impl)
+        // 2. The conversation is explicitly cleared
+        // 3. A new conversation/session is started
 
         // Emit completion event
         self.emit_event(AiEvent::Completed {
@@ -787,6 +778,28 @@ impl Drop for AgentBridge {
             tracing::debug!(
                 "AgentBridge::drop - could not acquire session_manager lock, skipping finalization"
             );
+        }
+
+        // End sidecar session on bridge drop.
+        // This ensures the sidecar session is properly finalized when:
+        // - The conversation is cleared
+        // - The AgentBridge is replaced (e.g., model switching)
+        // - The application shuts down
+        if let Some(ref sidecar) = self.sidecar_state {
+            match sidecar.end_session() {
+                Ok(Some(session)) => {
+                    tracing::debug!(
+                        "AgentBridge::drop - sidecar session {} ended",
+                        session.session_id
+                    );
+                }
+                Ok(None) => {
+                    tracing::debug!("AgentBridge::drop - no active sidecar session to end");
+                }
+                Err(e) => {
+                    tracing::warn!("AgentBridge::drop - failed to end sidecar session: {}", e);
+                }
+            }
         }
     }
 }

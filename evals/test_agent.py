@@ -125,24 +125,14 @@ async def unicode_response_result(class_runner: StreamingRunner) -> RunResult:
 
 @pytest.fixture(scope="class")
 async def file_read_result(class_runner: StreamingRunner) -> RunResult:
-    """Shared fixture: File reading for tool and L1 tests.
+    """Shared fixture: File reading for tool tests.
 
     One LLM call shared by: test_file_reading_events, test_tool_calls,
-    test_l1_file_contexts, test_l1_goals_populated, test_read_file_comprehension
+    test_read_file_comprehension
     """
     return await class_runner.run(
-        "Read the file ./conftest.py and tell me what it contains in one sentence."
+        "Read the file ./main.go and tell me what it contains in one sentence."
     )
-
-
-@pytest.fixture(scope="class")
-async def simple_activity_result(class_runner: StreamingRunner) -> RunResult:
-    """Shared fixture: Minimal activity for L1 table existence tests.
-
-    One LLM call shared by: test_l1_tables_exist, test_l1_session_created,
-    test_l1_table_stats, test_l1_unresolved_errors_query
-    """
-    return await class_runner.run("What is 2+2? Just the number.")
 
 
 # =============================================================================
@@ -323,195 +313,6 @@ class TestBatchMode:
 
 
 # =============================================================================
-# Layer 1 Tests - Simple Activity (shared LLM call)
-# =============================================================================
-
-
-@pytest.mark.requires_api
-class TestLayer1SimpleActivity:
-    """Tests for L1 tables using shared simple activity."""
-
-    @pytest.mark.asyncio
-    async def test_simple_activity_success(self, simple_activity_result: RunResult):
-        """Simple activity succeeds."""
-        result = simple_activity_result
-        assert result.success
-
-    @pytest.mark.asyncio
-    async def test_l1_tables_exist(self, simple_activity_result: RunResult):
-        """Verify Layer 1 normalized tables are created after agent usage."""
-        assert simple_activity_result.success
-
-        from sidecar import connect_db, check_l1_tables_exist
-
-        try:
-            db = connect_db()
-            table_status = check_l1_tables_exist(db)
-
-            if not any(table_status.values()):
-                pytest.skip("Layer 1 normalized tables not yet created")
-
-            if table_status.get("l1_sessions", False):
-                assert table_status.get("l1_goals", False)
-                assert table_status.get("l1_decisions", False)
-        except FileNotFoundError:
-            pytest.skip("Sidecar database not initialized")
-
-    @pytest.mark.asyncio
-    async def test_l1_session_created(self, simple_activity_result: RunResult):
-        """Verify a Layer 1 session is created during agent execution."""
-        assert simple_activity_result.success
-
-        from sidecar import connect_db, get_l1_sessions, check_l1_tables_exist
-
-        try:
-            db = connect_db()
-            table_status = check_l1_tables_exist(db)
-            if not table_status.get("l1_sessions", False):
-                pytest.skip("l1_sessions table not yet created")
-
-            sessions = get_l1_sessions(db, include_inactive=True)
-            assert len(sessions) > 0, "At least one L1 session should exist"
-
-            latest = sessions[0]
-            assert "id" in latest
-            assert "created_at_ms" in latest
-        except FileNotFoundError:
-            pytest.skip("Sidecar database not initialized")
-
-    @pytest.mark.asyncio
-    async def test_l1_table_stats(self, simple_activity_result: RunResult):
-        """Verify table stats function works after agent activity."""
-        assert simple_activity_result.success
-
-        from sidecar import connect_db, get_l1_table_stats, check_l1_tables_exist
-
-        try:
-            db = connect_db()
-            table_status = check_l1_tables_exist(db)
-            if not any(table_status.values()):
-                pytest.skip("Layer 1 normalized tables not yet created")
-
-            stats = get_l1_table_stats(db)
-
-            expected_tables = [
-                "l1_sessions", "l1_goals", "l1_decisions", "l1_errors",
-                "l1_file_contexts", "l1_questions", "l1_goal_progress", "l1_file_changes",
-            ]
-
-            for table_name in expected_tables:
-                assert table_name in stats
-                assert isinstance(stats[table_name], int)
-        except FileNotFoundError:
-            pytest.skip("Sidecar database not initialized")
-
-    @pytest.mark.asyncio
-    async def test_l1_unresolved_errors_query(self, simple_activity_result: RunResult):
-        """Verify unresolved errors cross-session query works."""
-        assert simple_activity_result.success
-
-        from sidecar import connect_db, get_l1_unresolved_errors, check_l1_tables_exist
-
-        try:
-            db = connect_db()
-            table_status = check_l1_tables_exist(db)
-            if not table_status.get("l1_errors", False):
-                pytest.skip("l1_errors table not yet created")
-
-            unresolved = get_l1_unresolved_errors(db)
-            assert isinstance(unresolved, list)
-        except FileNotFoundError:
-            pytest.skip("Sidecar database not initialized")
-
-
-# =============================================================================
-# Layer 1 Tests - File Reading (shared with file_read_result)
-# =============================================================================
-
-
-@pytest.mark.requires_api
-class TestLayer1FileOperations:
-    """Tests for L1 file tracking using shared file read."""
-
-    @pytest.mark.asyncio
-    async def test_l1_goals_populated(self, file_read_result: RunResult):
-        """Verify goals are tracked when given a task."""
-        assert file_read_result.success
-
-        from sidecar import connect_db, get_l1_sessions, get_l1_goals, check_l1_tables_exist
-
-        try:
-            db = connect_db()
-            table_status = check_l1_tables_exist(db)
-            if not table_status.get("l1_goals", False):
-                pytest.skip("l1_goals table not yet created")
-
-            sessions = get_l1_sessions(db, include_inactive=True)
-            if not sessions:
-                pytest.skip("No L1 sessions found")
-
-            latest_session_id = sessions[0]["id"]
-            goals = get_l1_goals(db, latest_session_id)
-            assert len(goals) >= 0
-
-            if goals:
-                goal = goals[0]
-                assert "description" in goal or "id" in goal
-        except FileNotFoundError:
-            pytest.skip("Sidecar database not initialized")
-
-    @pytest.mark.asyncio
-    async def test_l1_file_contexts_on_file_read(self, file_read_result: RunResult):
-        """Verify file contexts are recorded when agent reads files."""
-        assert file_read_result.success
-
-        tool_names = {tc.get("tool_name") for tc in file_read_result.tool_calls}
-        file_tools = {"read_file", "read", "file_read"}
-        assert tool_names & file_tools, f"Expected file read tool, got: {tool_names}"
-
-        from sidecar import connect_db, get_l1_sessions, get_l1_file_contexts, check_l1_tables_exist
-
-        try:
-            db = connect_db()
-            table_status = check_l1_tables_exist(db)
-            if not table_status.get("l1_file_contexts", False):
-                pytest.skip("l1_file_contexts table not yet created")
-
-            sessions = get_l1_sessions(db, include_inactive=True)
-            if not sessions:
-                pytest.skip("No L1 sessions found")
-
-            latest_session_id = sessions[0]["id"]
-            file_contexts = get_l1_file_contexts(db, latest_session_id)
-
-            if file_contexts:
-                ctx = file_contexts[0]
-                assert "path" in ctx or "session_id" in ctx
-        except FileNotFoundError:
-            pytest.skip("Sidecar database not initialized")
-
-    @pytest.mark.asyncio
-    async def test_l1_decisions_cross_session_query(self, file_read_result: RunResult):
-        """Verify cross-session decision queries work."""
-        assert file_read_result.success
-
-        from sidecar import connect_db, get_l1_decisions_by_category, check_l1_tables_exist
-
-        try:
-            db = connect_db()
-            table_status = check_l1_tables_exist(db)
-            if not table_status.get("l1_decisions", False):
-                pytest.skip("l1_decisions table not yet created")
-
-            categories = ["architecture", "library", "approach", "tradeoff", "fallback"]
-            for category in categories:
-                decisions = get_l1_decisions_by_category(db, category)
-                assert isinstance(decisions, list)
-        except FileNotFoundError:
-            pytest.skip("Sidecar database not initialized")
-
-
-# =============================================================================
 # Tool Usage Tests - File Reading (uses shared file_read_result)
 # =============================================================================
 
@@ -540,18 +341,19 @@ class TestToolUsageShared:
         assert result.success
 
         scenario = {
-            "input": "What does the conftest.py file contain?",
+            "input": "What does the main.go file contain?",
             "output": result.response,
-            "expected": "conftest.py contains pytest fixtures and test runner classes.",
+            "expected": "main.go is a Go program that prints 'Hello from qbit-go-testbed!'",
             "context": [
-                "conftest.py contains pytest fixtures",
-                "It has StreamingRunner class",
-                "The file sets up test configuration",
+                "main.go is a Go source file",
+                "It imports fmt package",
+                "It has a main function",
+                "It prints a greeting message",
             ],
             "metric_name": "File Reading Comprehension",
             "criteria": "Response should accurately describe what the file contains.",
             "steps": [
-                "Check if mentions fixtures, testing, or configuration",
+                "Check if mentions Go, main function, fmt, or printing",
                 "Should demonstrate understanding of file contents",
             ],
             "threshold": 0.7,
@@ -561,7 +363,6 @@ class TestToolUsageShared:
 
 
 @pytest.mark.requires_api
-@pytest.mark.asyncio(loop_scope="function")
 class TestToolUsageIndividual:
     """Tests for directory listing using individual sessions."""
 
@@ -571,16 +372,15 @@ class TestToolUsageIndividual:
         scenario = {
             "prompt": "What files are in the current directory? Just list a few.",
             "input": "What files are in the current directory?",
-            "expected": "conftest.py, test_agent.py, pyproject.toml",
+            "expected": "main.go, go.mod",
             "context": [
-                "Directory contains conftest.py",
-                "Directory contains test_agent.py",
-                "Directory contains pyproject.toml",
+                "Directory contains main.go",
+                "Directory contains go.mod",
             ],
             "metric_name": "Directory Listing",
             "criteria": "Response should list at least one relevant file.",
             "steps": [
-                "Check for conftest.py, test_agent.py, or pyproject.toml",
+                "Check for main.go or go.mod",
                 "Should indicate files were successfully listed",
             ],
             "threshold": 0.7,
@@ -609,7 +409,6 @@ class TestToolUsageIndividual:
 
 
 @pytest.mark.requires_api
-@pytest.mark.asyncio(loop_scope="function")
 class TestMemoryAndState:
     """Tests for session memory and state tracking."""
 
@@ -723,42 +522,29 @@ class TestMemoryAndState:
 
 
 # =============================================================================
-# Response Quality Tests - Shared Fixture (uses simple_activity_result)
+# Response Quality Tests (uses function-scoped runner)
 # =============================================================================
 
 
 @pytest.mark.requires_api
-class TestResponseQualityShared:
-    """Tests for arithmetic using shared fixture."""
+class TestResponseQuality:
+    """Tests for response quality using individual sessions."""
 
     @pytest.mark.asyncio
-    async def test_basic_arithmetic(self, simple_activity_result: RunResult, eval_model):
-        """Agent performs basic arithmetic (uses shared simple_activity_result)."""
-        # simple_activity_result already asked "What is 2+2?"
-        result = simple_activity_result
-        assert result.success
-
+    async def test_basic_arithmetic(self, runner: StreamingRunner, eval_model):
+        """Agent performs basic arithmetic."""
         scenario = {
+            "prompt": "What is 2+2? Just the number.",
             "input": "What is 2+2?",
-            "output": result.response,
             "expected": "4",
             "metric_name": "Basic Arithmetic",
             "criteria": "Response must contain the number 4.",
             "steps": ["Check if response contains '4'"],
             "threshold": 0.9,
         }
-        evaluate_scenario(scenario, eval_model)
-
-
-# =============================================================================
-# Response Quality Tests - Individual (uses function-scoped runner)
-# =============================================================================
-
-
-@pytest.mark.requires_api
-@pytest.mark.asyncio(loop_scope="function")
-class TestResponseQualityIndividual:
-    """Tests for instruction following using individual sessions."""
+        completed = await run_scenario(runner, scenario)
+        assert completed["success"]
+        evaluate_scenario(completed, eval_model)
 
     @pytest.mark.asyncio
     async def test_instruction_following(self, runner: StreamingRunner, eval_model):
@@ -783,7 +569,6 @@ class TestResponseQualityIndividual:
 
 
 @pytest.mark.requires_api
-@pytest.mark.asyncio(loop_scope="function")
 class TestCharacterHandling:
     """Tests for special characters and multiline responses."""
 
