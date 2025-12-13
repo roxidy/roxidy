@@ -1,5 +1,5 @@
-import type { Terminal as XTerm } from "@xterm/xterm";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import type { Terminal as XTerm } from "@xterm/xterm";
 import { getThemeAssetPath } from "../themes";
 // Import builtin theme assets directly (use ?url to get the asset path)
 import obsidianEmberBg from "./builtin/obsidian-ember/assets/background.jpeg?url";
@@ -73,7 +73,10 @@ class ThemeManagerImpl {
       loadGoogleFont(uiFont);
     }
     if (theme.typography?.terminal?.fontFamily) {
-      const terminalFont = theme.typography.terminal.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+      const terminalFont = theme.typography.terminal.fontFamily
+        .split(",")[0]
+        .trim()
+        .replace(/['"]/g, "");
       loadGoogleFont(terminalFont);
     }
 
@@ -91,7 +94,11 @@ class ThemeManagerImpl {
    * Load and apply a custom theme object (for user uploads)
    * @param themeId Optional theme ID to use. If not provided, generates from theme name
    */
-  async loadThemeFromObject(theme: QbitTheme, assets?: Array<[string, Uint8Array]>, themeId?: string): Promise<void> {
+  async loadThemeFromObject(
+    theme: QbitTheme,
+    assets?: Array<[string, Uint8Array]>,
+    themeId?: string
+  ): Promise<void> {
     // If themeId is explicitly provided, use it as-is (for overwriting)
     // Otherwise, generate a safe theme ID from the theme name
     const customId = themeId || theme.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
@@ -118,7 +125,10 @@ class ThemeManagerImpl {
       loadGoogleFont(uiFont);
     }
     if (theme.typography?.terminal?.fontFamily) {
-      const terminalFont = theme.typography.terminal.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+      const terminalFont = theme.typography.terminal.fontFamily
+        .split(",")[0]
+        .trim()
+        .replace(/['"]/g, "");
       loadGoogleFont(terminalFont);
     }
 
@@ -360,7 +370,7 @@ class ThemeManagerImpl {
     }
 
     document.head.appendChild(this.styleElement);
-    
+
     // Force a style recalculation to ensure fonts are applied
     // This is needed when reverting themes to ensure the browser picks up the change
     document.body.offsetHeight;

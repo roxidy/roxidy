@@ -493,7 +493,9 @@ export function Sidebar({ workingDirectory, onFileSelect, isOpen, onToggle }: Si
                         >
                           <SymbolIcon kind={symbol.kind} />
                           <span className="truncate">{symbol.name}</span>
-                          <span className="ml-auto text-xs text-muted-foreground">:{symbol.line}</span>
+                          <span className="ml-auto text-xs text-muted-foreground">
+                            :{symbol.line}
+                          </span>
                         </button>
                       ))}
                     </CollapsibleContent>

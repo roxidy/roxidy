@@ -24,6 +24,7 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
   const [themeToDelete, setThemeToDelete] = useState<string | null>(null);
   const [importConflictDialogOpen, setImportConflictDialogOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<{
+    // biome-ignore lint/suspicious/noExplicitAny: theme structure is dynamic and comes from external files
     theme: any;
     assets?: Array<[string, Uint8Array]>;
     existingThemeId: string;
@@ -109,7 +110,8 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
         {
           loading: "Overwriting theme...",
           success: () => `Theme overwritten: ${pendingImport.theme.name}`,
-          error: (err) => `Failed to overwrite: ${err instanceof Error ? err.message : String(err)}`,
+          error: (err) =>
+            `Failed to overwrite: ${err instanceof Error ? err.message : String(err)}`,
         }
       );
     } catch (err) {
@@ -128,14 +130,11 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
       const uniqueName = getUniqueThemeName(pendingImport.theme.name, availableThemes);
       const renamedTheme = { ...pendingImport.theme, name: uniqueName };
 
-      await toast.promise(
-        ThemeManager.loadThemeFromObject(renamedTheme, pendingImport.assets),
-        {
-          loading: "Importing theme...",
-          success: () => `Theme imported as: ${uniqueName}`,
-          error: (err) => `Failed to import: ${err instanceof Error ? err.message : String(err)}`,
-        }
-      );
+      await toast.promise(ThemeManager.loadThemeFromObject(renamedTheme, pendingImport.assets), {
+        loading: "Importing theme...",
+        success: () => `Theme imported as: ${uniqueName}`,
+        error: (err) => `Failed to import: ${err instanceof Error ? err.message : String(err)}`,
+      });
     } catch (err) {
       console.error("Failed to import theme", err);
     } finally {
@@ -146,18 +145,18 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
 
   const handleCloneClick = async (themeId: string) => {
     const theme = availableThemes.find((t) => t.id === themeId);
-    if (!theme || !('theme' in theme)) return;
+    if (!theme || !("theme" in theme)) return;
 
     try {
       // Generate unique name for the cloned theme
       const uniqueName = getUniqueThemeName(theme.name, availableThemes);
-      
+
       // Clone the theme with the new name
       const clonedTheme = { ...theme.theme, name: uniqueName };
-      
+
       // Save the cloned theme (let it generate a new ID)
       await ThemeManager.loadThemeFromObject(clonedTheme);
-      
+
       toast.success(`Cloned theme: ${uniqueName}`);
     } catch (err) {
       console.error("Clone failed", err);
@@ -222,10 +221,10 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
                 >
                   <span className="flex-1 text-left text-sm">
                     {theme.name}
-                    {isActive && (
-                      <span className="text-xs text-primary ml-2">● Active</span>
-                    )}
+                    {isActive && <span className="text-xs text-primary ml-2">● Active</span>}
                   </span>
+                  {/* biome-ignore lint/a11y/useKeyWithClickEvents: event propagation control for nested buttons */}
+                  {/* biome-ignore lint/a11y/noStaticElementInteractions: event propagation control for nested buttons */}
                   <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                     {onEditTheme && (
                       <>
@@ -346,7 +345,8 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
               Overwrite
             </Button>
             <Button onClick={handleImportRename}>
-              Rename to "{pendingImport && getUniqueThemeName(pendingImport.theme.name, availableThemes)}"
+              Rename to "
+              {pendingImport && getUniqueThemeName(pendingImport.theme.name, availableThemes)}"
             </Button>
           </DialogFooter>
         </DialogContent>

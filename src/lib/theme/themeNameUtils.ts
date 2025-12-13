@@ -12,7 +12,7 @@ export interface ThemeListItem {
 /**
  * Generate a unique theme name by checking for duplicates.
  * Uses "(Copy)" or "(Copy N)" suffix pattern.
- * 
+ *
  * Examples:
  * - "My Theme" -> "My Theme (Copy)" (if "My Theme" exists)
  * - "My Theme (Copy)" -> "My Theme (Copy 2)" (if "My Theme (Copy)" exists)
@@ -20,7 +20,7 @@ export interface ThemeListItem {
  */
 export function getUniqueThemeName(baseName: string, availableThemes: ThemeListItem[]): string {
   // Check by name (not ID)
-  const nameExists = (name: string) => 
+  const nameExists = (name: string) =>
     availableThemes.some((t) => t.name.toLowerCase() === name.toLowerCase());
 
   // If the base name doesn't exist, use it as-is
@@ -37,7 +37,7 @@ export function getUniqueThemeName(baseName: string, availableThemes: ThemeListI
   // Find the next available copy number
   let counter = 2;
   let uniqueName = `${baseName} (Copy ${counter})`;
-  
+
   while (nameExists(uniqueName)) {
     counter++;
     uniqueName = `${baseName} (Copy ${counter})`;
@@ -59,9 +59,7 @@ export function themeNameExists(
   excludeId?: string
 ): boolean {
   const trimmedName = name.trim().toLowerCase();
-  return availableThemes.some(
-    (t) => t.id !== excludeId && t.name.toLowerCase() === trimmedName
-  );
+  return availableThemes.some((t) => t.id !== excludeId && t.name.toLowerCase() === trimmedName);
 }
 
 /**

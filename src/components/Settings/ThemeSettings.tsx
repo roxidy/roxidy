@@ -27,9 +27,7 @@ export function ThemeSettings() {
           <Paintbrush className="w-4 h-4 mr-2" />
           Create New Theme
         </Button>
-        <p className="text-xs text-muted-foreground">
-          Design custom themes with real-time preview
-        </p>
+        <p className="text-xs text-muted-foreground">Design custom themes with real-time preview</p>
       </div>
 
       {/* Theme Picker */}
@@ -41,17 +39,13 @@ export function ThemeSettings() {
       {/* Info */}
       <div className="mt-6 p-4 rounded-md bg-muted/50">
         <p className="text-sm text-muted-foreground">
-          Themes control the appearance of the entire application, including colors, typography,
-          and background images. You can import custom themes or use the built-in options.
+          Themes control the appearance of the entire application, including colors, typography, and
+          background images. You can import custom themes or use the built-in options.
         </p>
       </div>
 
       {/* Theme Designer Dialog */}
-      <ThemeDesigner
-        open={designerOpen}
-        onOpenChange={setDesignerOpen}
-        editThemeId={editThemeId}
-      />
+      <ThemeDesigner open={designerOpen} onOpenChange={setDesignerOpen} editThemeId={editThemeId} />
     </div>
   );
 }

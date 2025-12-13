@@ -189,12 +189,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                         : "text-muted-foreground hover:bg-muted hover:text-foreground border-l-2 border-transparent"
                     )}
                   >
-                    <span
-                      className={cn(
-                        "mt-0.5",
-                        activeSection === item.id ? "text-primary" : ""
-                      )}
-                    >
+                    <span className={cn("mt-0.5", activeSection === item.id ? "text-primary" : "")}>
                       {item.icon}
                     </span>
                     <div className="flex-1 min-w-0">

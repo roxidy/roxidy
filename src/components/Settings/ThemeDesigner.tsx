@@ -1,16 +1,16 @@
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Pencil, Save, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChromePicker } from "react-color";
 import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { toast } from "sonner";
-import { useTheme } from "@/hooks/useTheme";
-import { ThemeManager } from "@/lib/theme/ThemeManager";
-import { ThemeRegistry } from "@/lib/theme/registry";
-import type { QbitTheme } from "@/lib/theme/types";
-import { validateThemeName, getUniqueThemeName } from "@/lib/theme/themeNameUtils";
+import { z } from "zod";
 import googleFonts from "@/assets/google-fonts.json";
+import { useTheme } from "@/hooks/useTheme";
+import { ThemeRegistry } from "@/lib/theme/registry";
+import { ThemeManager } from "@/lib/theme/ThemeManager";
+import { getUniqueThemeName, validateThemeName } from "@/lib/theme/themeNameUtils";
+import type { QbitTheme } from "@/lib/theme/types";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -23,13 +23,7 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { ScrollArea } from "../ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 interface ThemeDesignerProps {
   open: boolean;
@@ -73,7 +67,7 @@ const allFonts = googleFonts.familyMetadataList
 
 // Combine popular fonts with the full list, removing duplicates, then sort alphabetically
 const fontFamilies = [
-  ...new Set([...popularMonospaceFonts, ...popularUIFonts, ...allFonts])
+  ...new Set([...popularMonospaceFonts, ...popularUIFonts, ...allFonts]),
 ].sort();
 
 // Helper to load Google Fonts dynamically
@@ -95,7 +89,7 @@ function loadGoogleFont(fontFamily: string) {
 
 export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesignerProps) {
   const { availableThemes, currentThemeId } = useTheme();
-  
+
   const [theme, setTheme] = useState<QbitTheme | null>(null);
   const [originalThemeId, setOriginalThemeId] = useState<string | null>(null);
   const [isOriginalBuiltin, setIsOriginalBuiltin] = useState(false);
@@ -105,10 +99,11 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
   const [activeColorPicker, setActiveColorPicker] = useState<string | null>(null);
   const previewTimerRef = useRef<NodeJS.Timeout | null>(null);
   const loadedFontsRef = useRef<Set<string>>(new Set());
-  
+
   // Create Zod schema with custom validation
   const themeFormSchema = z.object({
-    name: z.string()
+    name: z
+      .string()
       .min(1, "Theme name cannot be empty")
       .refine(
         (name) => {
@@ -139,7 +134,7 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
     if (!theme) return;
 
     const fontsToLoad: string[] = [];
-    
+
     if (theme.typography?.ui?.fontFamily) {
       const uiFont = theme.typography.ui.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
       if (!loadedFontsRef.current.has(uiFont)) {
@@ -147,9 +142,12 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
         loadedFontsRef.current.add(uiFont);
       }
     }
-    
+
     if (theme.typography?.terminal?.fontFamily) {
-      const terminalFont = theme.typography.terminal.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+      const terminalFont = theme.typography.terminal.fontFamily
+        .split(",")[0]
+        .trim()
+        .replace(/['"]/g, "");
       if (!loadedFontsRef.current.has(terminalFont)) {
         fontsToLoad.push(terminalFont);
         loadedFontsRef.current.add(terminalFont);
@@ -157,10 +155,10 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
     }
 
     // Load fonts
-    fontsToLoad.forEach(font => {
+    fontsToLoad.forEach((font) => {
       loadGoogleFont(font);
     });
-  }, [theme?.typography?.ui?.fontFamily, theme?.typography?.terminal?.fontFamily]);
+  }, [theme?.typography?.ui?.fontFamily, theme?.typography?.terminal?.fontFamily, theme]);
 
   // Memoize font options to avoid re-rendering
   const fontOptions = useMemo(
@@ -179,11 +177,11 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
       // Store the current theme ID at dialog open time
       originalThemeIdRef.current = currentThemeId;
       justSavedRef.current = false; // Reset save flag
-      
+
       if (editThemeId) {
         // Editing existing theme
         const existingTheme = availableThemes.find((t) => t.id === editThemeId);
-        if (existingTheme && 'theme' in existingTheme) {
+        if (existingTheme && "theme" in existingTheme) {
           const themeClone = JSON.parse(JSON.stringify(existingTheme.theme)); // Deep clone
           setTheme(themeClone);
           setValue("name", existingTheme.name);
@@ -196,7 +194,7 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
         // Creating new theme - start with builtin qbit theme as base
         const qbitTheme = ThemeRegistry.get("qbit");
         const uniqueName = getUniqueThemeName("My Theme", availableThemes);
-        
+
         if (qbitTheme) {
           const themeClone = JSON.parse(JSON.stringify(qbitTheme)); // Deep clone
           themeClone.name = uniqueName;
@@ -219,7 +217,7 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
     }
     // Only run when dialog opens or editThemeId changes, not when themes update
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editThemeId]);
+  }, [open, editThemeId, availableThemes, currentThemeId, setValue]);
 
   // Apply preview with debouncing
   const applyPreview = useCallback((updatedTheme: QbitTheme) => {
@@ -246,6 +244,7 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
       if (!prev) return null;
       const newTheme = JSON.parse(JSON.stringify(prev));
       const keys = path.split(".");
+      // biome-ignore lint/suspicious/noExplicitAny: dynamic theme object navigation requires any
       let current: any = newTheme;
       for (let i = 0; i < keys.length - 1; i++) {
         current = current[keys[i]];
@@ -265,13 +264,13 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
 
   const handleSaveClick = async () => {
     if (!theme) return;
-    
+
     // Validate form
     const isValid = await trigger();
     if (!isValid) {
       return; // Don't save if validation fails
     }
-    
+
     // Save directly
     handleSubmit(onSaveSubmit)();
   };
@@ -288,7 +287,7 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
         const buffer = await backgroundFile.arrayBuffer();
         const uint8Array = new Uint8Array(buffer);
         assets.push([`assets/${backgroundFile.name}`, uint8Array]);
-        
+
         // Update theme to reference the asset
         themeToSave.background = {
           ...themeToSave.background,
@@ -299,7 +298,7 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
       // For editing existing custom themes, use the original ID to overwrite
       // For new themes or builtin themes, let it generate a new ID
       const themeIdToUse = originalThemeId && !isOriginalBuiltin ? originalThemeId : undefined;
-      
+
       await ThemeManager.loadThemeFromObject(themeToSave, assets, themeIdToUse);
       toast.success(`Theme saved: ${data.name}`);
       justSavedRef.current = true;
@@ -318,206 +317,205 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
   };
 
   // Restore original theme when dialog closes
-  const handleClose = useCallback((open: boolean) => {
-    if (!open) {
-      // Dialog is closing - restore original theme only if we didn't just save
-      if (previewTimerRef.current) {
-        clearTimeout(previewTimerRef.current);
+  const handleClose = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        // Dialog is closing - restore original theme only if we didn't just save
+        if (previewTimerRef.current) {
+          clearTimeout(previewTimerRef.current);
+        }
+        if (!justSavedRef.current && originalThemeIdRef.current) {
+          // Restore by the original theme ID from when dialog opened
+          ThemeManager.applyThemeById(originalThemeIdRef.current).catch(console.error);
+        }
+        // Reset the flag for next time
+        justSavedRef.current = false;
       }
-      if (!justSavedRef.current && originalThemeIdRef.current) {
-        // Restore by the original theme ID from when dialog opened
-        ThemeManager.applyThemeById(originalThemeIdRef.current).catch(console.error);
-      }
-      // Reset the flag for next time
-      justSavedRef.current = false;
-    }
-    onOpenChange(open);
-  }, [onOpenChange]);
+      onOpenChange(open);
+    },
+    [onOpenChange]
+  );
 
   if (!theme) return null;
 
   return (
-    <>
-      <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="max-w-5xl h-[90vh] p-0 flex flex-col">
-          <DialogHeader className="px-6 py-4 border-b">
-            <DialogTitle className="flex items-center gap-2">
-              <Pencil className="w-5 h-5" />
-              {editThemeId ? "Edit Theme" : "Create Theme"}
-            </DialogTitle>
-            <DialogDescription>
-              Customize your theme and see changes in real-time
-            </DialogDescription>
-          </DialogHeader>
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-5xl h-[90vh] p-0 flex flex-col">
+        <DialogHeader className="px-6 py-4 border-b">
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="w-5 h-5" />
+            {editThemeId ? "Edit Theme" : "Create Theme"}
+          </DialogTitle>
+          <DialogDescription>Customize your theme and see changes in real-time</DialogDescription>
+        </DialogHeader>
 
-          <div className="flex-1 overflow-hidden">
-            <ScrollArea className="h-full">
-              <div className="p-6 space-y-6">
-                {/* Theme Name */}
+        <div className="flex-1 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="p-6 space-y-6">
+              {/* Theme Name */}
+              <div className="space-y-2">
+                <Label htmlFor="theme-name">Theme Name</Label>
+                <Input
+                  id="theme-name"
+                  {...register("name")}
+                  placeholder="Enter theme name"
+                  className={errors.name ? "border-destructive" : ""}
+                />
+                {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
+              </div>
+
+              {/* Typography */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Typography</h3>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>UI Font Family</Label>
+                    <Select
+                      value={getFirstFont(theme.typography?.ui?.fontFamily)}
+                      onValueChange={(value: string) =>
+                        updateThemeField("typography", {
+                          ...theme.typography,
+                          ui: { ...theme.typography?.ui, fontFamily: value },
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select font" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60">{fontOptions}</SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Terminal Font Family</Label>
+                    <Select
+                      value={getFirstFont(theme.typography?.terminal?.fontFamily)}
+                      onValueChange={(value: string) =>
+                        updateThemeField("typography", {
+                          ...theme.typography,
+                          terminal: { ...theme.typography?.terminal, fontFamily: value },
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select font" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60">{fontOptions}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="theme-name">Theme Name</Label>
+                  <Label>Terminal Font Size</Label>
                   <Input
-                    id="theme-name"
-                    {...register("name")}
-                    placeholder="Enter theme name"
-                    className={errors.name ? "border-destructive" : ""}
+                    type="number"
+                    min={8}
+                    max={32}
+                    value={theme.typography?.terminal?.fontSize || 14}
+                    onChange={(e) =>
+                      updateThemeField("typography", {
+                        ...theme.typography,
+                        terminal: {
+                          ...theme.typography?.terminal,
+                          fontSize: parseInt(e.target.value, 10) || 14,
+                        },
+                      })
+                    }
                   />
-                  {errors.name && (
-                    <p className="text-sm text-destructive">{errors.name.message}</p>
+                </div>
+              </div>
+
+              {/* Background */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Background</h3>
+
+                <div className="space-y-2">
+                  <Label>Background Image</Label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleBackgroundFileSelect}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  />
+                  {backgroundFile && (
+                    <p className="text-xs text-muted-foreground">Selected: {backgroundFile.name}</p>
                   )}
                 </div>
 
-                {/* Typography */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">Typography</h3>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>UI Font Family</Label>
-                      <Select
-                        value={getFirstFont(theme.typography?.ui?.fontFamily)}
-                        onValueChange={(value: string) =>
-                          updateThemeField("typography", {
-                            ...theme.typography,
-                            ui: { ...theme.typography?.ui, fontFamily: value },
-                          })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select font" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-60">
-                          {fontOptions}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Terminal Font Family</Label>
-                      <Select
-                        value={getFirstFont(theme.typography?.terminal?.fontFamily)}
-                        onValueChange={(value: string) =>
-                          updateThemeField("typography", {
-                            ...theme.typography,
-                            terminal: { ...theme.typography?.terminal, fontFamily: value },
-                          })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select font" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-60">
-                          {fontOptions}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Terminal Font Size</Label>
-                    <Input
-                      type="number"
-                      min={8}
-                      max={32}
-                      value={theme.typography?.terminal?.fontSize || 14}
-                      onChange={(e) =>
-                        updateThemeField("typography", {
-                          ...theme.typography,
-                          terminal: {
-                            ...theme.typography?.terminal,
-                            fontSize: parseInt(e.target.value) || 14,
-                          },
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* Background */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">Background</h3>
-                  
-                  <div className="space-y-2">
-                    <Label>Background Image</Label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleBackgroundFileSelect}
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    />
-                    {backgroundFile && (
-                      <p className="text-xs text-muted-foreground">
-                        Selected: {backgroundFile.name}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Background Opacity</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={theme.background?.opacity || 1}
-                      onChange={(e) =>
-                        updateThemeField("background", {
-                          ...theme.background,
-                          opacity: parseFloat(e.target.value) || 1,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* UI Colors */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">UI Colors</h3>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    {renderColorPicker("Background", "colors.ui.background", theme.colors.ui.background)}
-                    {renderColorPicker("Foreground", "colors.ui.foreground", theme.colors.ui.foreground)}
-                    {renderColorPicker("Primary", "colors.ui.primary", theme.colors.ui.primary)}
-                    {renderColorPicker("Secondary", "colors.ui.secondary", theme.colors.ui.secondary)}
-                    {renderColorPicker("Accent", "colors.ui.accent", theme.colors.ui.accent)}
-                    {renderColorPicker("Muted", "colors.ui.muted", theme.colors.ui.muted)}
-                    {renderColorPicker("Border", "colors.ui.border", theme.colors.ui.border)}
-                    {renderColorPicker("Card", "colors.ui.card", theme.colors.ui.card)}
-                  </div>
-                </div>
-
-                {/* ANSI Colors */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">Terminal ANSI Colors</h3>
-                  
-                  <div className="grid grid-cols-4 gap-4">
-                    {renderColorPicker("Black", "colors.ansi.black", theme.colors.ansi.black)}
-                    {renderColorPicker("Red", "colors.ansi.red", theme.colors.ansi.red)}
-                    {renderColorPicker("Green", "colors.ansi.green", theme.colors.ansi.green)}
-                    {renderColorPicker("Yellow", "colors.ansi.yellow", theme.colors.ansi.yellow)}
-                    {renderColorPicker("Blue", "colors.ansi.blue", theme.colors.ansi.blue)}
-                    {renderColorPicker("Magenta", "colors.ansi.magenta", theme.colors.ansi.magenta)}
-                    {renderColorPicker("Cyan", "colors.ansi.cyan", theme.colors.ansi.cyan)}
-                    {renderColorPicker("White", "colors.ansi.white", theme.colors.ansi.white)}
-                  </div>
+                <div className="space-y-2">
+                  <Label>Background Opacity</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={theme.background?.opacity || 1}
+                    onChange={(e) =>
+                      updateThemeField("background", {
+                        ...theme.background,
+                        opacity: parseFloat(e.target.value) || 1,
+                      })
+                    }
+                  />
                 </div>
               </div>
-            </ScrollArea>
-          </div>
 
-          <DialogFooter className="px-6 py-4 border-t">
-            <Button variant="outline" onClick={() => handleClose(false)}>
-              <X className="w-4 h-4 mr-2" />
-              Cancel
-            </Button>
-            <Button onClick={handleSaveClick}>
-              <Save className="w-4 h-4 mr-2" />
-              Save Theme
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+              {/* UI Colors */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">UI Colors</h3>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {renderColorPicker(
+                    "Background",
+                    "colors.ui.background",
+                    theme.colors.ui.background
+                  )}
+                  {renderColorPicker(
+                    "Foreground",
+                    "colors.ui.foreground",
+                    theme.colors.ui.foreground
+                  )}
+                  {renderColorPicker("Primary", "colors.ui.primary", theme.colors.ui.primary)}
+                  {renderColorPicker("Secondary", "colors.ui.secondary", theme.colors.ui.secondary)}
+                  {renderColorPicker("Accent", "colors.ui.accent", theme.colors.ui.accent)}
+                  {renderColorPicker("Muted", "colors.ui.muted", theme.colors.ui.muted)}
+                  {renderColorPicker("Border", "colors.ui.border", theme.colors.ui.border)}
+                  {renderColorPicker("Card", "colors.ui.card", theme.colors.ui.card)}
+                </div>
+              </div>
+
+              {/* ANSI Colors */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Terminal ANSI Colors</h3>
+
+                <div className="grid grid-cols-4 gap-4">
+                  {renderColorPicker("Black", "colors.ansi.black", theme.colors.ansi.black)}
+                  {renderColorPicker("Red", "colors.ansi.red", theme.colors.ansi.red)}
+                  {renderColorPicker("Green", "colors.ansi.green", theme.colors.ansi.green)}
+                  {renderColorPicker("Yellow", "colors.ansi.yellow", theme.colors.ansi.yellow)}
+                  {renderColorPicker("Blue", "colors.ansi.blue", theme.colors.ansi.blue)}
+                  {renderColorPicker("Magenta", "colors.ansi.magenta", theme.colors.ansi.magenta)}
+                  {renderColorPicker("Cyan", "colors.ansi.cyan", theme.colors.ansi.cyan)}
+                  {renderColorPicker("White", "colors.ansi.white", theme.colors.ansi.white)}
+                </div>
+              </div>
+            </div>
+          </ScrollArea>
+        </div>
+
+        <DialogFooter className="px-6 py-4 border-t">
+          <Button variant="outline" onClick={() => handleClose(false)}>
+            <X className="w-4 h-4 mr-2" />
+            Cancel
+          </Button>
+          <Button onClick={handleSaveClick}>
+            <Save className="w-4 h-4 mr-2" />
+            Save Theme
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 
   function renderColorPicker(label: string, path: string, color: string) {
@@ -541,10 +539,9 @@ export function ThemeDesigner({ open, onOpenChange, editThemeId }: ThemeDesigner
         </div>
         {isActive && (
           <div className="absolute z-50 mt-2">
-            <div
-              className="fixed inset-0"
-              onClick={() => setActiveColorPicker(null)}
-            />
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: overlay backdrop for color picker dismissal */}
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: overlay backdrop for color picker dismissal */}
+            <div className="fixed inset-0" onClick={() => setActiveColorPicker(null)} />
             <ChromePicker
               color={color}
               onChange={(c) => updateColorField(path, c.hex)}
