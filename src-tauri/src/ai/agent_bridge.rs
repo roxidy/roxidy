@@ -28,10 +28,11 @@ use anyhow::Result;
 use rig::completion::{AssistantContent, Message};
 use rig::message::{Text, UserContent};
 use rig::one_or_many::OneOrMany;
+use rig::providers::openrouter as rig_openrouter;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use vtcode_core::tools::ToolRegistry;
 
-use super::agentic_loop::{run_agentic_loop, AgenticLoopContext};
+use super::agentic_loop::{run_agentic_loop, run_agentic_loop_generic, AgenticLoopContext};
 use super::context_manager::ContextManager;
 use super::events::AiEvent;
 use super::hitl::{ApprovalDecision, ApprovalRecorder};
@@ -527,6 +528,13 @@ impl AgentBridge {
                 self.execute_with_vertex_model(&vertex_model, prompt, start_time, context)
                     .await
             }
+            LlmClient::RigOpenRouter(openrouter_model) => {
+                let openrouter_model = openrouter_model.clone();
+                drop(client);
+
+                self.execute_with_openrouter_model(&openrouter_model, prompt, start_time, context)
+                    .await
+            }
         }
     }
 
@@ -714,6 +722,152 @@ impl AgentBridge {
         // 1. The AgentBridge is dropped (see Drop impl)
         // 2. The conversation is explicitly cleared
         // 3. A new conversation/session is started
+
+        // Emit completion event
+        self.emit_event(AiEvent::Completed {
+            response: accumulated_response.clone(),
+            tokens_used: None,
+            duration_ms: Some(duration_ms),
+        });
+
+        Ok(accumulated_response)
+    }
+
+    /// Execute with OpenRouter model using the generic agentic loop.
+    async fn execute_with_openrouter_model(
+        &self,
+        model: &rig_openrouter::CompletionModel,
+        initial_prompt: &str,
+        start_time: std::time::Instant,
+        context: SubAgentContext,
+    ) -> Result<String> {
+        // Build system prompt
+        let workspace_path = self.workspace.read().await;
+        let mut system_prompt = build_system_prompt(&workspace_path);
+        drop(workspace_path);
+
+        // Inject Layer 1 session context if available
+        if let Some(session_context) = self.get_session_context().await {
+            if !session_context.is_empty() {
+                tracing::debug!(
+                    "[agent] Injecting Layer 1 session context ({} chars)",
+                    session_context.len()
+                );
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&session_context);
+            }
+        }
+
+        // Start session for persistence
+        self.start_session().await;
+        self.record_user_message(initial_prompt).await;
+
+        // Capture user prompt in sidecar session
+        // Only start a new session if one doesn't already exist (sessions span conversations)
+        if let Some(ref sidecar) = self.sidecar_state {
+            use crate::sidecar::events::SessionEvent;
+
+            let session_id = if let Some(existing_id) = sidecar.current_session_id() {
+                // Reuse existing session
+                tracing::debug!("Reusing existing sidecar session: {}", existing_id);
+                Some(existing_id)
+            } else {
+                // Start a new session
+                match sidecar.start_session(initial_prompt) {
+                    Ok(new_id) => {
+                        tracing::info!("Started new sidecar session: {}", new_id);
+                        Some(new_id)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to start sidecar session: {}", e);
+                        None
+                    }
+                }
+            };
+
+            // Capture the user prompt as an event (if we have a session)
+            if let Some(sid) = session_id {
+                let prompt_event = SessionEvent::user_prompt(sid, initial_prompt);
+                sidecar.capture(prompt_event);
+            }
+        }
+
+        // Prepare initial history with user message
+        let mut history_guard = self.conversation_history.write().await;
+        history_guard.push(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: initial_prompt.to_string(),
+            })),
+        });
+        let initial_history = history_guard.clone();
+        drop(history_guard);
+
+        // Get or create event channel for the agentic loop
+        // This handles both legacy (event_tx) and new (runtime) paths
+        let loop_event_tx = self.get_or_create_event_tx();
+
+        // Build agentic loop context
+        let loop_ctx = AgenticLoopContext {
+            event_tx: &loop_event_tx,
+            tool_registry: &self.tool_registry,
+            sub_agent_registry: &self.sub_agent_registry,
+            indexer_state: self.indexer_state.as_ref(),
+            tavily_state: self.tavily_state.as_ref(),
+            #[cfg(feature = "tauri")]
+            workflow_state: self.workflow_state.as_ref(),
+            workspace: &self.workspace,
+            client: &self.client,
+            approval_recorder: &self.approval_recorder,
+            pending_approvals: &self.pending_approvals,
+            tool_policy_manager: &self.tool_policy_manager,
+            context_manager: &self.context_manager,
+            loop_detector: &self.loop_detector,
+            tool_config: &self.tool_config,
+            sidecar_state: self.sidecar_state.as_ref(),
+            runtime: self.runtime.as_ref(),
+            // No cancellation token for non-server execute paths
+            #[cfg(feature = "server")]
+            cancel_token: None,
+        };
+
+        // Run the generic agentic loop (works with any rig CompletionModel)
+        let (accumulated_response, _final_history) =
+            run_agentic_loop_generic(model, &system_prompt, initial_history, context, &loop_ctx)
+                .await?;
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        // Persist the assistant response
+        if !accumulated_response.is_empty() {
+            let mut history_guard = self.conversation_history.write().await;
+            history_guard.push(Message::Assistant {
+                id: None,
+                content: OneOrMany::one(AssistantContent::Text(Text {
+                    text: accumulated_response.clone(),
+                })),
+            });
+        }
+
+        // Record and save session
+        if !accumulated_response.is_empty() {
+            self.record_assistant_message(&accumulated_response).await;
+            self.save_session().await;
+        }
+
+        // End sidecar capture session
+        if let Some(ref sidecar) = self.sidecar_state {
+            match sidecar.end_session() {
+                Ok(Some(session)) => {
+                    tracing::info!("Sidecar session {} ended", session.session_id);
+                }
+                Ok(None) => {
+                    tracing::debug!("No active sidecar session to end");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to end sidecar session: {}", e);
+                }
+            }
+        }
 
         // Emit completion event
         self.emit_event(AiEvent::Completed {

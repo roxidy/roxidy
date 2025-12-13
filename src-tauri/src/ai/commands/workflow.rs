@@ -166,24 +166,35 @@ impl WorkflowLlmExecutor for BridgeLlmExecutor {
             additional_params: None,
         };
 
-        // Make the completion call
+        // Make the completion call and extract text from response
         let client = self.client.read().await;
-        let response = match &*client {
-            LlmClient::VertexAnthropic(model) => model.completion(request).await?,
+        let result = match &*client {
+            LlmClient::VertexAnthropic(model) => {
+                let response = model.completion(request).await?;
+                let mut text = String::new();
+                for content in response.choice.iter() {
+                    if let rig::completion::AssistantContent::Text(t) = content {
+                        text.push_str(&t.text);
+                    }
+                }
+                text
+            }
+            LlmClient::RigOpenRouter(model) => {
+                let response = model.completion(request).await?;
+                let mut text = String::new();
+                for content in response.choice.iter() {
+                    if let rig::completion::AssistantContent::Text(t) = content {
+                        text.push_str(&t.text);
+                    }
+                }
+                text
+            }
             LlmClient::Vtcode(_) => {
                 return Err(anyhow::anyhow!(
                     "Vtcode client not yet supported for workflow completions"
                 ));
             }
         };
-
-        // Extract text from response
-        let mut result = String::new();
-        for content in response.choice.iter() {
-            if let rig::completion::AssistantContent::Text(text) = content {
-                result.push_str(&text.text);
-            }
-        }
 
         if result.is_empty() {
             return Err(anyhow::anyhow!("LLM returned empty response"));
@@ -292,10 +303,17 @@ impl WorkflowLlmExecutor for BridgeLlmExecutor {
                 additional_params: None,
             };
 
-            // Make LLM call
+            // Make LLM call and extract choice
             let client = self.client.read().await;
-            let response = match &*client {
-                LlmClient::VertexAnthropic(model) => model.completion(request).await?,
+            let choice: rig::OneOrMany<AssistantContent> = match &*client {
+                LlmClient::VertexAnthropic(model) => {
+                    let response = model.completion(request).await?;
+                    response.choice
+                }
+                LlmClient::RigOpenRouter(model) => {
+                    let response = model.completion(request).await?;
+                    response.choice
+                }
                 LlmClient::Vtcode(_) => {
                     return Err(anyhow::anyhow!(
                         "Vtcode client not supported for workflow agents"
@@ -309,7 +327,7 @@ impl WorkflowLlmExecutor for BridgeLlmExecutor {
             let mut tool_calls_to_execute: Vec<(String, String, serde_json::Value)> = vec![];
             let mut assistant_content: Vec<AssistantContent> = vec![];
 
-            for content in response.choice.iter() {
+            for content in choice.iter() {
                 match content {
                     AssistantContent::Text(text) => {
                         final_response.push_str(&text.text);

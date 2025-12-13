@@ -777,11 +777,10 @@ pub async fn run_agentic_loop(
                             // Accumulate tool call argument deltas
                             current_tool_args.push_str(&delta);
                         }
-                        StreamedAssistantContent::Final(ref resp) => {
+                        StreamedAssistantContent::Final(ref _resp) => {
                             tracing::info!(
-                                "Received final response chunk #{}: {:?}",
-                                chunk_count,
-                                resp
+                                "Received final response chunk #{}",
+                                chunk_count
                             );
                             // Finalize any pending tool call from deltas
                             if let (Some(id), Some(name)) =
@@ -951,6 +950,664 @@ pub async fn run_agentic_loop(
             "Total thinking content: {} chars",
             accumulated_thinking.len()
         );
+    }
+
+    Ok((accumulated_response, chat_history))
+}
+
+/// Execute a tool directly for generic models (after approval or auto-approved).
+/// Note: Sub-agent calls are not supported for generic models.
+pub async fn execute_tool_direct_generic(
+    tool_name: &str,
+    tool_args: &serde_json::Value,
+    ctx: &AgenticLoopContext<'_>,
+) -> Result<ToolExecutionResult> {
+    // Check if this is an indexer tool call
+    if tool_name.starts_with("indexer_") {
+        let (value, success) = execute_indexer_tool(ctx.indexer_state, tool_name, tool_args).await;
+        return Ok(ToolExecutionResult { value, success });
+    }
+
+    // Check if this is our custom web_fetch tool (with readability extraction)
+    if tool_name == "web_fetch" {
+        let (value, success) = execute_web_fetch_tool(tool_name, tool_args).await;
+        return Ok(ToolExecutionResult { value, success });
+    }
+
+    // Check if this is a web search (Tavily) tool call
+    if tool_name.starts_with("web_search") || tool_name == "web_extract" {
+        let (value, success) = execute_tavily_tool(ctx.tavily_state, tool_name, tool_args).await;
+        return Ok(ToolExecutionResult { value, success });
+    }
+
+    // Check if this is a workflow tool call (only with tauri feature)
+    #[cfg(feature = "tauri")]
+    if tool_name == "run_workflow" {
+        let workflow_ctx = WorkflowToolContext {
+            workflow_state: ctx.workflow_state,
+            client: ctx.client,
+            event_tx: ctx.event_tx,
+            tool_registry: ctx.tool_registry,
+            workspace: ctx.workspace,
+            indexer_state: ctx.indexer_state,
+            tavily_state: ctx.tavily_state,
+        };
+        let (value, success) = execute_workflow_tool(workflow_ctx, tool_args).await;
+        return Ok(ToolExecutionResult { value, success });
+    }
+
+    // Sub-agent calls are not supported for generic models
+    if tool_name.starts_with("sub_agent_") {
+        return Ok(ToolExecutionResult {
+            value: json!({
+                "error": "Sub-agent calls are not supported for this model type",
+                "not_supported": true
+            }),
+            success: false,
+        });
+    }
+
+    // Execute regular tool via registry
+    let mut registry = ctx.tool_registry.write().await;
+    let result = registry.execute_tool(tool_name, tool_args.clone()).await;
+
+    match &result {
+        Ok(v) => {
+            // Check for failure: exit_code != 0 OR presence of "error" field
+            let is_failure_by_exit_code = v
+                .get("exit_code")
+                .and_then(|ec| ec.as_i64())
+                .map(|ec| ec != 0)
+                .unwrap_or(false);
+            let has_error_field = v.get("error").is_some();
+            let is_success = !is_failure_by_exit_code && !has_error_field;
+            Ok(ToolExecutionResult {
+                value: v.clone(),
+                success: is_success,
+            })
+        }
+        Err(e) => Ok(ToolExecutionResult {
+            value: json!({"error": e.to_string()}),
+            success: false,
+        }),
+    }
+}
+
+/// Execute a tool with HITL approval check for generic models.
+pub async fn execute_with_hitl_generic(
+    tool_name: &str,
+    tool_args: &serde_json::Value,
+    tool_id: &str,
+    ctx: &AgenticLoopContext<'_>,
+    capture_ctx: &mut LoopCaptureContext,
+) -> Result<ToolExecutionResult> {
+    // Capture tool request for file tracking
+    capture_ctx.process(&AiEvent::ToolRequest {
+        request_id: tool_id.to_string(),
+        tool_name: tool_name.to_string(),
+        args: tool_args.clone(),
+        source: crate::ai::events::ToolSource::Main,
+    });
+
+    // Step 1: Check if tool is denied by policy
+    if ctx.tool_policy_manager.is_denied(tool_name).await {
+        let denied_event = AiEvent::ToolDenied {
+            request_id: tool_id.to_string(),
+            tool_name: tool_name.to_string(),
+            args: tool_args.clone(),
+            reason: "Tool is denied by policy".to_string(),
+            source: crate::ai::events::ToolSource::Main,
+        };
+        emit_to_frontend(ctx, denied_event.clone());
+        capture_ctx.process(&denied_event);
+        return Ok(ToolExecutionResult {
+            value: json!({
+                "error": format!("Tool '{}' is denied by policy", tool_name),
+                "denied_by_policy": true
+            }),
+            success: false,
+        });
+    }
+
+    // Step 2: Apply constraints and check for violations
+    let (effective_args, constraint_note) = match ctx
+        .tool_policy_manager
+        .apply_constraints(tool_name, tool_args)
+        .await
+    {
+        PolicyConstraintResult::Allowed => (tool_args.clone(), None),
+        PolicyConstraintResult::Violated(reason) => {
+            emit_event(
+                ctx,
+                AiEvent::ToolDenied {
+                    request_id: tool_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args: tool_args.clone(),
+                    reason: reason.clone(),
+                    source: crate::ai::events::ToolSource::Main,
+                },
+            );
+            return Ok(ToolExecutionResult {
+                value: json!({
+                    "error": format!("Tool constraint violated: {}", reason),
+                    "constraint_violated": true
+                }),
+                success: false,
+            });
+        }
+        PolicyConstraintResult::Modified(modified_args, note) => {
+            tracing::info!("Tool '{}' args modified by constraint: {}", tool_name, note);
+            (modified_args, Some(note))
+        }
+    };
+
+    // Step 3: Check if tool is allowed by policy (bypasses HITL)
+    let policy = ctx.tool_policy_manager.get_policy(tool_name).await;
+    if policy == ToolPolicy::Allow {
+        let reason = if let Some(note) = constraint_note {
+            format!("Allowed by policy ({})", note)
+        } else {
+            "Allowed by tool policy".to_string()
+        };
+        emit_event(
+            ctx,
+            AiEvent::ToolAutoApproved {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: effective_args.clone(),
+                reason,
+                source: crate::ai::events::ToolSource::Main,
+            },
+        );
+
+        return execute_tool_direct_generic(tool_name, &effective_args, ctx).await;
+    }
+
+    // Step 4: Check if tool should be auto-approved based on learned patterns
+    if ctx.approval_recorder.should_auto_approve(tool_name).await {
+        emit_event(
+            ctx,
+            AiEvent::ToolAutoApproved {
+                request_id: tool_id.to_string(),
+                tool_name: tool_name.to_string(),
+                args: effective_args.clone(),
+                reason: "Auto-approved based on learned patterns or always-allow list".to_string(),
+                source: crate::ai::events::ToolSource::Main,
+            },
+        );
+
+        return execute_tool_direct_generic(tool_name, &effective_args, ctx).await;
+    }
+
+    // Step 4.5: Check if runtime has auto-approve enabled (CLI --auto-approve flag)
+    if let Some(runtime) = ctx.runtime {
+        if runtime.auto_approve() {
+            emit_event(
+                ctx,
+                AiEvent::ToolAutoApproved {
+                    request_id: tool_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args: effective_args.clone(),
+                    reason: "Auto-approved via --auto-approve flag".to_string(),
+                    source: crate::ai::events::ToolSource::Main,
+                },
+            );
+
+            return execute_tool_direct_generic(tool_name, &effective_args, ctx).await;
+        }
+    }
+
+    // Step 5: Need approval - create request with stats
+    let stats = ctx.approval_recorder.get_pattern(tool_name).await;
+    let risk_level = RiskLevel::for_tool(tool_name);
+    let config = ctx.approval_recorder.get_config().await;
+    let can_learn = !config
+        .always_require_approval
+        .contains(&tool_name.to_string());
+    let suggestion = ctx.approval_recorder.get_suggestion(tool_name).await;
+
+    // Create oneshot channel for response
+    let (tx, rx) = oneshot::channel::<ApprovalDecision>();
+
+    // Store the sender
+    {
+        let mut pending = ctx.pending_approvals.write().await;
+        pending.insert(tool_id.to_string(), tx);
+    }
+
+    // Emit approval request event with HITL metadata
+    let _ = ctx.event_tx.send(AiEvent::ToolApprovalRequest {
+        request_id: tool_id.to_string(),
+        tool_name: tool_name.to_string(),
+        args: effective_args.clone(),
+        stats,
+        risk_level,
+        can_learn,
+        suggestion,
+        source: crate::ai::events::ToolSource::Main,
+    });
+
+    // Wait for approval response (with timeout)
+    match tokio::time::timeout(std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS), rx).await {
+        Ok(Ok(decision)) => {
+            if decision.approved {
+                let _ = ctx
+                    .approval_recorder
+                    .record_approval(tool_name, true, decision.reason, decision.always_allow)
+                    .await;
+
+                execute_tool_direct_generic(tool_name, &effective_args, ctx).await
+            } else {
+                let _ = ctx
+                    .approval_recorder
+                    .record_approval(tool_name, false, decision.reason, false)
+                    .await;
+
+                Ok(ToolExecutionResult {
+                    value: json!({"error": "Tool execution denied by user", "denied": true}),
+                    success: false,
+                })
+            }
+        }
+        Ok(Err(_)) => Ok(ToolExecutionResult {
+            value: json!({"error": "Approval request cancelled", "cancelled": true}),
+            success: false,
+        }),
+        Err(_) => {
+            let mut pending = ctx.pending_approvals.write().await;
+            pending.remove(tool_id);
+
+            Ok(ToolExecutionResult {
+                value: json!({"error": format!("Approval request timed out after {} seconds", APPROVAL_TIMEOUT_SECS), "timeout": true}),
+                success: false,
+            })
+        }
+    }
+}
+
+/// Generic agentic loop that works with any rig CompletionModel.
+///
+/// This is a simplified version of `run_agentic_loop` that:
+/// - Works with any model implementing `rig::completion::CompletionModel`
+/// - Does NOT support extended thinking (Anthropic-specific)
+/// - Does NOT support sub-agent calls
+pub async fn run_agentic_loop_generic<M>(
+    model: &M,
+    system_prompt: &str,
+    initial_history: Vec<Message>,
+    _context: SubAgentContext,
+    ctx: &AgenticLoopContext<'_>,
+) -> Result<(String, Vec<Message>)>
+where
+    M: RigCompletionModel + Sync,
+{
+    // Reset loop detector for new turn
+    {
+        let mut detector = ctx.loop_detector.write().await;
+        detector.reset();
+    }
+
+    // Create persistent capture context for file event correlation
+    let mut capture_ctx = LoopCaptureContext::new(ctx.sidecar_state);
+
+    // Get all available tools (filtered by config + web search)
+    // Note: Sub-agents are not included for generic models
+    let mut tools = get_all_tool_definitions_with_config(ctx.tool_config);
+
+    // print list of tool names to the console
+    tracing::debug!(
+        "Available tools (generic loop): {:?}",
+        tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>()
+    );
+
+    // Add web search tools if Tavily is available and not disabled by config
+    tools.extend(
+        get_tavily_tool_definitions(ctx.tavily_state)
+            .into_iter()
+            .filter(|t| ctx.tool_config.is_tool_enabled(&t.name)),
+    );
+
+    // Note: Sub-agent tools are NOT added for generic models
+    // Note: Workflow tools are NOT added for generic models (require specific client handling)
+
+    let original_history_len = initial_history.len();
+    let mut chat_history = initial_history;
+
+    // Update context manager with current history
+    ctx.context_manager
+        .update_from_messages(&chat_history)
+        .await;
+
+    // Enforce context window limits if needed
+    let alert_level = ctx.context_manager.alert_level().await;
+    if matches!(
+        alert_level,
+        TokenAlertLevel::Alert | TokenAlertLevel::Critical
+    ) {
+        let utilization_before = ctx.context_manager.utilization().await;
+        tracing::info!(
+            "Context alert level {:?} ({:.1}% utilization), enforcing context window",
+            alert_level,
+            utilization_before * 100.0
+        );
+        chat_history = ctx
+            .context_manager
+            .enforce_context_window(&chat_history)
+            .await;
+
+        // Update stats after pruning
+        ctx.context_manager
+            .update_from_messages(&chat_history)
+            .await;
+        let utilization_after = ctx.context_manager.utilization().await;
+
+        // Emit context event to frontend
+        let _ = ctx.event_tx.send(AiEvent::ContextPruned {
+            messages_removed: original_history_len.saturating_sub(chat_history.len()),
+            utilization_before,
+            utilization_after,
+        });
+    }
+
+    let mut accumulated_response = String::new();
+    let mut iteration = 0;
+
+    loop {
+        iteration += 1;
+        if iteration > MAX_TOOL_ITERATIONS {
+            let _ = ctx.event_tx.send(AiEvent::Error {
+                message: "Maximum tool iterations reached".to_string(),
+                error_type: "max_iterations".to_string(),
+            });
+            break;
+        }
+
+        // Check for cancellation at each iteration (server feature only)
+        #[cfg(feature = "server")]
+        if let Some(cancel_token) = ctx.cancel_token {
+            if cancel_token.is_cancelled() {
+                let _ = ctx.event_tx.send(AiEvent::Error {
+                    message: "Agentic loop cancelled".to_string(),
+                    error_type: "cancelled".to_string(),
+                });
+                return Err(anyhow::anyhow!("Agentic loop cancelled"));
+            }
+        }
+
+        // Build request
+        let request = rig::completion::CompletionRequest {
+            preamble: Some(system_prompt.to_string()),
+            chat_history: OneOrMany::many(chat_history.clone())
+                .unwrap_or_else(|_| OneOrMany::one(chat_history[0].clone())),
+            documents: vec![],
+            tools: tools.clone(),
+            temperature: Some(0.5),
+            max_tokens: Some(MAX_COMPLETION_TOKENS as u64),
+            tool_choice: None,
+            additional_params: None,
+        };
+
+        // Make streaming completion request
+        tracing::info!("Starting streaming completion request (generic)");
+        let mut stream = model.stream(request).await.map_err(|e| {
+            tracing::error!("Failed to start stream: {}", e);
+            anyhow::anyhow!("{}", e)
+        })?;
+        tracing::info!("Stream started successfully (generic)");
+
+        // Process streaming response
+        let mut has_tool_calls = false;
+        let mut tool_calls_to_execute: Vec<ToolCall> = vec![];
+        let mut text_content = String::new();
+        let mut chunk_count = 0;
+
+        // Track tool call state for streaming
+        let mut current_tool_id: Option<String> = None;
+        let mut current_tool_name: Option<String> = None;
+        let mut current_tool_args = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            chunk_count += 1;
+            match chunk_result {
+                Ok(chunk) => {
+                    match chunk {
+                        StreamedAssistantContent::Text(text_msg) => {
+                            // Regular text content (no thinking support in generic loop)
+                            text_content.push_str(&text_msg.text);
+                            accumulated_response.push_str(&text_msg.text);
+                            let _ = ctx.event_tx.send(AiEvent::TextDelta {
+                                delta: text_msg.text,
+                                accumulated: accumulated_response.clone(),
+                            });
+                        }
+                        StreamedAssistantContent::Reasoning(reasoning) => {
+                            // Emit reasoning but don't track for history (not all providers support it)
+                            let reasoning_text = reasoning.reasoning.join("");
+                            tracing::debug!(
+                                "Received reasoning chunk #{}: {} chars",
+                                chunk_count,
+                                reasoning_text.len()
+                            );
+                            emit_event(
+                                ctx,
+                                AiEvent::Reasoning {
+                                    content: reasoning_text,
+                                },
+                            );
+                        }
+                        StreamedAssistantContent::ToolCall(tool_call) => {
+                            tracing::info!(
+                                "Received tool call chunk #{}: {}",
+                                chunk_count,
+                                tool_call.function.name
+                            );
+                            has_tool_calls = true;
+
+                            // Finalize any previous pending tool call first
+                            if let (Some(prev_id), Some(prev_name)) =
+                                (current_tool_id.take(), current_tool_name.take())
+                            {
+                                let args: serde_json::Value =
+                                    serde_json::from_str(&current_tool_args)
+                                        .unwrap_or(serde_json::Value::Null);
+                                tracing::info!(
+                                    "Finalizing previous tool call: {} with args: {}",
+                                    prev_name,
+                                    current_tool_args
+                                );
+                                tool_calls_to_execute.push(ToolCall {
+                                    id: prev_id.clone(),
+                                    call_id: Some(prev_id),
+                                    function: rig::message::ToolFunction {
+                                        name: prev_name,
+                                        arguments: args,
+                                    },
+                                });
+                                current_tool_args.clear();
+                            }
+
+                            // Check if this tool call has complete args (non-streaming case)
+                            let has_complete_args = !tool_call.function.arguments.is_null()
+                                && tool_call.function.arguments != serde_json::json!({});
+
+                            if has_complete_args {
+                                // Tool call came complete, add directly
+                                tracing::info!("Tool call has complete args, adding directly");
+                                tool_calls_to_execute.push(tool_call);
+                            } else {
+                                // Tool call has empty args, wait for deltas
+                                tracing::info!(
+                                    "Tool call has empty args, tracking for delta accumulation"
+                                );
+                                current_tool_id = Some(tool_call.id.clone());
+                                current_tool_name = Some(tool_call.function.name.clone());
+                                if !tool_call.function.arguments.is_null()
+                                    && tool_call.function.arguments != serde_json::json!({})
+                                {
+                                    current_tool_args = tool_call.function.arguments.to_string();
+                                }
+                            }
+                        }
+                        StreamedAssistantContent::ToolCallDelta { id, delta } => {
+                            tracing::debug!(
+                                "Received tool call delta #{}: id={}, {} chars",
+                                chunk_count,
+                                id,
+                                delta.len()
+                            );
+                            if current_tool_id.is_none() && !id.is_empty() {
+                                current_tool_id = Some(id);
+                            }
+                            current_tool_args.push_str(&delta);
+                        }
+                        StreamedAssistantContent::Final(ref _resp) => {
+                            tracing::info!(
+                                "Received final response chunk #{}",
+                                chunk_count
+                            );
+                            // Finalize any pending tool call from deltas
+                            if let (Some(id), Some(name)) =
+                                (current_tool_id.take(), current_tool_name.take())
+                            {
+                                let args: serde_json::Value =
+                                    serde_json::from_str(&current_tool_args)
+                                        .unwrap_or(serde_json::Value::Null);
+                                tool_calls_to_execute.push(ToolCall {
+                                    id: id.clone(),
+                                    call_id: Some(id),
+                                    function: rig::message::ToolFunction {
+                                        name,
+                                        arguments: args,
+                                    },
+                                });
+                                current_tool_args.clear();
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Stream chunk error at #{}: {}", chunk_count, e);
+                }
+            }
+        }
+
+        tracing::info!(
+            "Stream completed (generic): {} chunks, {} chars text, {} tool calls",
+            chunk_count,
+            text_content.len(),
+            tool_calls_to_execute.len()
+        );
+
+        // Finalize any remaining tool call that wasn't closed by FinalResponse
+        if let (Some(id), Some(name)) = (current_tool_id.take(), current_tool_name.take()) {
+            let args: serde_json::Value =
+                serde_json::from_str(&current_tool_args).unwrap_or(serde_json::Value::Null);
+            tool_calls_to_execute.push(ToolCall {
+                id: id.clone(),
+                call_id: Some(id),
+                function: rig::message::ToolFunction {
+                    name,
+                    arguments: args,
+                },
+            });
+            has_tool_calls = true;
+        }
+
+        // If no tool calls, we're done
+        if !has_tool_calls {
+            break;
+        }
+
+        // Build assistant content for history (text + tool calls only, no thinking)
+        let mut assistant_content: Vec<AssistantContent> = vec![];
+
+        if !text_content.is_empty() {
+            assistant_content.push(AssistantContent::Text(Text {
+                text: text_content.clone(),
+            }));
+        }
+        for tool_call in &tool_calls_to_execute {
+            assistant_content.push(AssistantContent::ToolCall(tool_call.clone()));
+        }
+
+        chat_history.push(Message::Assistant {
+            id: None,
+            content: OneOrMany::many(assistant_content).unwrap_or_else(|_| {
+                OneOrMany::one(AssistantContent::Text(Text {
+                    text: String::new(),
+                }))
+            }),
+        });
+
+        // Execute tool calls and collect results
+        let mut tool_results: Vec<UserContent> = vec![];
+
+        for tool_call in tool_calls_to_execute {
+            let tool_name = &tool_call.function.name;
+            // Normalize run_pty_cmd args to convert array commands to strings
+            let tool_args = if tool_name == "run_pty_cmd" {
+                normalize_run_pty_cmd_args(tool_call.function.arguments.clone())
+            } else {
+                tool_call.function.arguments.clone()
+            };
+            let tool_id = tool_call.id.clone();
+
+            // Check for loop detection
+            let loop_result = {
+                let mut detector = ctx.loop_detector.write().await;
+                detector.record_tool_call(tool_name, &tool_args)
+            };
+
+            // Handle loop detection (may add a blocked result)
+            if let Some(blocked_result) =
+                handle_loop_detection(&loop_result, &tool_id, ctx.event_tx)
+            {
+                tool_results.push(blocked_result);
+                continue;
+            }
+
+            // Execute tool with HITL approval check (generic version)
+            let result = execute_with_hitl_generic(
+                tool_name,
+                &tool_args,
+                &tool_id,
+                ctx,
+                &mut capture_ctx,
+            )
+            .await
+            .unwrap_or_else(|e| ToolExecutionResult {
+                value: json!({ "error": e.to_string() }),
+                success: false,
+            });
+
+            // Emit tool result event
+            let result_event = AiEvent::ToolResult {
+                tool_name: tool_name.clone(),
+                result: result.value.clone(),
+                success: result.success,
+                request_id: tool_id.clone(),
+                source: crate::ai::events::ToolSource::Main,
+            };
+            emit_to_frontend(ctx, result_event.clone());
+            capture_ctx.process(&result_event);
+
+            // Add to tool results for LLM
+            let result_text = serde_json::to_string(&result.value).unwrap_or_default();
+            tool_results.push(UserContent::ToolResult(ToolResult {
+                id: tool_id.clone(),
+                call_id: Some(tool_id),
+                content: OneOrMany::one(ToolResultContent::Text(Text { text: result_text })),
+            }));
+        }
+
+        // Add tool results as user message
+        chat_history.push(Message::User {
+            content: OneOrMany::many(tool_results).unwrap_or_else(|_| {
+                OneOrMany::one(UserContent::Text(Text {
+                    text: "Tool executed".to_string(),
+                }))
+            }),
+        });
     }
 
     Ok((accumulated_response, chat_history))

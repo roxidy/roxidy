@@ -1,4 +1,5 @@
 import { Bot, ChevronDown, Cloud, Cpu, Terminal } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SidecarStatus } from "@/components/Sidecar";
 import { Button } from "@/components/ui/button";
@@ -6,25 +7,47 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { initVertexAiAgent, VERTEX_AI_MODELS } from "@/lib/ai";
+import { getOpenRouterApiKey, initAiAgent, initVertexAiAgent, VERTEX_AI_MODELS } from "@/lib/ai";
 import { cn } from "@/lib/utils";
 import { useAiConfig, useInputMode, useStore } from "../../store";
 
-// Available models for the dropdown
-const AVAILABLE_MODELS = [
-  { id: VERTEX_AI_MODELS.CLAUDE_OPUS_4_5, name: "Claude Opus 4.5" },
-  { id: VERTEX_AI_MODELS.CLAUDE_SONNET_4_5, name: "Claude Sonnet 4.5" },
-  { id: VERTEX_AI_MODELS.CLAUDE_HAIKU_4_5, name: "Claude Haiku 4.5" },
+// Available Vertex AI models
+const VERTEX_MODELS = [
+  { id: VERTEX_AI_MODELS.CLAUDE_OPUS_4_5, name: "Claude Opus 4.5", provider: "vertex" as const },
+  {
+    id: VERTEX_AI_MODELS.CLAUDE_SONNET_4_5,
+    name: "Claude Sonnet 4.5",
+    provider: "vertex" as const,
+  },
+  { id: VERTEX_AI_MODELS.CLAUDE_HAIKU_4_5, name: "Claude Haiku 4.5", provider: "vertex" as const },
+];
+
+// Available OpenRouter models (fixed list per spec)
+const OPENROUTER_MODELS = [
+  { id: "mistralai/devstral-2512", name: "Devstral 2512", provider: "openrouter" as const },
+  { id: "deepseek/deepseek-v3.2", name: "Deepseek v3.2", provider: "openrouter" as const },
+  { id: "z-ai/glm-4.6", name: "GLM 4.6", provider: "openrouter" as const },
+  { id: "x-ai/grok-code-fast-1", name: "Grok Code Fast 1", provider: "openrouter" as const },
+  { id: "openai/gpt-oss-20b", name: "GPT OSS 20b", provider: "openrouter" as const },
+  { id: "openai/gpt-oss-120b", name: "GPT OSS 120b", provider: "openrouter" as const },
+  { id: "openai/gpt-5.2", name: "GPT 5.2", provider: "openrouter" as const },
 ];
 
 function formatModel(model: string): string {
-  // Simplify Vertex AI model names
   if (!model) return "No Model";
+
+  // Check Vertex AI models
   if (model.includes("claude-opus-4")) return "Claude Opus 4.5";
   if (model.includes("claude-sonnet-4-5")) return "Claude Sonnet 4.5";
   if (model.includes("claude-haiku-4-5")) return "Claude Haiku 4.5";
+
+  // Check OpenRouter models
+  const openRouterModel = OPENROUTER_MODELS.find((m) => m.id === model);
+  if (openRouterModel) return openRouterModel.name;
+
   return model;
 }
 
@@ -56,27 +79,72 @@ export function StatusBar({ sessionId }: StatusBarProps) {
   const setInputMode = useStore((state) => state.setInputMode);
   const setAiConfig = useStore((state) => state.setAiConfig);
 
-  const handleModelSelect = async (modelId: string) => {
-    // Don't switch if already on this model or no vertex config
-    if (model === modelId || !aiConfig.vertexConfig) {
+  // Track OpenRouter availability
+  const [openRouterEnabled, setOpenRouterEnabled] = useState(false);
+  const [openRouterApiKey, setOpenRouterApiKey] = useState<string | null>(null);
+
+  // Check for OpenRouter API key on mount and when dropdown opens
+  const refreshOpenRouterKey = useCallback(async () => {
+    try {
+      const key = await getOpenRouterApiKey();
+      setOpenRouterApiKey(key);
+      setOpenRouterEnabled(!!key);
+    } catch (e) {
+      console.warn("Failed to get OpenRouter API key:", e);
+      setOpenRouterEnabled(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshOpenRouterKey();
+  }, [refreshOpenRouterKey]);
+
+  const handleModelSelect = async (modelId: string, modelProvider: "vertex" | "openrouter") => {
+    // Don't switch if already on this model
+    if (
+      model === modelId &&
+      provider === (modelProvider === "vertex" ? "anthropic_vertex" : "openrouter")
+    ) {
       return;
     }
 
-    const { vertexConfig } = aiConfig;
-    const modelName = AVAILABLE_MODELS.find((m) => m.id === modelId)?.name ?? modelId;
+    const allModels = [...VERTEX_MODELS, ...OPENROUTER_MODELS];
+    const modelName = allModels.find((m) => m.id === modelId)?.name ?? modelId;
 
     try {
       setAiConfig({ status: "initializing", model: modelId });
 
-      await initVertexAiAgent({
-        workspace: vertexConfig.workspace,
-        credentialsPath: vertexConfig.credentialsPath,
-        projectId: vertexConfig.projectId,
-        location: vertexConfig.location,
-        model: modelId,
-      });
+      if (modelProvider === "vertex") {
+        // Vertex AI model switch
+        if (!aiConfig.vertexConfig) {
+          throw new Error("Vertex AI configuration not available");
+        }
+        const { vertexConfig } = aiConfig;
+        await initVertexAiAgent({
+          workspace: vertexConfig.workspace,
+          credentialsPath: vertexConfig.credentialsPath,
+          projectId: vertexConfig.projectId,
+          location: vertexConfig.location,
+          model: modelId,
+        });
+        setAiConfig({ status: "ready", provider: "anthropic_vertex" });
+      } else {
+        // OpenRouter model switch
+        const apiKey = openRouterApiKey ?? (await getOpenRouterApiKey());
+        if (!apiKey) {
+          throw new Error("OpenRouter API key not configured");
+        }
+        // Get workspace from vertexConfig or use current directory
+        const workspace = aiConfig.vertexConfig?.workspace ?? ".";
+        await initAiAgent({
+          workspace,
+          provider: "openrouter",
+          model: modelId,
+          apiKey,
+        });
+        setAiConfig({ status: "ready", provider: "openrouter" });
+      }
 
-      setAiConfig({ status: "ready" });
       toast.success(`Switched to ${modelName}`, {
         style: {
           background: "var(--card)",
@@ -150,7 +218,7 @@ export function StatusBar({ sessionId }: StatusBarProps) {
             <span>Initializing...</span>
           </div>
         ) : (
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={(open) => open && refreshOpenRouterKey()}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -162,14 +230,19 @@ export function StatusBar({ sessionId }: StatusBarProps) {
                 <ChevronDown className="w-4 h-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="bg-card border-border min-w-[180px]">
-              {AVAILABLE_MODELS.map((m) => (
+            <DropdownMenuContent align="start" className="bg-card border-border min-w-[200px]">
+              {/* Vertex AI Models */}
+              <div className="px-2 py-1 text-[10px] text-muted-foreground uppercase tracking-wide">
+                Vertex AI
+              </div>
+              {VERTEX_MODELS.map((m) => (
                 <DropdownMenuItem
                   key={m.id}
-                  onClick={() => handleModelSelect(m.id)}
+                  onClick={() => handleModelSelect(m.id, "vertex")}
+                  disabled={!aiConfig.vertexConfig}
                   className={cn(
                     "text-xs cursor-pointer",
-                    model === m.id
+                    model === m.id && provider === "anthropic_vertex"
                       ? "text-[var(--ansi-magenta)] bg-[var(--ansi-magenta)]/10"
                       : "text-foreground hover:text-[var(--ansi-magenta)]"
                   )}
@@ -177,6 +250,30 @@ export function StatusBar({ sessionId }: StatusBarProps) {
                   {m.name}
                 </DropdownMenuItem>
               ))}
+
+              {/* OpenRouter Models (only shown when API key is configured) */}
+              {openRouterEnabled && (
+                <>
+                  <DropdownMenuSeparator />
+                  <div className="px-2 py-1 text-[10px] text-muted-foreground uppercase tracking-wide">
+                    OpenRouter
+                  </div>
+                  {OPENROUTER_MODELS.map((m) => (
+                    <DropdownMenuItem
+                      key={m.id}
+                      onClick={() => handleModelSelect(m.id, "openrouter")}
+                      className={cn(
+                        "text-xs cursor-pointer",
+                        model === m.id && provider === "openrouter"
+                          ? "text-[var(--ansi-magenta)] bg-[var(--ansi-magenta)]/10"
+                          : "text-foreground hover:text-[var(--ansi-magenta)]"
+                      )}
+                    >
+                      {m.name}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         )}

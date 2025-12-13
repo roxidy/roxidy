@@ -75,6 +75,8 @@ mistral-testbed/target/
 # Test workspace for evals
 qbit-go-testbed/
 
+# Python
+*.egg-info/
 *.pyc
 /src-tauri/tests/integration/.deepeval/
 /evals/.deepeval/.deepeval-cache.json
