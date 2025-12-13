@@ -92,11 +92,22 @@ class ThemeManagerImpl {
    * @param themeId Optional theme ID to use. If not provided, generates from theme name
    */
   async loadThemeFromObject(theme: QbitTheme, assets?: Array<[string, Uint8Array]>, themeId?: string): Promise<void> {
-    // Use provided ID or generate a safe theme ID from the theme name
-    const customId = themeId || theme.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    // Generate a safe theme ID from the theme name
+    const baseId = themeId || theme.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    
+    // Get a unique ID (appends " - 1", " - 2", etc. if already exists)
+    const customId = ThemeRegistry.getUniqueThemeId(baseId);
+
+    // If the ID was modified to be unique, update the theme name to match
+    let modifiedTheme = theme;
+    if (customId !== baseId) {
+      // Extract the suffix from the ID (e.g., " - 1" from "catherine - 1")
+      const suffix = customId.substring(baseId.length);
+      modifiedTheme = { ...theme, name: theme.name + suffix };
+    }
 
     // Save the theme to filesystem and registry
-    await ThemeRegistry.saveTheme(customId, theme, assets);
+    await ThemeRegistry.saveTheme(customId, modifiedTheme, assets);
 
     // Apply the theme
     await this.applyThemeById(customId);

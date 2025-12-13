@@ -1,5 +1,5 @@
 import { Palette, Pencil, Trash2, Upload } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useTheme } from "../../hooks/useTheme";
 import { loadThemeFromDirectory, loadThemeFromFile } from "../../lib/theme/ThemeLoader";
@@ -21,6 +21,7 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
   const { currentTheme, currentThemeId, availableThemes, setTheme, deleteTheme } = useTheme();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [themeToDelete, setThemeToDelete] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleThemeSelect = async (themeId: string) => {
     const success = await setTheme(themeId);
@@ -41,13 +42,25 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
       if (isDirectory) {
         await toast.promise(loadThemeFromDirectory(files), {
           loading: "Importing theme directory...",
-          success: () => `Theme applied: ${currentTheme?.name ?? "Custom Theme"}`,
+          success: () => {
+            // Clear the file input after successful import
+            if (fileInputRef.current) {
+              fileInputRef.current.value = "";
+            }
+            return `Theme applied: ${currentTheme?.name ?? "Custom Theme"}`;
+          },
           error: (err) => `Import failed: ${err instanceof Error ? err.message : String(err)}`,
         });
       } else {
         await toast.promise(loadThemeFromFile(files[0]), {
           loading: "Importing theme...",
-          success: () => `Theme applied: ${currentTheme?.name ?? "Custom Theme"}`,
+          success: () => {
+            // Clear the file input after successful import
+            if (fileInputRef.current) {
+              fileInputRef.current.value = "";
+            }
+            return `Theme applied: ${currentTheme?.name ?? "Custom Theme"}`;
+          },
           error: (err) => `Import failed: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
@@ -172,6 +185,7 @@ export function ThemePicker({ onEditTheme }: ThemePickerProps) {
           </label>
           <input
             id="theme-file"
+            ref={fileInputRef}
             type="file"
             accept="application/json,.json"
             // @ts-expect-error - webkitdirectory is not in the types but works in browsers
