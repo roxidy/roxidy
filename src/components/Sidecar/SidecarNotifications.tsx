@@ -67,6 +67,13 @@ export function SidecarNotifications() {
         });
         break;
 
+      // State events
+      case "state_updated":
+        toast.success("Session state updated", {
+          description: `state.md synthesized via ${event.backend}`,
+        });
+        break;
+
       default: {
         // TypeScript exhaustiveness check
         const _exhaustive: never = event;

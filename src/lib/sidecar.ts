@@ -42,7 +42,8 @@ export type SidecarEventType =
       filename: string;
       target: string;
     }
-  | { event_type: "artifact_discarded"; session_id: string; filename: string };
+  | { event_type: "artifact_discarded"; session_id: string; filename: string }
+  | { event_type: "state_updated"; session_id: string; backend: string };
 
 // ============================================================================
 // Types - Simplified for Markdown-based Session Storage

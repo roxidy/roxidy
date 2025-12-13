@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 #[cfg(feature = "tauri")]
 use tauri::AppHandle;
 
+use super::artifacts::ArtifactManager;
 use super::commits::{BoundaryReason, PatchManager};
 use super::events::{CommitBoundaryDetector, EventType, SessionEvent, SidecarEvent};
 use super::session::Session;
@@ -118,6 +119,7 @@ impl FileChangeTracker {
         self.files.clear();
     }
 
+    #[allow(dead_code)]
     fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
@@ -258,19 +260,16 @@ async fn run_processor(config: ProcessorConfig, mut task_rx: mpsc::Receiver<Proc
 
                 // Generate final patch if there are pending changes
                 if let Some(session_state) = session_states.get_mut(&session_id) {
-                    let file_count = session_state.file_tracker.get_files().len();
                     tracing::info!(
-                        "[processor] Session {} ending: generate_patches={}, file_tracker has {} file(s)",
+                        "[processor] Session {} ending: generate_patches={}",
                         session_id,
-                        config.generate_patches,
-                        file_count
+                        config.generate_patches
                     );
 
-                    if config.generate_patches && !session_state.file_tracker.is_empty() {
+                    if config.generate_patches {
                         tracing::info!(
-                            "[processor] Generating patch for session {} with {} file(s)",
-                            session_id,
-                            file_count
+                            "[processor] Generating patch for session {} (using git to detect files)",
+                            session_id
                         );
                         if let Err(e) = generate_patch(
                             &config,
@@ -286,14 +285,9 @@ async fn run_processor(config: ProcessorConfig, mut task_rx: mpsc::Receiver<Proc
                                 e
                             );
                         }
-                    } else if !config.generate_patches {
-                        tracing::debug!(
-                            "[processor] Patch generation disabled for session {}",
-                            session_id
-                        );
                     } else {
                         tracing::debug!(
-                            "[processor] No files tracked for session {}, skipping patch generation",
+                            "[processor] Patch generation disabled for session {}",
                             session_id
                         );
                     }
@@ -331,12 +325,10 @@ async fn handle_event(
     if config.generate_patches {
         track_file_changes(event, session_state);
 
-        // Check for commit boundary
+        // Check for commit boundary - generate patch using git to detect files
         if let Some(boundary_info) = session_state.boundary_detector.check_boundary(event) {
             let reason = parse_boundary_reason(&boundary_info.reason);
-            if !session_state.file_tracker.is_empty() {
-                generate_patch(config, session_id, session_state, reason).await?;
-            }
+            generate_patch(config, session_id, session_state, reason).await?;
         }
     }
 
@@ -371,7 +363,11 @@ async fn update_session_files(
             s
         }
         Err(e) => {
-            tracing::warn!("[processor] Could not load session {} for update: {}", session_id, e);
+            tracing::warn!(
+                "[processor] Could not load session {} for update: {}",
+                session_id,
+                e
+            );
             return Ok(());
         }
     };
@@ -473,7 +469,9 @@ async fn update_session_files(
                     );
                 }
             } else {
-                tracing::warn!("[processor] Synthesis disabled, skipping state update for user_prompt");
+                tracing::warn!(
+                    "[processor] Synthesis disabled, skipping state update for user_prompt"
+                );
             }
         }
         EventType::AiResponse { content, .. } => {
@@ -511,7 +509,25 @@ async fn update_session_files(
                     );
                 }
             } else {
-                tracing::warn!("[processor] Synthesis disabled, skipping state update for ai_response");
+                tracing::warn!(
+                    "[processor] Synthesis disabled, skipping state update for ai_response"
+                );
+            }
+
+            // Generate patch on AI response completion (natural boundary)
+            if config.generate_patches {
+                tracing::info!("[processor] AI response complete - generating patch");
+                if let Err(e) = generate_patch(
+                    config,
+                    session_id,
+                    session_state,
+                    BoundaryReason::CompletionSignal,
+                )
+                .await
+                {
+                    // Only log at debug level - empty git status is normal
+                    tracing::debug!("[processor] Patch generation result: {}", e);
+                }
             }
         }
         _ => {
@@ -595,6 +611,12 @@ async fn synthesize_state_update(
         "[sidecar] State synthesized successfully using {} backend",
         result.backend
     );
+
+    // Emit state updated event to frontend
+    config.emit_event(SidecarEvent::StateUpdated {
+        session_id: session.meta().session_id.clone(),
+        backend: result.backend.clone(),
+    });
 
     Ok(())
 }
@@ -686,19 +708,25 @@ fn is_binary_or_artifact(path: &str) -> bool {
 
     // Common binary extensions
     let binary_extensions = [
-        ".exe", ".dll", ".so", ".dylib", ".a", ".o", ".obj",
-        ".pyc", ".pyo", ".class", ".jar", ".war",
-        ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-        ".wasm", ".node",
+        ".exe", ".dll", ".so", ".dylib", ".a", ".o", ".obj", ".pyc", ".pyo", ".class", ".jar",
+        ".war", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".png", ".jpg", ".jpeg",
+        ".gif", ".bmp", ".ico", ".svg", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".wasm", ".node",
     ];
 
     // Common build artifact directories
     let artifact_dirs = [
-        "node_modules/", "target/", "build/", "dist/", "out/",
-        ".git/", "__pycache__/", ".pytest_cache/", ".mypy_cache/",
-        "vendor/", "bin/", "obj/",
+        "node_modules/",
+        "target/",
+        "build/",
+        "dist/",
+        "out/",
+        ".git/",
+        "__pycache__/",
+        ".pytest_cache/",
+        ".mypy_cache/",
+        "vendor/",
+        "bin/",
+        "obj/",
     ];
 
     // Check extensions
@@ -721,12 +749,28 @@ fn is_binary_or_artifact(path: &str) -> bool {
     if !filename.contains('.') {
         // Allow common extensionless config files
         let allowed_extensionless = [
-            "Makefile", "Dockerfile", "Jenkinsfile", "Vagrantfile",
-            "README", "LICENSE", "CHANGELOG", "AUTHORS", "CONTRIBUTORS",
-            "Gemfile", "Rakefile", "Procfile", "Brewfile",
-            ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig",
+            "Makefile",
+            "Dockerfile",
+            "Jenkinsfile",
+            "Vagrantfile",
+            "README",
+            "LICENSE",
+            "CHANGELOG",
+            "AUTHORS",
+            "CONTRIBUTORS",
+            "Gemfile",
+            "Rakefile",
+            "Procfile",
+            "Brewfile",
+            ".gitignore",
+            ".gitattributes",
+            ".dockerignore",
+            ".editorconfig",
         ];
-        if !allowed_extensionless.iter().any(|&f| filename == f || filename.starts_with('.')) {
+        if !allowed_extensionless
+            .iter()
+            .any(|&f| filename == f || filename.starts_with('.'))
+        {
             return true;
         }
     }
@@ -876,9 +920,15 @@ async fn generate_patch(
 
     let manager = PatchManager::new(session.dir().to_path_buf());
 
-    let files = session_state.file_tracker.get_files();
+    // Use git to detect modified files (more reliable than file_tracker)
+    let git_changes = get_git_changes(&session.meta().cwd).await;
+    let files: Vec<PathBuf> = git_changes
+        .iter()
+        .map(|gc| PathBuf::from(&gc.path))
+        .collect();
+
     if files.is_empty() {
-        tracing::debug!("[processor] No files in file_tracker, skipping patch creation");
+        tracing::debug!("[processor] No files detected by git, skipping patch creation");
         return Ok(());
     }
 
@@ -910,6 +960,68 @@ async fn generate_patch(
         patch_id: patch.meta.id,
         subject: patch.subject.clone(),
     });
+
+    // Auto-generate artifacts (README.md, CLAUDE.md) if they exist
+    let readme_exists = git_root.join("README.md").exists();
+    let claude_md_exists = git_root.join("CLAUDE.md").exists();
+
+    if readme_exists || claude_md_exists {
+        tracing::info!(
+            "[processor] Triggering artifact generation (README.md={}, CLAUDE.md={})",
+            readme_exists,
+            claude_md_exists
+        );
+
+        // Get session context from state.md
+        let session_context = session.read_state().await.unwrap_or_default();
+
+        // Use the patch subject as the summary
+        let patch_subjects = vec![patch.subject.clone()];
+
+        let artifact_manager = ArtifactManager::new(session.dir().to_path_buf());
+        match artifact_manager
+            .regenerate_from_patches(&git_root, &patch_subjects, &session_context)
+            .await
+        {
+            Ok(created) => {
+                if !created.is_empty() {
+                    tracing::info!(
+                        "[processor] Created {} artifact(s): {:?}",
+                        created.len(),
+                        created
+                    );
+                    // Emit artifact created events
+                    for path in &created {
+                        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                            // Determine target file (README.md or CLAUDE.md)
+                            let target = if filename.contains("README") {
+                                git_root.join("README.md").display().to_string()
+                            } else if filename.contains("CLAUDE") {
+                                git_root.join("CLAUDE.md").display().to_string()
+                            } else {
+                                path.display().to_string()
+                            };
+
+                            config.emit_event(SidecarEvent::ArtifactCreated {
+                                session_id: session_id.to_string(),
+                                filename: filename.to_string(),
+                                target,
+                            });
+                        }
+                    }
+                } else {
+                    tracing::debug!("[processor] No artifact changes needed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[processor] Artifact generation failed: {}", e);
+            }
+        }
+    } else {
+        tracing::debug!(
+            "[processor] Skipping artifact generation - no README.md or CLAUDE.md found"
+        );
+    }
 
     // Clear tracked changes
     session_state.file_tracker.clear();
@@ -1195,5 +1307,4 @@ mod tests {
             "Should not detect boundary with fewer than min_events"
         );
     }
-
 }

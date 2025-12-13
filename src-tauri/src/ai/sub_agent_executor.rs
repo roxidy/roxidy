@@ -284,12 +284,11 @@ fn is_write_tool(tool_name: &str) -> bool {
 /// Extract file path from tool arguments
 fn extract_file_path(tool_name: &str, args: &serde_json::Value) -> Option<String> {
     match tool_name {
-        "write_file" | "create_file" | "edit_file" | "read_file" | "delete_file" => {
-            args.get("path")
-                .or_else(|| args.get("file_path"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }
+        "write_file" | "create_file" | "edit_file" | "read_file" | "delete_file" => args
+            .get("path")
+            .or_else(|| args.get("file_path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         "apply_patch" => {
             // Extract file paths from patch content
             args.get("patch")
@@ -307,12 +306,11 @@ fn extract_file_path(tool_name: &str, args: &serde_json::Value) -> Option<String
                     None
                 })
         }
-        "rename_file" | "move_file" | "move_path" | "copy_path" => {
-            args.get("destination")
-                .or_else(|| args.get("to"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }
+        "rename_file" | "move_file" | "move_path" | "copy_path" => args
+            .get("destination")
+            .or_else(|| args.get("to"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         "delete_path" => args
             .get("path")
             .and_then(|v| v.as_str())

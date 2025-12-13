@@ -55,12 +55,12 @@ export function SidecarPanel({ open, onOpenChange }: SidecarPanelProps) {
   // Patches state
   const [stagedPatches, setStagedPatches] = useState<StagedPatch[]>([]);
   const [appliedPatches, setAppliedPatches] = useState<StagedPatch[]>([]);
-  const [expandedPatch, setExpandedPatch] = useState<number | null>(null);
+  const [expandedPatches, setExpandedPatches] = useState<Set<number>>(new Set());
 
   // Artifacts state
   const [pendingArtifacts, setPendingArtifacts] = useState<Artifact[]>([]);
-  const [expandedArtifact, setExpandedArtifact] = useState<string | null>(null);
-  const [artifactPreview, setArtifactPreview] = useState<string | null>(null);
+  const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
+  const [artifactPreviews, setArtifactPreviews] = useState<Map<string, string>>(new Map());
 
   // Fetch data when panel opens
   const fetchData = useCallback(async () => {
@@ -191,17 +191,38 @@ export function SidecarPanel({ open, onOpenChange }: SidecarPanelProps) {
     }
   };
 
-  const handlePreviewArtifact = async (filename: string) => {
+  const handleTogglePatch = (id: number) => {
+    setExpandedPatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleArtifact = async (filename: string) => {
     if (!sessionId) return;
-    if (expandedArtifact === filename) {
-      setExpandedArtifact(null);
-      setArtifactPreview(null);
+
+    // If already expanded, just collapse it
+    if (expandedArtifacts.has(filename)) {
+      setExpandedArtifacts((prev) => {
+        const next = new Set(prev);
+        next.delete(filename);
+        return next;
+      });
       return;
     }
+
+    // Expand and fetch preview if not already cached
     try {
-      const preview = await previewArtifact(sessionId, filename);
-      setExpandedArtifact(filename);
-      setArtifactPreview(preview);
+      if (!artifactPreviews.has(filename)) {
+        const preview = await previewArtifact(sessionId, filename);
+        setArtifactPreviews((prev) => new Map(prev).set(filename, preview));
+      }
+      setExpandedArtifacts((prev) => new Set(prev).add(filename));
     } catch (e) {
       toast.error(`Failed to preview: ${e}`);
     }
@@ -306,8 +327,8 @@ export function SidecarPanel({ open, onOpenChange }: SidecarPanelProps) {
             <PatchesTab
               staged={stagedPatches}
               applied={appliedPatches}
-              expandedPatch={expandedPatch}
-              onToggleExpand={(id) => setExpandedPatch(expandedPatch === id ? null : id)}
+              expandedPatches={expandedPatches}
+              onToggleExpand={handleTogglePatch}
               onApply={handleApplyPatch}
               onDiscard={handleDiscardPatch}
               onApplyAll={handleApplyAllPatches}
@@ -315,9 +336,9 @@ export function SidecarPanel({ open, onOpenChange }: SidecarPanelProps) {
           ) : (
             <ArtifactsTab
               pending={pendingArtifacts}
-              expandedArtifact={expandedArtifact}
-              artifactPreview={artifactPreview}
-              onToggleExpand={handlePreviewArtifact}
+              expandedArtifacts={expandedArtifacts}
+              artifactPreviews={artifactPreviews}
+              onToggleExpand={handleToggleArtifact}
               onApply={handleApplyArtifact}
               onDiscard={handleDiscardArtifact}
               onApplyAll={handleApplyAllArtifacts}
@@ -336,7 +357,7 @@ export function SidecarPanel({ open, onOpenChange }: SidecarPanelProps) {
 interface PatchesTabProps {
   staged: StagedPatch[];
   applied: StagedPatch[];
-  expandedPatch: number | null;
+  expandedPatches: Set<number>;
   onToggleExpand: (id: number) => void;
   onApply: (id: number) => void;
   onDiscard: (id: number) => void;
@@ -346,7 +367,7 @@ interface PatchesTabProps {
 function PatchesTab({
   staged,
   applied,
-  expandedPatch,
+  expandedPatches,
   onToggleExpand,
   onApply,
   onDiscard,
@@ -373,7 +394,7 @@ function PatchesTab({
               <PatchCard
                 key={patch.meta.id}
                 patch={patch}
-                expanded={expandedPatch === patch.meta.id}
+                expanded={expandedPatches.has(patch.meta.id)}
                 onToggleExpand={() => onToggleExpand(patch.meta.id)}
                 onApply={() => onApply(patch.meta.id)}
                 onDiscard={() => onDiscard(patch.meta.id)}
@@ -487,8 +508,8 @@ function PatchCard({ patch, expanded, onToggleExpand, onApply, onDiscard }: Patc
 // Artifacts Tab Component
 interface ArtifactsTabProps {
   pending: Artifact[];
-  expandedArtifact: string | null;
-  artifactPreview: string | null;
+  expandedArtifacts: Set<string>;
+  artifactPreviews: Map<string, string>;
   onToggleExpand: (filename: string) => void;
   onApply: (filename: string) => void;
   onDiscard: (filename: string) => void;
@@ -497,8 +518,8 @@ interface ArtifactsTabProps {
 
 function ArtifactsTab({
   pending,
-  expandedArtifact,
-  artifactPreview,
+  expandedArtifacts,
+  artifactPreviews,
   onToggleExpand,
   onApply,
   onDiscard,
@@ -523,8 +544,8 @@ function ArtifactsTab({
             <ArtifactCard
               key={artifact.filename}
               artifact={artifact}
-              expanded={expandedArtifact === artifact.filename}
-              preview={expandedArtifact === artifact.filename ? artifactPreview : null}
+              expanded={expandedArtifacts.has(artifact.filename)}
+              preview={artifactPreviews.get(artifact.filename) ?? null}
               onToggleExpand={() => onToggleExpand(artifact.filename)}
               onApply={() => onApply(artifact.filename)}
               onDiscard={() => onDiscard(artifact.filename)}

@@ -425,7 +425,7 @@ function App() {
         />
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         <Toaster
-          position="bottom-right"
+          position="top-right"
           theme="dark"
           closeButton
           toastOptions={{
@@ -522,7 +522,7 @@ function App() {
       <SidecarNotifications />
 
       <Toaster
-        position="bottom-right"
+        position="top-right"
         theme="dark"
         closeButton
         toastOptions={{

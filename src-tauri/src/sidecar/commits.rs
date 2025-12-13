@@ -616,21 +616,78 @@ async fn generate_format_patch(git_root: &Path, message: &str) -> Result<String>
 
 /// Generate diff for specific files (comparing to HEAD)
 async fn generate_diff_for_files(git_root: &Path, files: &[PathBuf]) -> Result<String> {
-    let mut args = vec!["diff", "HEAD", "--"];
+    let mut all_diffs = String::new();
+
     for file in files {
-        if let Some(s) = file.to_str() {
-            args.push(s);
+        let file_str = match file.to_str() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        // Check if file is tracked by git
+        let is_tracked = Command::new("git")
+            .args(["ls-files", "--error-unmatch", file_str])
+            .current_dir(git_root)
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        let diff = if is_tracked {
+            // Tracked file: use normal git diff
+            let output = Command::new("git")
+                .args(["diff", "HEAD", "--", file_str])
+                .current_dir(git_root)
+                .output()
+                .await
+                .context("Failed to run git diff")?;
+            String::from_utf8_lossy(&output.stdout).to_string()
+        } else {
+            // Untracked (new) file: generate diff showing entire file as added
+            generate_new_file_diff(git_root, file_str).await?
+        };
+
+        if !diff.is_empty() {
+            all_diffs.push_str(&diff);
+            if !all_diffs.ends_with('\n') {
+                all_diffs.push('\n');
+            }
         }
     }
 
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(git_root)
-        .output()
-        .await
-        .context("Failed to run git diff")?;
+    Ok(all_diffs)
+}
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+/// Generate a diff for a new (untracked) file
+async fn generate_new_file_diff(git_root: &Path, file_path: &str) -> Result<String> {
+    let full_path = git_root.join(file_path);
+
+    // Read file content
+    let content = match tokio::fs::read_to_string(&full_path).await {
+        Ok(c) => c,
+        Err(_) => return Ok(String::new()), // Skip binary or unreadable files
+    };
+
+    // Generate git-style diff header
+    let mut diff = String::new();
+    diff.push_str(&format!("diff --git a/{} b/{}\n", file_path, file_path));
+    diff.push_str("new file mode 100644\n");
+    diff.push_str("index 0000000..0000000\n");
+    diff.push_str("--- /dev/null\n");
+    diff.push_str(&format!("+++ b/{}\n", file_path));
+
+    // Count lines for hunk header
+    let lines: Vec<&str> = content.lines().collect();
+    let line_count = lines.len();
+
+    if line_count > 0 {
+        diff.push_str(&format!("@@ -0,0 +1,{} @@\n", line_count));
+        for line in lines {
+            diff.push_str(&format!("+{}\n", line));
+        }
+    }
+
+    Ok(diff)
 }
 
 /// Format diff content as a git format-patch style patch

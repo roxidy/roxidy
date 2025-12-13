@@ -67,6 +67,14 @@ pub enum SidecarEvent {
         session_id: String,
         filename: String,
     },
+
+    // State events
+    /// The session state.md has been updated
+    StateUpdated {
+        session_id: String,
+        /// The synthesis backend used (e.g., "VertexAnthropic", "OpenAi", "Template")
+        backend: String,
+    },
 }
 
 // =============================================================================
@@ -1703,6 +1711,21 @@ message without cwd"#;
         }
 
         #[test]
+        fn state_updated_serializes_correctly() {
+            let event = SidecarEvent::StateUpdated {
+                session_id: "abc-123".to_string(),
+                backend: "VertexAnthropic".to_string(),
+            };
+
+            let json = serde_json::to_string(&event).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(parsed["event_type"], "state_updated");
+            assert_eq!(parsed["session_id"], "abc-123");
+            assert_eq!(parsed["backend"], "VertexAnthropic");
+        }
+
+        #[test]
         fn all_events_have_event_type_field() {
             // Verify that every variant serializes with an event_type field
             let events = vec![
@@ -1744,6 +1767,10 @@ message without cwd"#;
                 SidecarEvent::ArtifactDiscarded {
                     session_id: "s".to_string(),
                     filename: "f".to_string(),
+                },
+                SidecarEvent::StateUpdated {
+                    session_id: "s".to_string(),
+                    backend: "VertexAnthropic".to_string(),
                 },
             ];
 
