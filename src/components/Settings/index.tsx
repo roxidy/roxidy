@@ -1,4 +1,4 @@
-import { Bot, Cog, Loader2, Shield, Terminal, X } from "lucide-react";
+import { Bot, Cog, Loader2, Palette, Shield, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,13 +10,14 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { AgentSettings } from "./AgentSettings";
 import { AiSettings } from "./AiSettings";
 import { TerminalSettings } from "./TerminalSettings";
+import { ThemeSettings } from "./ThemeSettings";
 
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-type SettingsSection = "ai" | "terminal" | "agent" | "advanced";
+type SettingsSection = "ai" | "themes" | "terminal" | "agent" | "advanced";
 
 interface NavItem {
   id: SettingsSection;
@@ -36,7 +37,7 @@ const NAV_ITEMS: NavItem[] = [
     id: "terminal",
     label: "Terminal",
     icon: <Terminal className="w-4 h-4" />,
-    description: "Shell and display settings",
+    description: "Shell and scrollback settings",
   },
   {
     id: "agent",
@@ -49,6 +50,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Advanced",
     icon: <Shield className="w-4 h-4" />,
     description: "Privacy and debug options",
+  },
+  {
+    id: "themes",
+    label: "Themes",
+    icon: <Palette className="w-4 h-4" />,
+    description: "Customize appearance and colors",
   },
 ];
 
@@ -115,6 +122,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             onSidecarChange={(sidecar) => updateSection("sidecar", sidecar)}
           />
         );
+      case "themes":
+        return <ThemeSettings />;
       case "terminal":
         return (
           <TerminalSettings
@@ -145,10 +154,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="!max-w-none !inset-0 !translate-x-0 !translate-y-0 !w-screen !h-screen p-0 bg-background border-0 rounded-none text-foreground flex flex-col overflow-hidden"
+        className="!max-w-none !top-8 !bottom-0 !left-0 !right-0 !translate-x-0 !translate-y-0 !w-screen !h-[calc(100vh-2rem)] p-0 bg-background border-0 rounded-none text-foreground flex flex-col overflow-hidden"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+        <div className="flex items-center justify-between px-6 py-2 border-b border-border flex-shrink-0">
           <h2 className="text-lg font-semibold text-foreground">Settings</h2>
           <button
             type="button"
@@ -176,14 +185,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     className={cn(
                       "w-full flex items-start gap-3 px-4 py-3 text-left transition-colors",
                       activeSection === item.id
-                        ? "bg-accent text-foreground border-l-2 border-[var(--ansi-blue)]"
+                        ? "bg-accent text-foreground border-l-2 border-primary"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground border-l-2 border-transparent"
                     )}
                   >
                     <span
                       className={cn(
                         "mt-0.5",
-                        activeSection === item.id ? "text-[var(--ansi-blue)]" : ""
+                        activeSection === item.id ? "text-primary" : ""
                       )}
                     >
                       {item.icon}
@@ -206,7 +215,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <span className="text-[var(--ansi-red)]">Failed to load settings</span>
+            <span className="text-destructive">Failed to load settings</span>
           </div>
         )}
 

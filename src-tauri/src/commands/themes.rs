@@ -131,6 +131,6 @@ pub async fn get_theme_asset_path(
         return Err(format!("Asset not found: {}", asset_path));
     }
 
-    // Convert to asset protocol URL for Tauri
-    Ok(format!("asset://localhost/{}", full_path.to_string_lossy()))
+    // Return the absolute file path - the frontend will convert it using convertFileSrc
+    Ok(full_path.to_string_lossy().to_string())
 }

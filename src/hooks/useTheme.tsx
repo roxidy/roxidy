@@ -6,7 +6,7 @@ import type { QbitTheme } from "../lib/theme/types";
 interface ThemeContextValue {
   currentTheme: QbitTheme | null;
   currentThemeId: string | null;
-  availableThemes: Array<{ id: string; name: string; builtin: boolean }>;
+  availableThemes: Array<{ id: string; name: string; builtin: boolean; theme: QbitTheme }>;
   setTheme: (themeId: string) => Promise<boolean>;
   loadCustomTheme: (theme: QbitTheme) => Promise<void>;
   deleteTheme: (themeId: string) => Promise<boolean>;
@@ -23,7 +23,7 @@ export function ThemeProvider({ children, defaultThemeId }: ThemeProviderProps) 
   const [currentTheme, setCurrentTheme] = useState<QbitTheme | null>(null);
   const [currentThemeId, setCurrentThemeId] = useState<string | null>(null);
   const [availableThemes, setAvailableThemes] = useState<
-    Array<{ id: string; name: string; builtin: boolean }>
+    Array<{ id: string; name: string; builtin: boolean; theme: QbitTheme }>
   >([]);
 
   // Initialize theme on mount
@@ -50,6 +50,10 @@ export function ThemeProvider({ children, defaultThemeId }: ThemeProviderProps) 
 
   // Subscribe to theme changes
   useEffect(() => {
+    // Immediately sync state on mount/remount
+    setCurrentTheme(ThemeManager.getTheme());
+    setCurrentThemeId(ThemeManager.getThemeId());
+
     const unsubscribe = ThemeManager.onChange((theme) => {
       setCurrentTheme(theme);
       setCurrentThemeId(ThemeManager.getThemeId());
@@ -65,6 +69,7 @@ export function ThemeProvider({ children, defaultThemeId }: ThemeProviderProps) 
         id: entry.id,
         name: entry.theme.name,
         builtin: entry.builtin ?? false,
+        theme: entry.theme,
       }));
       setAvailableThemes(themes);
     };
@@ -76,7 +81,13 @@ export function ThemeProvider({ children, defaultThemeId }: ThemeProviderProps) 
   }, []);
 
   const setTheme = async (themeId: string): Promise<boolean> => {
-    return await ThemeManager.applyThemeById(themeId);
+    const success = await ThemeManager.applyThemeById(themeId);
+    if (success) {
+      // Manually sync state to ensure UI updates even if listeners aren't working
+      setCurrentTheme(ThemeManager.getTheme());
+      setCurrentThemeId(ThemeManager.getThemeId());
+    }
+    return success;
   };
 
   const loadCustomTheme = async (theme: QbitTheme): Promise<void> => {

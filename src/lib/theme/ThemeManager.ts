@@ -1,4 +1,5 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { getThemeAssetPath } from "../themes";
 // Import builtin theme assets directly (use ?url to get the asset path)
 import obsidianEmberBg from "./builtin/obsidian-ember/assets/background.jpeg?url";
@@ -11,6 +12,23 @@ const builtinAssets: Record<string, Record<string, string>> = {
     "assets/background.jpeg": obsidianEmberBg,
   },
 };
+
+// Helper to load Google Fonts dynamically
+function loadGoogleFont(fontFamily: string) {
+  // Check if font is already loaded
+  const existingLink = document.querySelector(
+    `link[href*="family=${encodeURIComponent(fontFamily)}"]`
+  );
+  if (existingLink) return;
+
+  // Create and append font link
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(
+    fontFamily
+  )}:wght@300;400;500;600;700&display=swap`;
+  document.head.appendChild(link);
+}
 
 type ThemeListeners = Array<(t: QbitTheme | null) => void>;
 
@@ -49,6 +67,16 @@ class ThemeManagerImpl {
     this.currentThemeId = themeId;
     await this.injectThemeStyles(theme);
 
+    // Load Google Fonts if specified
+    if (theme.typography?.ui?.fontFamily) {
+      const uiFont = theme.typography.ui.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+      loadGoogleFont(uiFont);
+    }
+    if (theme.typography?.terminal?.fontFamily) {
+      const terminalFont = theme.typography.terminal.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+      loadGoogleFont(terminalFont);
+    }
+
     try {
       localStorage.setItem("qbit.currentThemeId", themeId);
     } catch (e) {
@@ -61,16 +89,40 @@ class ThemeManagerImpl {
 
   /**
    * Load and apply a custom theme object (for user uploads)
+   * @param themeId Optional theme ID to use. If not provided, generates from theme name
    */
-  async loadThemeFromObject(theme: QbitTheme, assets?: Array<[string, Uint8Array]>): Promise<void> {
-    // Generate a safe theme ID from the theme name
-    const customId = theme.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  async loadThemeFromObject(theme: QbitTheme, assets?: Array<[string, Uint8Array]>, themeId?: string): Promise<void> {
+    // Use provided ID or generate a safe theme ID from the theme name
+    const customId = themeId || theme.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
     // Save the theme to filesystem and registry
     await ThemeRegistry.saveTheme(customId, theme, assets);
 
     // Apply the theme
     await this.applyThemeById(customId);
+  }
+
+  /**
+   * Apply a theme for preview without saving to registry
+   * Used by theme designer for live preview
+   */
+  async applyThemePreview(theme: QbitTheme): Promise<void> {
+    // Apply the theme styles but don't update currentTheme/currentThemeId
+    // This prevents the preview from being treated as the "current" theme
+    await this.injectThemeStyles(theme);
+
+    // Load Google Fonts if specified
+    if (theme.typography?.ui?.fontFamily) {
+      const uiFont = theme.typography.ui.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+      loadGoogleFont(uiFont);
+    }
+    if (theme.typography?.terminal?.fontFamily) {
+      const terminalFont = theme.typography.terminal.fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+      loadGoogleFont(terminalFont);
+    }
+
+    // Don't emit theme change - this is just a preview
+    // Don't update currentTheme or currentThemeId
   }
 
   /**
@@ -246,10 +298,15 @@ class ThemeManagerImpl {
         if (entry?.builtin && builtinAssets[this.currentThemeId]?.[src]) {
           // Use bundled asset for builtin themes
           src = builtinAssets[this.currentThemeId][src];
+          console.log("[ThemeManager] Using builtin asset:", src);
         } else {
           // Get the absolute path from Tauri for user themes
           try {
-            src = await getThemeAssetPath(this.currentThemeId, src);
+            const filePath = await getThemeAssetPath(this.currentThemeId, src);
+            console.log("[ThemeManager] Got file path from Tauri:", filePath);
+            // Convert the file path to a Tauri asset URL
+            src = convertFileSrc(filePath);
+            console.log("[ThemeManager] Converted to asset URL:", src);
           } catch (error) {
             console.warn(`Failed to resolve theme asset: ${src}`, error);
             // Fallback to direct path
@@ -263,6 +320,7 @@ class ThemeManagerImpl {
         } catch {}
       }
 
+      console.log("[ThemeManager] Final background image URL:", src);
       cssVars.push(`--background-image: ${src};`);
       cssVars.push(`--background-image-url: url(${src});`);
     }
@@ -292,15 +350,19 @@ class ThemeManagerImpl {
     if (theme.typography?.ui?.fontFamily || theme.typography?.ui?.headingFamily) {
       let typographyCss = "";
       if (theme.typography.ui.fontFamily) {
-        typographyCss += `body { font-family: var(--font-family-ui); }`;
+        typographyCss += `body { font-family: var(--font-family-ui) !important; }`;
       }
       if (theme.typography.ui.headingFamily) {
-        typographyCss += `h1, h2, h3, h4, h5, h6 { font-family: var(--font-family-heading); }`;
+        typographyCss += `h1, h2, h3, h4, h5, h6 { font-family: var(--font-family-heading) !important; }`;
       }
       this.styleElement.textContent += typographyCss;
     }
 
     document.head.appendChild(this.styleElement);
+    
+    // Force a style recalculation to ensure fonts are applied
+    // This is needed when reverting themes to ensure the browser picks up the change
+    document.body.offsetHeight;
   }
 
   private emit() {

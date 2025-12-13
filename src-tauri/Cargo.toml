@@ -25,7 +25,7 @@ tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
 # Tauri (optional - only for GUI app)
-tauri = { version = "2", features = [], optional = true }
+tauri = { version = "2", features = ["protocol-asset"], optional = true }
 tauri-plugin-opener = { version = "2", optional = true }
 
 # CLI dependencies (optional - only for CLI binary)

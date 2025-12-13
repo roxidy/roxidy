@@ -1,4 +1,4 @@
-import { Palette, Trash2, Upload } from "lucide-react";
+import { Palette, Pencil, Trash2, Upload } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useTheme } from "../../hooks/useTheme";
@@ -13,7 +13,11 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 
-export function ThemePicker() {
+interface ThemePickerProps {
+  onEditTheme?: (themeId: string) => void;
+}
+
+export function ThemePicker({ onEditTheme }: ThemePickerProps) {
   const { currentTheme, currentThemeId, availableThemes, setTheme, deleteTheme } = useTheme();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [themeToDelete, setThemeToDelete] = useState<string | null>(null);
@@ -107,42 +111,56 @@ export function ThemePicker() {
             Themes
           </div>
           <div className="space-y-1 border rounded-md p-2 max-h-64 overflow-y-auto">
-            {availableThemes.map((theme) => (
-              <div
-                key={theme.id}
-                className={`flex items-center justify-between p-2 rounded hover:bg-accent group ${
-                  theme.id === currentThemeId ? "bg-accent" : ""
-                }`}
-              >
+            {availableThemes.map((theme) => {
+              const isActive = theme.id === currentThemeId;
+              return (
                 <button
+                  key={theme.id}
                   type="button"
                   onClick={() => handleThemeSelect(theme.id)}
-                  className="flex-1 text-left text-sm"
+                  className={`w-full flex items-center justify-between p-2 rounded hover:bg-accent group transition-colors ${
+                    isActive ? "bg-accent" : ""
+                  }`}
                 >
-                  {theme.name}
-                  {!theme.builtin && (
-                    <span className="text-xs text-muted-foreground ml-2">(Custom)</span>
-                  )}
-                  {theme.id === currentThemeId && (
-                    <span className="text-xs text-primary ml-2">● Active</span>
-                  )}
+                  <span className="flex-1 text-left text-sm">
+                    {theme.name}
+                    {isActive && (
+                      <span className="text-xs text-primary ml-2">● Active</span>
+                    )}
+                  </span>
+                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    {onEditTheme && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditTheme(theme.id);
+                        }}
+                        title="Edit theme"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </Button>
+                    )}
+                    {!theme.builtin && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteClick(theme.id);
+                        }}
+                        title="Delete theme"
+                      >
+                        <Trash2 className="w-3 h-3 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
                 </button>
-                {!theme.builtin && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteClick(theme.id);
-                    }}
-                    title="Delete theme"
-                  >
-                    <Trash2 className="w-3 h-3 text-destructive" />
-                  </Button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
